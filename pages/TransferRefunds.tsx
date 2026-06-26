@@ -14,6 +14,15 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
   const [tableMissing, setTableMissing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
+  const [searchInputValue, setSearchInputValue] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(searchInputValue);
+      setCurrentPage(0);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInputValue]);
   const [currentPage, setCurrentPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -641,7 +650,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
       <div className="flex flex-col lg:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0">
          <div className="w-full lg:w-96 relative">
             <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400">search</span>
-            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:bg-white outline-none transition-all" placeholder="Buscar por DNI o Nombre..."/>
+            <input value={searchInputValue} onChange={e => setSearchInputValue(e.target.value)} className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:bg-white outline-none transition-all" placeholder="Buscar por DNI o Nombre..."/>
          </div>
          <div className="flex gap-2 overflow-x-auto hide-scrollbar">
             {['Todos', 'Aptos (Recibido)', 'En Bloque', 'Finalizado'].map(f => (

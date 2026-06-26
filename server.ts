@@ -545,6 +545,35 @@ async function startServer() {
     }
   });
 
+  // --- Proxy para archivos locales en desarrollo (stream-document) ---
+  app.get("/api/files/stream-document", async (req, res) => {
+    try {
+      const pathParam = req.query.path as string;
+      if (!pathParam) {
+        return res.status(400).json({ error: "Falta el parámetro path" });
+      }
+      
+      const baseUrl = process.env.VITE_API_URL || "http://localhost:5000";
+      const targetUrl = `${baseUrl.replace(/\/$/, "")}/api/files/stream-document?path=${encodeURIComponent(pathParam)}`;
+      
+      const response = await fetch(targetUrl);
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Error al obtener archivo del servidor local" });
+      }
+      
+      res.setHeader("Content-Type", response.headers.get("content-type") || "application/pdf");
+      res.setHeader("Content-Disposition", "inline");
+      
+      const arrayBuffer = await response.arrayBuffer();
+      res.send(Buffer.from(arrayBuffer));
+    } catch (error: any) {
+      console.error("Proxy stream error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || "Error al transmitir el archivo a través del proxy" });
+      }
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

@@ -81,6 +81,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [newSubject, setNewSubject] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentFilter, setCurrentFilter] = useState('Todos');
+  const [searchInputValue, setSearchInputValue] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchQuery(searchInputValue);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInputValue]);
 
   const [csvPreview, setCsvPreview] = useState<any[]>([]);
   const csvInputRef = useRef<HTMLInputElement>(null);
@@ -1628,8 +1636,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
         <div className="w-full lg:w-96 relative">
           <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400">search</span>
           <input 
-            value={searchQuery} 
-            onChange={e => setSearchQuery(e.target.value)} 
+            value={searchInputValue} 
+            onChange={e => setSearchInputValue(e.target.value)} 
             className="w-full h-10 pl-10 pr-4 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:bg-white outline-none focus:ring-2 focus:ring-primary/20 transition-all" 
             placeholder="Buscar por número o asunto..." 
           />

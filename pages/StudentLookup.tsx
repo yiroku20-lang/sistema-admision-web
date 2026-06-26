@@ -20,9 +20,13 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
-  // Local API configuration (Cloudflare URL)
-  const defaultApiUrl = 'https://night-fan-profiles-sides.trycloudflare.com';
+  // Local API configuration (Cloudflare URL / Localhost fallback)
   const [localApiUrl] = useState(() => {
+    const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (isLocalhost) {
+      return 'http://localhost:5000';
+    }
+    const defaultApiUrl = 'https://night-fan-profiles-sides.trycloudflare.com';
     return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
   });
   
@@ -30,7 +34,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
 
   // Individual Search State
-  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [studentHistory, setStudentHistory] = useState<Participant[]>([]);
   const [candidates, setCandidates] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(false);
@@ -240,27 +244,28 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    const query = searchInputRef.current?.value || '';
+    if (!query.trim()) return;
     setLoading(true); setError(null); setStudentHistory([]); setCandidates([]); setHasSearched(true);
     setRenuncias([]); setReservas([]);
     try {
-      const term = searchQuery.trim();
+      const term = query.trim();
       const isNumeric = /^\d+$/.test(term);
       
-      let query = supabase.from('participantes').select('*');
+      let dbQuery = supabase.from('participantes').select('*');
       if (isNumeric) {
-          query = query.eq('CODPOSTULANTE', term);
+          dbQuery = dbQuery.eq('CODPOSTULANTE', term);
       } else {
           // Split by spaces, commas, hyphens and slashes to support any order/separators (like hyphenated names in the DB)
           const words = term.split(/[\s,\-/]+/).filter(Boolean);
           words.forEach(word => {
             // Replace vowels with '_' to be completely accent-insensitive and spelling-forgiving
             const agnostic = word.replace(/[aeiouáéíóúüAEIOUÁÉÍÓÚÜ]/g, '_');
-            query = query.ilike('NOMBRE', `%${agnostic}%`);
+            dbQuery = dbQuery.ilike('NOMBRE', `%${agnostic}%`);
           });
       }
       
-      const { data, error: err } = await query.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false });
+      const { data, error: err } = await dbQuery.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false });
       
       if (err) throw err;
       
@@ -864,8 +869,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                         <div className="relative">
                         <span className="material-symbols-outlined absolute left-3 top-3 text-slate-400">search</span>
                         <input
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                            ref={searchInputRef}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             className="w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-900 h-11 pl-10 pr-14 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-slate-400 uppercase"
                             placeholder="DNI O NOMBRE..."
@@ -900,7 +904,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                 {mainStudent && (
                     <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
                         <div className="h-24 bg-gradient-to-r from-primary to-merlot relative p-4 flex justify-end">
-                            <button onClick={() => { setStudentHistory([]); setCandidates([]); setSearchQuery(''); setEditingRecord(null); setIsEditing(false); }} className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40"><span className="material-symbols-outlined text-[18px]">close</span></button>
+                            <button onClick={() => { setStudentHistory([]); setCandidates([]); if (searchInputRef.current) searchInputRef.current.value = ''; setEditingRecord(null); setIsEditing(false); }} className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40"><span className="material-symbols-outlined text-[18px]">close</span></button>
                         </div>
                         <div className="px-6 pb-6 relative">
                             <div className="size-20 rounded-2xl border-4 border-white bg-slate-100 -mt-10 mb-4 flex items-center justify-center shadow-md"><span className="material-symbols-outlined text-4xl text-slate-400">person</span></div>
@@ -968,7 +972,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                         {isExpanded && (
                                                             <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
                                                                 {docsInFolder.map((doc, i) => {
-                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : defaultApiUrl;
+                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "https://night-fan-profiles-sides.trycloudflare.com";
                                                                     const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
                                                                     
                                                                     return (

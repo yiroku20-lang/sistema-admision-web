@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import logoImg from '../logo_admision.png';
 
 interface Props {
   onLogin: (user: any) => void;
@@ -75,7 +76,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         
         <div className="relative z-10 w-full max-w-md p-10 bg-white rounded-[40px] shadow-2xl animate-in zoom-in-95 duration-500">
             <div className="flex flex-col items-center mb-10">
-                <img src="https://lh3.googleusercontent.com/d/1yN0_dziHYCbHPOnDb1Y7qYvHno-mUY7M" className="h-24 mb-6 object-contain" alt="Admisión UNSAAC" />
+                <img src={logoImg} className="h-24 mb-6 object-contain" alt="Admisión UNSAAC" />
                 <h1 className="font-cinzel text-2xl font-black text-primary text-center">Gestión Admisión</h1>
                 <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mt-2">Consola de Seguridad Central</p>
             </div>
