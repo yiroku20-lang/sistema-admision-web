@@ -186,10 +186,12 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
 
   const getGroupedDocuments = (docs: any[]) => {
       const groups: { [key: string]: any[] } = {};
+      if (!Array.isArray(docs)) return groups;
       
       docs.forEach(doc => {
-          const pathStr = typeof doc === 'string' ? doc : doc.path;
-          const filename = typeof doc === 'string' ? doc.split(/[\/\\]/).pop()! : (doc.filename || doc.name || pathStr.split(/[\/\\]/).pop()!);
+          if (!doc) return;
+          const pathStr = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || '');
+          const filename = typeof doc === 'string' ? doc.split(/[\/\\]/).pop()! : (doc.filename || doc.name || (pathStr ? pathStr.split(/[\/\\]/).pop() : '') || 'Archivo');
           
           const groupLabel = getModalityAndSemesterFromPath(pathStr);
           
