@@ -60,6 +60,9 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const [editForm, setEditForm] = useState<Partial<Participant>>({});
   const [showSyncNameOption, setShowSyncNameOption] = useState(false);
 
+  const [isAddingNew, setIsAddingNew] = useState(false);
+  const [newStudentForm, setNewStudentForm] = useState<Partial<Participant>>({});
+
   const [renuncias, setRenuncias] = useState<any[]>([]);
   const [reservas, setReservas] = useState<any[]>([]);
   
@@ -354,6 +357,41 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       setShowSyncNameOption(false);
     } catch (err: any) {
       alert('Error al actualizar: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateStudent = async () => {
+    if (!newStudentForm.NOMBRE?.trim() || !newStudentForm.CODPOSTULANTE?.trim()) {
+       alert("DNI y Nombres son obligatorios");
+       return;
+    }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('participantes').insert([{
+          ...newStudentForm,
+          NOMBRE: newStudentForm.NOMBRE.toUpperCase(),
+          CODPOSTULANTE: newStudentForm.CODPOSTULANTE,
+          CARRERA: newStudentForm.CARRERA?.toUpperCase() || '',
+          MODALIDAD: newStudentForm.MODALIDAD?.toUpperCase() || '',
+          FILIAL: newStudentForm.FILIAL?.toUpperCase() || 'CUSCO',
+          ANIO: newStudentForm.ANIO || '',
+          SEMESTRE: newStudentForm.SEMESTRE || '',
+          NOTA: newStudentForm.NOTA || '',
+          OMERITO: newStudentForm.OMERITO || '',
+          FECHAINGRESO: newStudentForm.FECHAINGRESO || ''
+      }]).select('*').single();
+      if (error) throw error;
+      
+      alert('Estudiante agregado con éxito');
+      setIsAddingNew(false);
+      setNewStudentForm({});
+      // Optionally search for the newly added student
+      setSearchQuery(data.CODPOSTULANTE);
+      // Let the user click search, or we could trigger handleSearch
+    } catch (err: any) {
+      alert('Error al agregar estudiante: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -835,6 +873,128 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           </div>
       )}
 
+      {/* MODAL DE AGREGAR ESTUDIANTE */}
+      {isAddingNew && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
+                  <div className="bg-slate-50 border-b border-slate-200 p-6 flex justify-between items-center">
+                      <div className="flex items-center gap-4">
+                          <div className="size-12 bg-primary text-white rounded-2xl flex items-center justify-center">
+                              <span className="material-symbols-outlined">person_add</span>
+                          </div>
+                          <div>
+                              <h3 className="text-xl font-black text-slate-900 uppercase">Agregar Nuevo Estudiante</h3>
+                              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">REGISTRAR NUEVO INGRESO</p>
+                          </div>
+                      </div>
+                      <button 
+                        onClick={() => { setIsAddingNew(false); setNewStudentForm({}); }}
+                        className="size-10 rounded-full hover:bg-slate-200 text-slate-400 flex items-center justify-center transition-colors"
+                      >
+                          <span className="material-symbols-outlined">close</span>
+                      </button>
+                  </div>
+                  <div className="p-8 overflow-y-auto max-h-[70vh]">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="md:col-span-2">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nombre Completo *</label>
+                              <input 
+                                  value={newStudentForm.NOMBRE || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, NOMBRE: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Código / DNI *</label>
+                              <input 
+                                  value={newStudentForm.CODPOSTULANTE || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, CODPOSTULANTE: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Año de Proceso (ANIO)</label>
+                              <input 
+                                  value={newStudentForm.ANIO || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, ANIO: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Semestre</label>
+                              <input 
+                                  value={newStudentForm.SEMESTRE || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, SEMESTRE: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                                  placeholder="Ej: I, II"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Modalidad</label>
+                              <input 
+                                  value={newStudentForm.MODALIDAD || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, MODALIDAD: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Carrera</label>
+                              <input 
+                                  value={newStudentForm.CARRERA || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, CARRERA: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Sede / Filial</label>
+                              <input 
+                                  value={newStudentForm.FILIAL || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, FILIAL: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
+                                  placeholder="CUSCO"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Orden Mérito (OMERITO)</label>
+                              <input 
+                                  value={newStudentForm.OMERITO || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, OMERITO: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nota</label>
+                              <input 
+                                  value={newStudentForm.NOTA || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, NOTA: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Fecha de Ingreso</label>
+                              <input 
+                                  value={newStudentForm.FECHAINGRESO || ''} 
+                                  onChange={e => setNewStudentForm({...newStudentForm, FECHAINGRESO: e.target.value})} 
+                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
+                                  placeholder="Ej: DD/MM/AAAA"
+                              />
+                          </div>
+                      </div>
+                  </div>
+                  <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-wrap justify-end gap-3">
+                       <button onClick={() => { setIsAddingNew(false); setNewStudentForm({}); }} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-200 rounded-xl transition-all">Cancelar</button>
+                       <button 
+                        onClick={handleCreateStudent} 
+                        disabled={loading}
+                        className="px-10 py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                       >
+                           {loading ? 'Guardando...' : 'Agregar Estudiante'}
+                       </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       <div className="flex flex-wrap justify-between items-end gap-4 shrink-0">
         <div className="flex flex-col gap-2">
             <h1 className="text-slate-900 text-3xl font-black leading-tight">Gestión de Ingresantes</h1>
@@ -863,10 +1023,16 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full overflow-y-auto pr-2">
                 <aside className="lg:col-span-4 flex flex-col gap-6 w-full">
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-900">
-                    <span className="material-symbols-outlined text-primary">person_search</span>
-                    Criterios de Búsqueda
-                    </h3>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold flex items-center gap-2 text-slate-900">
+                        <span className="material-symbols-outlined text-primary">person_search</span>
+                        Criterios de Búsqueda
+                        </h3>
+                        <button onClick={() => setIsAddingNew(true)} className="flex items-center gap-1 text-xs font-bold text-primary hover:text-merlot transition-colors bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg">
+                            <span className="material-symbols-outlined text-[16px]">person_add</span>
+                            Agregar
+                        </button>
+                    </div>
                     <div className="flex flex-col gap-4">
                         <div className="relative">
                         <span className="material-symbols-outlined absolute left-3 top-3 text-slate-400">search</span>

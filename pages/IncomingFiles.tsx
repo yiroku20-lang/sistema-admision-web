@@ -243,31 +243,50 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
-        const { error } = await supabase.from('expedientes').update({ status: newStatus }).eq('id', id);
+        const targetFile = files.find(f => f.id === id || f.history.some(h => h.id === id));
+        const numberVal = targetFile ? targetFile.number : null;
+
+        let query = supabase.from('expedientes').update({ status: newStatus });
+        if (numberVal) {
+            query = query.eq('number', numberVal);
+        } else {
+            query = query.eq('id', id);
+        }
+        
+        const { error } = await query;
         if (error) throw error;
         
         // Update local state deeply
-        setFiles(prev => prev.map(f => {
-            const updatedHistory = f.history.map(h => h.id === id ? { ...h, status: newStatus } : h);
-            
-            if (f.id === id) {
-                return { ...f, status: newStatus as any, history: updatedHistory };
-            }
-            
-            // Check if any history item was updated
-            if (f.history.some(h => h.id === id)) {
-                return { ...f, history: updatedHistory };
-            }
-            
-            return f;
-        }));
+        if (numberVal) {
+            setFiles(prev => prev.map(f => {
+                if (f.number === numberVal) {
+                    const updatedHistory = f.history.map(h => ({ ...h, status: newStatus }));
+                    return { ...f, status: newStatus as any, history: updatedHistory };
+                }
+                return f;
+            }));
+        } else {
+            setFiles(prev => prev.map(f => {
+                const updatedHistory = f.history.map(h => h.id === id ? { ...h, status: newStatus } : h);
+                if (f.id === id) {
+                    return { ...f, status: newStatus as any, history: updatedHistory };
+                }
+                if (f.history.some(h => h.id === id)) {
+                    return { ...f, history: updatedHistory };
+                }
+                return f;
+            }));
+        }
 
         // Update selectedHistory if it's open
         if (selectedHistory) {
              setSelectedHistory(prev => {
                  if (!prev) return null;
+                 if (numberVal && prev.number === numberVal) {
+                     const updatedHistory = prev.history.map(h => ({ ...h, status: newStatus }));
+                     return { ...prev, status: newStatus as any, history: updatedHistory };
+                 }
                  const updatedHistory = prev.history.map(h => h.id === id ? { ...h, status: newStatus } : h);
-                 // Also update the main status if it matches the current id
                  const newMainStatus = prev.id === id ? newStatus : prev.status;
                  return { ...prev, status: newMainStatus as any, history: updatedHistory };
              });
@@ -786,7 +805,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
               .getPublicUrl(storagePath);
 
           // 3. Update Status
-          await supabase.from('expedientes').update({ status: 'Atendido' }).eq('id', fileToAttend.id);
+          await supabase.from('expedientes').update({ status: 'Atendido' }).eq('number', fileToAttend.number);
 
           // 4. Register in Outgoing Files
           if (manualValues['INFORME'] || isConstancia) {
@@ -906,7 +925,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           await supabase.from('padron_pagos').update(updateData).eq('id', selectedPayment.id);
 
           // 2. Marcar expediente como Atendido
-          await supabase.from('expedientes').update({ status: 'Atendido' }).eq('id', fileToAttend.id);
+          await supabase.from('expedientes').update({ status: 'Atendido' }).eq('number', fileToAttend.number);
 
           if (notify) notify(`Expediente vinculado al pago de ${selectedPayment.student_name} y marcado como ATENDIDO.`);
           

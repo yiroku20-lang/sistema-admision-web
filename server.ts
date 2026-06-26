@@ -13,6 +13,44 @@ async function startServer() {
   // Increase limit for base64 PDF attachments
   app.use(express.json({ limit: "50mb" }));
 
+  // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
+  app.use("/api/files", async (req, res) => {
+    try {
+      const baseUrl = process.env.VITE_API_URL || "http://localhost:5000";
+      const targetUrl = `${baseUrl}/api/files${req.url}`;
+      
+      const fetchReq = await import('node-fetch').then(m => m.default);
+      
+      const fetchHeaders: Record<string, string> = {};
+      for (const key in req.headers) {
+          if (req.headers[key] && key !== 'host') {
+              fetchHeaders[key] = req.headers[key] as string;
+          }
+      }
+      
+      const response = await fetchReq(targetUrl, {
+        method: req.method,
+        headers: fetchHeaders,
+        body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body
+      });
+
+      if (!response.ok) {
+        res.status(response.status).send(await response.text());
+        return;
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (contentType) res.setHeader('Content-Type', contentType);
+      const contentDisposition = response.headers.get('content-disposition');
+      if (contentDisposition) res.setHeader('Content-Disposition', contentDisposition);
+
+      response.body.pipe(res);
+    } catch (error: any) {
+      console.error("Local proxy error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // --- GEMINI API ROUTE ---
   app.post("/api/gemini", async (req, res) => {
     try {
