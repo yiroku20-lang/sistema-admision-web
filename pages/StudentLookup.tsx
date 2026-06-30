@@ -24,9 +24,9 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const [localApiUrl] = useState(() => {
     const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
     if (isLocalhost) {
-      return 'http://localhost:5000';
+      return 'http://127.0.0.1:5000';
     }
-    const defaultApiUrl = 'https://night-fan-profiles-sides.trycloudflare.com';
+    const defaultApiUrl = 'https://june-entertainment-thanks-include.trycloudflare.com';
     return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
   });
   
@@ -85,7 +85,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       setLoadingDocs(true);
       setDocsError(null);
       try {
-          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : 'https://night-fan-profiles-sides.trycloudflare.com';
+          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : 'https://june-entertainment-thanks-include.trycloudflare.com';
           const resDocs = await fetch(`${apiUrl}/api/files/student-documents/${studentCodes[0]}`);
           if (!resDocs.ok) {
               if (resDocs.status === 404) {
@@ -1140,7 +1140,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                         {isExpanded && (
                                                             <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
                                                                 {docsInFolder.map((doc, i) => {
-                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "https://night-fan-profiles-sides.trycloudflare.com";
+                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "https://june-entertainment-thanks-include.trycloudflare.com";
                                                                     const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
                                                                     
                                                                     return (

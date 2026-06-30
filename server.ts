@@ -16,7 +16,7 @@ async function startServer() {
   // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
   app.use("/api/files", async (req, res) => {
     try {
-      const baseUrl = process.env.VITE_API_URL || "http://localhost:5000";
+      const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
       const targetUrl = `${baseUrl}/api/files${req.url}`;
       
       const fetchReq = await import('node-fetch').then(m => m.default);
@@ -591,7 +591,7 @@ async function startServer() {
         return res.status(400).json({ error: "Falta el parámetro path" });
       }
       
-      const baseUrl = process.env.VITE_API_URL || "http://localhost:5000";
+      const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
       const targetUrl = `${baseUrl.replace(/\/$/, "")}/api/files/stream-document?path=${encodeURIComponent(pathParam)}`;
       
       const response = await fetch(targetUrl);
