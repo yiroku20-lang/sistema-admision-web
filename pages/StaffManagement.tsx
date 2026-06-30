@@ -56,6 +56,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
   // Sorteos State
   const [sorteos, setSorteos] = useState<PersonalSorteo[]>([]);
   const [selectedSorteoProceso, setSelectedSorteoProceso] = useState<string>('');
+  const [isImportSorteosModalOpen, setIsImportSorteosModalOpen] = useState(false);
   const sortFileInput = useRef<HTMLInputElement>(null);
 
   // Schedule Builder State
@@ -83,6 +84,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
   const [emailSubject, setEmailSubject] = useState('');
   const [emailFechaLimite, setEmailFechaLimite] = useState('');
   const [emailFechaExamen, setEmailFechaExamen] = useState('');
+  const [emailProgress, setEmailProgress] = useState<{ current: number, total: number, message: string } | null>(null);
 
   // Reject Modal State
   const [showRejectModal, setShowRejectModal] = useState<{ isOpen: boolean; sorteoId: string | null }>({ isOpen: false, sorteoId: null });
@@ -414,6 +416,28 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
     });
   };
 
+  const handleDownloadSorteosTemplate = () => {
+    const templateData = [
+      {
+        CARGO: 'DOCENTE DE AULA',
+        DNI: '12345678',
+        NOMBRES: 'JUAN PEREZ',
+        SORTEADO: 'Titular',
+        EMAILPERSONAL: 'juan@example.com',
+        TELEFONO: '987654321'
+      }
+    ];
+    const csv = Papa.unparse(templateData, { delimiter: ';' });
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' }); // Add BOM
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'Plantilla_Sorteos.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
 // Removed old notifyAllSorteados
 
   const confirmParticipant = async (sorteoId: string, newState: 'Confirmado' | 'Rechazado' | 'Pendiente', motivo?: string) => {
@@ -636,10 +660,19 @@ UNSAAC`);
     setShowEmailModal(false);
     setLoading(true);
     let successCount = 0;
-    notify(`Enviando correos a ${pendientes.length} personas...`, 'info');
+    
+    setEmailProgress({ current: 0, total: pendientes.length, message: `Iniciando envío a ${pendientes.length} personas...` });
 
     try {
-        for (const persona of pendientes) {
+        for (let i = 0; i < pendientes.length; i++) {
+            const persona = pendientes[i];
+            
+            setEmailProgress({ 
+                current: i + 1, 
+                total: pendientes.length, 
+                message: `Enviando correo a ${persona.nombres} (${i + 1}/${pendientes.length})...` 
+            });
+
             const confirmLinkBase = `${window.location.origin}/#/staff-confirm?id=${persona.id}`;
             const formattedLimite = emailFechaLimite 
                 ? new Date(emailFechaLimite).toLocaleString('es-PE', { dateStyle: 'long', timeStyle: 'short' })
@@ -715,6 +748,7 @@ UNSAAC`);
         notify('Error al enviar notificaciones: ' + e.message, 'error');
     } finally {
         setLoading(false);
+        setEmailProgress(null);
     }
   };
 
@@ -1105,9 +1139,9 @@ UNSAAC`);
                               </button>
                           )}
                           <input type="file" accept=".csv" ref={sortFileInput} onChange={handleSorteoUpload} className="hidden" id="sorteo-csv" />
-                          <label htmlFor="sorteo-csv" className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50 cursor-pointer shadow-sm flex items-center gap-1.5 transition-colors">
+                          <button onClick={() => setIsImportSorteosModalOpen(true)} className="bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50 cursor-pointer shadow-sm flex items-center gap-1.5 transition-colors">
                              <span className="material-symbols-outlined text-[16px]">upload_file</span> <span className="hidden sm:inline">Importar</span>
-                          </label>
+                          </button>
 
                           <button onClick={() => setShowAddSorteo(!showAddSorteo)} className={`px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors ${showAddSorteo ? 'bg-slate-800 text-white hover:bg-slate-900 border border-slate-800' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
                              <span className="material-symbols-outlined text-[16px]">{showAddSorteo ? 'close' : 'person_add'}</span> <span className="hidden sm:inline">{showAddSorteo ? 'Cerrar' : 'Añadir'}</span>
@@ -1471,6 +1505,52 @@ UNSAAC`);
         </div>
       )}
 
+      {/* Import Sorteos Modal */}
+      {isImportSorteosModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary">upload_file</span> 
+                        Importar Sorteo y Conformación
+                    </h3>
+                    <button onClick={() => setIsImportSorteosModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
+                    <div>
+                        <p className="text-sm text-slate-600 mb-4">
+                            Para importar el personal de manera masiva mediante un archivo CSV, asegúrate de que el documento incluya exactamente las siguientes cabeceras:
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 mb-4">
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">CARGO</div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">DNI</div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">NOMBRES</div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">SORTEADO</div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">EMAILPERSONAL</div>
+                            <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">TELEFONO</div>
+                        </div>
+                        <p className="text-xs text-slate-500 bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100">
+                            <strong>Nota:</strong> Puedes descargar una plantilla de ejemplo para llenarla con tus datos. El campo <span className="font-mono">SORTEADO</span> debe contener el valor "Titular" o "Suplente".
+                        </p>
+                    </div>
+                </div>
+                <div className="p-4 border-t border-slate-100 flex justify-between gap-3 bg-slate-50">
+                    <button onClick={handleDownloadSorteosTemplate} className="px-5 py-2 rounded-xl text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[18px]">download</span> Descargar Plantilla
+                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setIsImportSorteosModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
+                        <button onClick={() => { setIsImportSorteosModalOpen(false); document.getElementById('sorteo-csv')?.click(); }} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-slate-900 hover:bg-black transition-colors flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[18px]">upload</span> Subir CSV
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Reject Modal */}
       {showRejectModal.isOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -1569,6 +1649,31 @@ UNSAAC`);
           </table>
         </div>
       </div>
+
+      {/* Progress Overlay for Email Sending */}
+      {emailProgress && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center gap-4 text-center">
+                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-2">
+                      <span className="material-symbols-outlined text-3xl animate-pulse">mail</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900">Enviando Notificaciones</h3>
+                  <p className="text-sm text-slate-600">{emailProgress.message}</p>
+                  
+                  <div className="w-full bg-slate-100 rounded-full h-3 mb-2 overflow-hidden border border-slate-200">
+                      <div 
+                          className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out" 
+                          style={{ width: `${(emailProgress.current / emailProgress.total) * 100}%` }}
+                      ></div>
+                  </div>
+                  
+                  <div className="flex justify-between w-full text-xs font-bold text-slate-500">
+                      <span>{emailProgress.current} enviados</span>
+                      <span>{emailProgress.total} total</span>
+                  </div>
+              </div>
+          </div>
+      )}
 
       <ScheduleBuilderModal
           isOpen={scheduleBuilderOpen}
