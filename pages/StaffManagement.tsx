@@ -114,6 +114,20 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
       if (activeTab === 'sorteos' && selectedSorteoProceso) {
           fetchSorteos(selectedSorteoProceso);
           fetchNecesidades(selectedSorteoProceso);
+
+          const channel = supabase.channel('sorteos-changes')
+              .on('postgres_changes', 
+                  { event: '*', schema: 'public', table: 'personal_sorteos', filter: `proceso_id=eq.${selectedSorteoProceso}` }, 
+                  (payload) => {
+                      console.log('Realtime update received:', payload);
+                      fetchSorteos(selectedSorteoProceso, true); // silent fetch on change
+                  }
+              )
+              .subscribe();
+
+          return () => {
+              supabase.removeChannel(channel);
+          };
       }
   }, [selectedSorteoProceso, activeTab]);
 

@@ -127,16 +127,15 @@ export const StaffConfirmation = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] py-6 px-4 sm:py-12 sm:px-6 lg:px-8 font-sans overflow-y-auto flex flex-col justify-center items-center relative">
+    <div className="min-h-screen bg-[#f8fafc] py-6 px-4 sm:py-12 sm:px-6 lg:px-8 font-sans relative">
       <div className="absolute top-0 left-0 w-full h-64 bg-[#1e1e24] -z-10" style={{ backgroundImage: 'radial-gradient(circle at top right, #2a2a35, #1e1e24)' }}></div>
       
-      <div className="mb-8 mt-4 sm:mt-0 relative z-10 w-full max-w-xl text-center flex flex-col items-center justify-center">
-          <div className="bg-white p-4 rounded-3xl shadow-xl inline-block mb-6">
+      <div className="mx-auto w-full max-w-xl flex flex-col items-center">
+          <div className="bg-white p-4 rounded-3xl shadow-xl inline-block mb-6 mt-4 sm:mt-0">
               <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%201.png" alt="Logo de Admisión" className="h-20 object-contain" />
           </div>
-      </div>
-      
-      <div className="max-w-xl w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100 relative z-10 mb-8 sm:mb-auto">
+          
+          <div className="w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100 relative z-10 mb-8">
           <div className="bg-gradient-to-r from-[#1e1e24] to-[#2a2a35] p-8 text-center border-b-4 border-[#d32f2f]">
               <h1 className="text-2xl font-black text-white tracking-tight uppercase">Confirmación de Participación</h1>
               <p className="text-[#f57c00] text-sm font-bold mt-2 uppercase tracking-widest">{proceso?.nombre || 'Proceso de Admisión'}</p>
@@ -234,6 +233,7 @@ export const StaffConfirmation = () => {
                   </>
               )}
           </div>
+      </div>
       </div>
     </div>
   );
