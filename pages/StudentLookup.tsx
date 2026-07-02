@@ -26,8 +26,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     if (isLocalhost) {
       return 'http://127.0.0.1:5000';
     }
-    const defaultApiUrl = 'https://june-entertainment-thanks-include.trycloudflare.com';
-    return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
+    // Si estamos en producción (Netlify), usamos la ruta relativa (vacía) para ir a través del proxy de Netlify Functions
+    return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || '';
   });
   
   // State for toggling individual folders in local documents
@@ -85,7 +85,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       setLoadingDocs(true);
       setDocsError(null);
       try {
-          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : 'https://june-entertainment-thanks-include.trycloudflare.com';
+          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : '';
           const resDocs = await fetch(`${apiUrl}/api/files/student-documents/${studentCodes[0]}`);
           if (!resDocs.ok) {
               if (resDocs.status === 404) {
@@ -1140,7 +1140,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                         {isExpanded && (
                                                             <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
                                                                 {docsInFolder.map((doc, i) => {
-                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "https://june-entertainment-thanks-include.trycloudflare.com";
+                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "";
                                                                     const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
                                                                     
                                                                     return (
