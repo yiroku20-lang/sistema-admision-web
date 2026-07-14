@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabaseClient';
 import { User, PersonalDirectorio, PersonalProceso, PersonalNecesidad, PersonalSorteo, CVModalidad, PersonalCargo } from '../types';
 import { useReactToPrint } from 'react-to-print';
@@ -35,6 +36,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
   const [dirSearchTrigger, setDirSearchTrigger] = useState(0); // To trigger fetch on search button/enter
   
   const [showAddDirModal, setShowAddDirModal] = useState(false);
+  const [editingDirPersonId, setEditingDirPersonId] = useState<string | null>(null);
   const [newDirPerson, setNewDirPerson] = useState({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' });
   const dirFileInput = useRef<HTMLInputElement>(null);
 
@@ -86,10 +88,17 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
   const [emailFechaExamen, setEmailFechaExamen] = useState('');
   const [emailProgress, setEmailProgress] = useState<{ current: number, total: number, message: string } | null>(null);
 
+  // Communication Modal State
+  const [showCommModal, setShowCommModal] = useState(false);
+  const [commSubject, setCommSubject] = useState('');
+  const [commMessage, setCommMessage] = useState('');
+  const [commAttachments, setCommAttachments] = useState<{filename: string, content: string}[]>([]);
+
   // Reject Modal State
   const [showRejectModal, setShowRejectModal] = useState<{ isOpen: boolean; sorteoId: string | null }>({ isOpen: false, sorteoId: null });
   const [rejectReason, setRejectReason] = useState('');
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   // Print Ref
   const printSorteosRef = useRef<HTMLDivElement>(null);
@@ -97,6 +106,24 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
       contentRef: printSorteosRef,
       documentTitle: 'Reporte_Personal_Sorteado',
   });
+
+  const handleGenerateExcel = () => {
+      const data = filteredSorteos.map(s => ({
+          'DNI': s.dni,
+          'Nombres': s.nombres,
+          'Cargo': s.cargo,
+          'Condición': s.condicion_sorteo,
+          'Estado': s.estado_confirmacion,
+          'Correo': s.email_personal,
+          'Teléfono': s.telefono,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte_Personal");
+      XLSX.writeFile(workbook, "Reporte_Personal_Sorteado.xlsx");
+      setIsReportModalOpen(false);
+  };
 
   useEffect(() => {
     fetchDbCargos();
@@ -157,13 +184,27 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
     setDirSearchTrigger(prev => prev + 1);
   };
 
+  const handleEditDirPerson = (person: PersonalDirectorio) => {
+    setEditingDirPersonId(person.id);
+    setNewDirPerson({
+      dni: person.dni || '',
+      nombre: person.nombre || '',
+      condicion: person.condicion || '',
+      departamento_cargo: person.departamento_cargo || '',
+      escuela_profesional: person.escuela_profesional || '',
+      correo: person.correo || '',
+      telefono: person.telefono || ''
+    });
+    setShowAddDirModal(true);
+  };
+
   const handleSaveAddDirPerson = async () => {
     if (!newDirPerson.dni || !newDirPerson.nombre) {
         notify('Debe ingresar al menos DNI y Apellidos Nombres', 'warning'); return;
     }
     setLoading(true);
     try {
-        const { error } = await supabase.from('personal_directorio').insert([{
+        const payload = {
             dni: newDirPerson.dni,
             nombre: newDirPerson.nombre.toUpperCase(),
             condicion: newDirPerson.condicion,
@@ -171,11 +212,20 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
             escuela_profesional: newDirPerson.escuela_profesional,
             correo: newDirPerson.correo,
             telefono: newDirPerson.telefono
-        }]);
-        if (error) throw error;
+        };
         
-        notify('Personal añadido al directorio exitosamente.', 'success');
+        if (editingDirPersonId) {
+            const { error } = await supabase.from('personal_directorio').update(payload).eq('id', editingDirPersonId);
+            if (error) throw error;
+            notify('Datos actualizados exitosamente.', 'success');
+        } else {
+            const { error } = await supabase.from('personal_directorio').insert([payload]);
+            if (error) throw error;
+            notify('Personal añadido al directorio exitosamente.', 'success');
+        }
+        
         setShowAddDirModal(false);
+        setEditingDirPersonId(null);
         setNewDirPerson({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' });
         fetchDirectorio();
     } catch(err: any) {
@@ -480,6 +530,18 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
           const { error } = await supabase.from('personal_sorteos').update(updateData).eq('id', sorteoId);
           if (error) throw error;
           
+          const s = sorteos.find(x => x.id === sorteoId);
+          if (s) {
+              const auditDesc = newState === 'Confirmado' 
+                 ? `Confirmó manualmente la participación de ${s.nombres} para el cargo de ${s.cargo}`
+                 : `Rechazó manualmente la participación de ${s.nombres} para el cargo de ${s.cargo} (Motivo: ${motivo})`;
+              await supabase.from('tramite_seguimiento').insert([{
+                  action_type: 'Estado',
+                  description: auditDesc,
+                  user_name: user?.name || 'Sistema'
+              }]);
+          }
+          
           fetchSorteos(selectedSorteoProceso, true); // silent reload in background
       } catch(err: any) {
           notify(err.message, 'error');
@@ -687,7 +749,14 @@ UNSAAC`);
                 message: `Enviando correo a ${persona.nombres} (${i + 1}/${pendientes.length})...` 
             });
 
-            const confirmLinkBase = `${window.location.origin}/#/staff-confirm?id=${persona.id}`;
+            const resolvePublicUrl = () => {
+                let origin = window.location.origin;
+                if (origin.includes('localhost') && import.meta.env.VITE_API_URL) {
+                    origin = import.meta.env.VITE_API_URL;
+                }
+                return origin;
+            };
+            const confirmLinkBase = `${resolvePublicUrl()}/#/staff-confirm?id=${persona.id}`;
             const formattedLimite = emailFechaLimite 
                 ? new Date(emailFechaLimite).toLocaleString('es-PE', { dateStyle: 'long', timeStyle: 'short' })
                 : '';
@@ -760,6 +829,114 @@ UNSAAC`);
     } catch (e: any) {
         console.error(e);
         notify('Error al enviar notificaciones: ' + e.message, 'error');
+    } finally {
+        setLoading(false);
+        setEmailProgress(null);
+    }
+  };
+
+  const handleOpenCommModal = () => {
+    const targets = filteredSorteos.filter(s => s.email_personal);
+    if (targets.length === 0) {
+        notify('No hay personal visible con correo registrado para comunicar.', 'info');
+        return;
+    }
+    setCommSubject('');
+    setCommMessage('Estimado(a) {nombre},\n\nLe enviamos este comunicado respecto a su participación como {cargo}.\n\nAtentamente,\nDirección de Admisión');
+    setCommAttachments([]);
+    setShowCommModal(true);
+  };
+
+  const handleCommFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    const newAttachments = [];
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.size > 5 * 1024 * 1024) {
+            notify(`El archivo ${file.name} supera los 5MB y fue ignorado.`, 'warning');
+            continue;
+        }
+        try {
+            const base64 = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result as string);
+                reader.onerror = error => reject(error);
+            });
+            newAttachments.push({ filename: file.name, content: base64 });
+        } catch (error) {
+            console.error("Error reading file", error);
+        }
+    }
+    setCommAttachments(prev => [...prev, ...newAttachments]);
+    e.target.value = ''; // Reset
+  };
+
+  const removeCommAttachment = (index: number) => {
+      setCommAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const sendCommEmails = async () => {
+    if (!commSubject || !commMessage) {
+        notify('Por favor completa el asunto y el mensaje', 'warning');
+        return;
+    }
+
+    const targets = filteredSorteos.filter(s => s.email_personal);
+    setShowCommModal(false);
+    setLoading(true);
+    let successCount = 0;
+    
+    setEmailProgress({ current: 0, total: targets.length, message: `Enviando comunicados a ${targets.length} personas...` });
+
+    try {
+        for (let i = 0; i < targets.length; i++) {
+            const persona = targets[i];
+            
+            setEmailProgress({ 
+                current: i + 1, 
+                total: targets.length, 
+                message: `Enviando correo a ${persona.nombres} (${i + 1}/${targets.length})...` 
+            });
+
+            const htmlBody = commMessage
+                .replace(/\n/g, '<br/>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/{nombre}/g, persona.nombres)
+                .replace(/{cargo}/g, persona.cargo);
+            
+            const res = await fetch('/api/send-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    to: persona.email_personal,
+                    subject: commSubject,
+                    html: htmlBody,
+                    attachments: commAttachments.length > 0 ? commAttachments : undefined
+                })
+            });
+
+            if (!res.ok) {
+                console.error(`Error enviando comunicado a ${persona.email_personal}`);
+            } else {
+                successCount++;
+            }
+        }
+        notify(`Se enviaron ${successCount} de ${targets.length} comunicados correctamente.`);
+        
+        // Log in audit
+        if (successCount > 0) {
+            await supabase.from('tramite_seguimiento').insert([{
+                action_type: 'Notificación',
+                description: `Se envió comunicado masivo ("${commSubject}") a ${successCount} personas del proceso actual.`,
+                user_name: user?.name || 'Sistema'
+            }]);
+        }
+    } catch (e: any) {
+        console.error(e);
+        notify('Error al enviar comunicados: ' + e.message, 'error');
     } finally {
         setLoading(false);
         setEmailProgress(null);
@@ -883,6 +1060,7 @@ UNSAAC`);
                                   <th className="p-4 border-b border-slate-200">Cargo / Dept</th>
                                   <th className="p-4 border-b border-slate-200">Esc. Profesional</th>
                                    <th className="p-4 border-b border-slate-200">Contactos</th>
+                                   <th className="p-4 border-b border-slate-200 text-center">Acciones</th>
                               </tr>
                           </thead>
                           <tbody className="text-xs text-slate-700 divide-y divide-slate-100">
@@ -898,11 +1076,16 @@ UNSAAC`);
                                          {p.telefono && <p className="text-slate-500">{p.telefono}</p>}
                                          {(!p.correo && !p.telefono) && <span className="text-slate-400 italic">Sin datos</span>}
                                       </td>
+                                      <td className="p-4 text-center">
+                                         <button onClick={() => handleEditDirPerson(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar Personal">
+                                            <span className="material-symbols-outlined text-[18px]">edit</span>
+                                         </button>
+                                      </td>
                                   </tr>
                               ))}
                               {directorio.length === 0 && (
                                   <tr>
-                                      <td colSpan={6} className="p-8 text-center text-slate-500">No hay registros de personal.</td>
+                                      <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de personal.</td>
                                   </tr>
                               )}
                           </tbody>
@@ -1161,12 +1344,16 @@ UNSAAC`);
                              <span className="material-symbols-outlined text-[16px]">{showAddSorteo ? 'close' : 'person_add'}</span> <span className="hidden sm:inline">{showAddSorteo ? 'Cerrar' : 'Añadir'}</span>
                           </button>
                           
-                          <button onClick={() => handlePrintSorteos()} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors border border-emerald-600">
-                             <span className="material-symbols-outlined text-[16px]">print</span> Reporte <span className="hidden lg:inline">PDF</span>
+                          <button onClick={() => setIsReportModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors border border-emerald-600">
+                             <span className="material-symbols-outlined text-[16px]">print</span> Reportes
                           </button>
 
                           <button onClick={handleOpenEmailModal} className="bg-primary hover:bg-primary/90 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors border border-primary ml-auto sm:ml-0">
                              <span className="material-symbols-outlined text-[16px]">forward_to_inbox</span> Notificar <span className="hidden lg:inline">a Visibles</span>
+                          </button>
+
+                          <button onClick={handleOpenCommModal} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors border border-blue-600">
+                             <span className="material-symbols-outlined text-[16px]">campaign</span> Comunicado <span className="hidden lg:inline">a Visibles</span>
                           </button>
                       </div>
                   )}
@@ -1287,6 +1474,7 @@ UNSAAC`);
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50 uppercase text-[10px] font-black text-slate-500 tracking-wider sticky top-0">
                                    <tr>
+                                       <th className="p-4 border-b border-slate-200 text-center">N°</th>
                                        <th className="p-4 border-b border-slate-200">Personal</th>
                                        <th className="p-4 border-b border-slate-200">Cargo</th>
                                        <th className="p-4 border-b border-slate-200">Condición</th>
@@ -1296,8 +1484,11 @@ UNSAAC`);
                                    </tr>
                                 </thead>
                                 <tbody className="text-xs text-slate-700 divide-y divide-slate-100">
-                                   {filteredSorteos.map(s => (
+                                   {filteredSorteos.map((s, idx) => (
                                        <tr key={s.id} className={`transition-all border-b border-slate-100 last:border-b-0 ${getCargoColorStyle(s.cargo)}`}>
+                                           <td className="p-4 font-mono font-bold text-slate-400 text-center">
+                                              {idx + 1}
+                                           </td>
                                            <td className="p-4">
                                               <p className="font-bold text-slate-900 leading-tight flex items-center gap-1">
                                                  {s.nombres}
@@ -1388,10 +1579,10 @@ UNSAAC`);
             <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden flex flex-col">
                 <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <h3 className="font-bold text-slate-900 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-primary">person_add</span> 
-                        Agregar Persona al Directorio
+                        <span className="material-symbols-outlined text-primary">{editingDirPersonId ? 'edit' : 'person_add'}</span> 
+                        {editingDirPersonId ? 'Editar Personal' : 'Agregar Persona al Directorio'}
                     </h3>
-                    <button onClick={() => setShowAddDirModal(false)} className="text-slate-400 hover:text-slate-600">
+                    <button onClick={() => { setShowAddDirModal(false); setEditingDirPersonId(null); setNewDirPerson({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' }); }} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
                 </div>
@@ -1430,7 +1621,7 @@ UNSAAC`);
                     </div>
                 </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
-                    <button onClick={() => setShowAddDirModal(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
+                    <button onClick={() => { setShowAddDirModal(false); setEditingDirPersonId(null); setNewDirPerson({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' }); }} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button onClick={handleSaveAddDirPerson} disabled={loading} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-primary hover:bg-primary/90 transition-colors flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">save</span> Guardar
                     </button>
@@ -1519,6 +1710,82 @@ UNSAAC`);
         </div>
       )}
 
+      {/* Communication Modal */}
+      {showCommModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-blue-600">campaign</span> 
+                        Comunicado a Visibles
+                    </h3>
+                    <button onClick={() => setShowCommModal(false)} className="text-slate-400 hover:text-slate-600">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-4">
+                    <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm flex gap-2">
+                        <span className="material-symbols-outlined text-[20px]">info</span>
+                        <p>Se enviará este comunicado a <strong>{filteredSorteos.filter(s => s.email_personal).length}</strong> persona(s) visible(s) en la tabla que tienen correo registrado.</p>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">ASUNTO DEL COMUNICADO</label>
+                        <input type="text" value={commSubject} onChange={e => setCommSubject(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-bold text-slate-800" placeholder="Ej. Cambio de horario..." />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">CUERPO DEL COMUNICADO</label>
+                        <div className="text-xs text-slate-500 mb-2 leading-relaxed bg-slate-100 p-2 rounded-lg">
+                            <strong>Etiquetas dinámicas (se reemplazan solas):</strong> <br/>
+                            <div className="grid grid-cols-2 gap-1 mt-1">
+                                <span><code>{'{nombre}'}</code> = Nombre de la persona</span>
+                                <span><code>{'{cargo}'}</code> = Cargo asignado</span>
+                            </div>
+                            <div className="mt-2"><strong>Formato:</strong> Usa <code>**texto**</code> para poner palabras en <strong>negrilla</strong> y la tecla enter para saltos de línea.</div>
+                        </div>
+                        <textarea 
+                            value={commMessage} 
+                            onChange={e => setCommMessage(e.target.value)} 
+                            className="w-full border border-slate-200 rounded-lg p-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans bg-slate-50 min-h-[200px]"
+                        ></textarea>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold tracking-wider text-slate-500 mb-2">ARCHIVOS ADJUNTOS (Max 5MB cada uno)</label>
+                        <div className="flex items-center gap-3">
+                            <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors border border-slate-300">
+                                <span className="material-symbols-outlined text-[18px]">attach_file</span> Adjuntar Archivo
+                                <input type="file" multiple className="hidden" onChange={handleCommFileChange} />
+                            </label>
+                        </div>
+                        {commAttachments.length > 0 && (
+                            <div className="mt-3 flex flex-col gap-2">
+                                {commAttachments.map((att, idx) => (
+                                    <div key={idx} className="flex items-center justify-between bg-blue-50 border border-blue-100 p-2 rounded-lg text-sm">
+                                        <div className="flex items-center gap-2 text-blue-700 truncate">
+                                            <span className="material-symbols-outlined text-[18px]">insert_drive_file</span>
+                                            <span className="truncate max-w-[400px]">{att.filename}</span>
+                                        </div>
+                                        <button onClick={() => removeCommAttachment(idx)} className="text-red-500 hover:bg-red-100 p-1 rounded-full transition-colors">
+                                            <span className="material-symbols-outlined text-[18px] block">delete</span>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                    <button onClick={() => setShowCommModal(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
+                    <button onClick={sendCommEmails} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[18px]">send</span> Enviar Comunicado
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {/* Import Sorteos Modal */}
       {isImportSorteosModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -1599,6 +1866,55 @@ UNSAAC`);
                     >
                         Confirmar Rechazo
                     </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {isReportModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                    <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-600">sim_card_download</span> 
+                        Generar Reporte
+                    </h3>
+                    <button onClick={() => setIsReportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div className="p-6 flex flex-col gap-4">
+                    <button 
+                        onClick={() => {
+                            setIsReportModalOpen(false);
+                            handlePrintSorteos();
+                        }} 
+                        className="w-full px-5 py-4 border border-slate-200 rounded-xl flex items-center gap-4 hover:border-emerald-500 hover:bg-emerald-50 transition-colors group text-left"
+                    >
+                        <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                            <span className="material-symbols-outlined">picture_as_pdf</span>
+                        </div>
+                        <div>
+                            <div className="font-bold text-slate-800">Reporte en PDF</div>
+                            <div className="text-xs text-slate-500">Documento listo para imprimir</div>
+                        </div>
+                    </button>
+                    <button 
+                        onClick={handleGenerateExcel} 
+                        className="w-full px-5 py-4 border border-slate-200 rounded-xl flex items-center gap-4 hover:border-green-500 hover:bg-green-50 transition-colors group text-left"
+                    >
+                        <div className="w-10 h-10 rounded-lg bg-green-100 text-green-600 flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors">
+                            <span className="material-symbols-outlined">table</span>
+                        </div>
+                        <div>
+                            <div className="font-bold text-slate-800">Reporte en Excel</div>
+                            <div className="text-xs text-slate-500">Hoja de cálculo para exportar</div>
+                        </div>
+                    </button>
+                </div>
+                <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                    <button onClick={() => setIsReportModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                 </div>
             </div>
         </div>

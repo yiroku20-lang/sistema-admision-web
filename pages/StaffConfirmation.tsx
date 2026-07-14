@@ -90,6 +90,16 @@ export const StaffConfirmation = () => {
 
         if (error) throw error;
         
+        const auditDesc = state === 'Confirmado'
+             ? `${sorteo?.nombres} confirmó su participación mediante el enlace web para el cargo de ${sorteo?.cargo}`
+             : `${sorteo?.nombres} rechazó su participación mediante el enlace web (Motivo: ${motivo})`;
+             
+        await supabase.from('tramite_seguimiento').insert([{
+            action_type: 'Estado',
+            description: auditDesc,
+            user_name: `${sorteo?.nombres} (Vía Enlace)`
+        }]);
+        
         let msg = '';
         if (state === 'Confirmado') {
             msg = 'Pronto la Dirección de Admisión se comunicará con usted para brindarle más detalles.';

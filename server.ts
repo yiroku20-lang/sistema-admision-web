@@ -16,7 +16,11 @@ async function startServer() {
   // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
   app.use("/api/files", async (req, res) => {
     try {
+<<<<<<< HEAD
       const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
+=======
+      const baseUrl = process.env.VITE_API_URL || "https://june-entertainment-thanks-include.trycloudflare.com";
+>>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
       const targetUrl = `${baseUrl}/api/files${req.url}`;
       
       const fetchReq = await import('node-fetch').then(m => m.default);
@@ -57,9 +61,33 @@ async function startServer() {
       const { input, model, config } = req.body;
       if (!input) return res.status(400).json({ error: "Input is required" });
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY });
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      if (!apiKey) {
+        return res.status(400).json({ error: "No se configuró la clave de API de Gemini (GEMINI_API_KEY)." });
+      }
+
+      const ai = new GoogleGenAI({ 
+        apiKey: apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      // Mapear de forma segura nombres de modelos experimentales o inexistentes en la API pública a uno válido y rápido
+      let selectedModel = model || 'gemini-2.5-flash';
+      if (
+        selectedModel.includes('3.5-flash') || 
+        selectedModel.includes('3.0-pro') || 
+        selectedModel.includes('3.0') || 
+        selectedModel.includes('3.5')
+      ) {
+        selectedModel = 'gemini-2.5-flash';
+      }
+
       const requestOptions: any = {
-        model: model || 'gemini-3.0-pro', 
+        model: selectedModel,
         contents: input,
       };
       if (config) {
@@ -468,7 +496,13 @@ async function startServer() {
         html,
       };
 
-      if (attachmentBase64) {
+      if (req.body.attachments && Array.isArray(req.body.attachments)) {
+        mailOptions.attachments = req.body.attachments.map((att: any) => ({
+            filename: att.filename,
+            content: att.content.includes("base64,") ? att.content.split("base64,")[1] : att.content,
+            encoding: "base64",
+        }));
+      } else if (attachmentBase64) {
         mailOptions.attachments = [
           {
             filename: filename || "documento.pdf",
@@ -573,8 +607,6 @@ async function startServer() {
 
       if (dbError) {
           return res.status(400).json({ error: "Error al actualizar perfil: " + dbError.message });
-      }
-
       res.status(200).json({ success: true, message: "Contraseña actualizada exitosamente." });
       
     } catch (error: any) {
@@ -609,6 +641,81 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(500).json({ error: error.message || "Error al transmitir el archivo a través del proxy" });
       }
+    }
+  });
+
+  // --- 6. PRE-REVISION ENDPOINTS (Bypass RLS) ---
+  app.post("/api/save-pre-revision", express.json({ limit: "50mb" }), async (req, res) => {
+    try {
+      const { modalidad_id, csv_data } = req.body;
+      if (!modalidad_id) return res.status(400).json({ error: "modalidad_id is required" });
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      await supabase.from('pre_revision_archivos').delete().eq('modalidad_id', modalidad_id);
+      const { error } = await supabase.from('pre_revision_archivos').insert({
+        modalidad_id,
+        csv_data
+      });
+
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Save Pre-Revision Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/get-pre-revision/:modId", async (req, res) => {
+    try {
+      const modId = req.params.modId;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase
+        .from('pre_revision_archivos')
+        .select('*')
+        .eq('modalidad_id', modId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data && data.csv_data && typeof data.csv_data === 'string') {
+        try {
+          data.csv_data = JSON.parse(data.csv_data);
+        } catch (e) {
+          console.error("Error parsing csv_data string to JSON in server:", e);
+        }
+      }
+
+      res.json({ success: true, data });
+    } catch (error: any) {
+      console.error("Get Pre-Revision Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/get-pre-revisions-status", async (req, res) => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase
+        .from('pre_revision_archivos')
+        .select('modalidad_id');
+
+      if (error) throw error;
+      const ids = (data || []).map(item => item.modalidad_id);
+      res.json({ success: true, savedModalidadIds: ids });
+    } catch (error: any) {
+      console.error("Get Pre-Revisions Status Error:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 

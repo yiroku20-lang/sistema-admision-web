@@ -24,7 +24,9 @@ import { DataCleanup } from './pages/DataCleanup';
 import { StaffManagement } from './pages/StaffManagement';
 import { StaffConfirmation } from './pages/StaffConfirmation';
 import { MeetingMinutes } from './pages/MeetingMinutes';
+import ApplicantPreReview from './pages/ApplicantPreReview';
 import Adjudication from './pages/Adjudication';
+import { ExamBudget } from './pages/ExamBudget';
 import { Login } from './pages/Login';
 import { Unsubscribe } from './pages/Unsubscribe';
 import { ChatBot } from './components/ChatBot';
@@ -109,7 +111,7 @@ function App() {
         }} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
         
         <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#f8fafc] relative">
-          <header className="md:hidden flex items-center justify-between p-4 bg-white border-b border-slate-200 shrink-0">
+          <header className="md:hidden flex items-center justify-between p-4 bg-white border-b border-slate-200 shrink-0 print:hidden">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-primary">school</span>
               <span className="font-bold text-lg">UNSAAC</span>
@@ -135,7 +137,7 @@ function App() {
               )}
               {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_plantillas'))) && (
                 <>
-                  <Route path="/templates" element={<Templates user={user} />} />
+                  <Route path="/templates" element={<Templates />} />
                   <Route path="/templates/:id" element={<TemplateEditor user={user} />} />
                 </>
               )}
@@ -157,6 +159,12 @@ function App() {
               {/* Adjudicación */}
               {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_adjudicaciones'))) && (
                 <Route path="/adjudication" element={<Adjudication />} />
+              )}              {(user.role === 'Administrador' || user.role === 'Director' || user.role === 'Operador') && (
+                <Route path="/pre-review" element={<ApplicantPreReview user={user} notify={addToast} />} />
+              )}
+              
+              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_presupuesto'))) && (
+                <Route path="/budget" element={<ExamBudget user={user} notify={addToast} />} />
               )}
               
               {/* Agenda / Calendario */}

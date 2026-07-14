@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 export const handler: Handler = async (event, context) => {
   try {
     // Determine target URL: VITE_API_URL points to the Cloudflare tunnel (e.g. https://my-tunnel.trycloudflare.com)
-    const baseUrl = process.env.VITE_API_URL || 'http://localhost:5000';
+    const baseUrl = process.env.VITE_API_URL || 'https://june-entertainment-thanks-include.trycloudflare.com';
     
     // Extracted path from the event, usually we append what's after /api/files
     // Or we can just forward the entire URL if the backend handles /api/files/...

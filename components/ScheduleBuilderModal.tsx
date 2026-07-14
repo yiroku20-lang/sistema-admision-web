@@ -371,8 +371,8 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
             }
 
             for (const u of targets) {
-                const bodyText = emailBody.replace(/{{nombre}}/g, u.nombres + ' ' + u.apellidos);
-                const htmlBody = emailBody.replace(/{{nombre}}/g, `<strong>${u.nombres} ${u.apellidos}</strong>`).replace(/\n/g, '<br/>');
+                const bodyText = emailBody.replace(/{{nombre}}/g, u.nombres);
+                const htmlBody = emailBody.replace(/{{nombre}}/g, `<strong>${u.nombres}</strong>`).replace(/\n/g, '<br/>');
 
                 const res = await fetch('/api/send-email', {
                     method: 'POST',
@@ -906,7 +906,7 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                 >
                                     <option value="all">A todos los administradores con correo</option>
                                     {users.filter(u => u.email_personal).map(u => (
-                                        <option key={u.id} value={u.id}>{u.nombres} {u.apellidos}</option>
+                                        <option key={u.id} value={u.id}>{u.nombres}</option>
                                     ))}
                                 </select>
                             </div>

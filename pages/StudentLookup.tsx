@@ -20,6 +20,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
+<<<<<<< HEAD
   // Local API configuration (Cloudflare URL / Localhost fallback)
   const [localApiUrl] = useState(() => {
     const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -28,6 +29,17 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     }
     // Si estamos en producción (Netlify), usamos la ruta relativa (vacía) para ir a través del proxy de Netlify Functions
     return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || '';
+=======
+  // Local API configuration (Cloudflare URL)
+  const defaultApiUrl = 'https://june-entertainment-thanks-include.trycloudflare.com';
+  const [localApiUrl] = useState(() => {
+    const stored = localStorage.getItem('local_api_url');
+    if (stored && (stored.includes('night-fan-profiles-sides') || (stored.includes('trycloudflare.com') && !stored.includes('june-entertainment-thanks-include')))) {
+       localStorage.setItem('local_api_url', defaultApiUrl);
+       return defaultApiUrl;
+    }
+    return stored || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
+>>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
   });
   
   const isLocalApp = typeof window !== 'undefined' && (
@@ -151,7 +163,10 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       return fixed;
   };
 
-  const getModalityAndSemesterFromPath = (pathStr: string) => {
+  const getModalityAndSemesterFromPath = (pathStr: string | undefined | null) => {
+      if (!pathStr || typeof pathStr !== 'string') {
+          return 'EXPEDIENTE GENERAL';
+      }
       const segments = pathStr.split(/[\/\\]/).map(s => s.trim()).filter(Boolean);
       let targetFolder = '';
       
@@ -200,20 +215,45 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
 
   const getGroupedDocuments = (docs: any[]) => {
       const groups: { [key: string]: any[] } = {};
+<<<<<<< HEAD
       if (!Array.isArray(docs)) return groups;
       
       docs.forEach(doc => {
           if (!doc) return;
           const pathStr = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || '');
           const filename = typeof doc === 'string' ? doc.split(/[\/\\]/).pop()! : (doc.filename || doc.name || (pathStr ? pathStr.split(/[\/\\]/).pop() : '') || 'Archivo');
+=======
+      if (!docs || !Array.isArray(docs)) return groups;
+      
+      docs.forEach(doc => {
+          if (!doc) return;
+          // Prefer relativePath since it's the exact clean path inside the H: drive root
+          const rawPath = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || doc.file_path || doc.url || '');
+>>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
           
-          const groupLabel = getModalityAndSemesterFromPath(pathStr);
+          let cleanPath = rawPath;
+          if (rawPath.includes('?path=')) {
+              try {
+                  const match = rawPath.match(/[?&]path=([^&]+)/);
+                  if (match) {
+                      cleanPath = decodeURIComponent(match[1]);
+                  }
+              } catch (e) {
+                  console.error("Error decoding path parameter:", e);
+              }
+          }
+          
+          const filename = typeof doc === 'string' 
+              ? doc.split(/[\/\\]/).pop()! 
+              : (doc.name || doc.filename || (cleanPath && typeof cleanPath === 'string' ? cleanPath.split(/[\/\\]/).pop() : '') || 'Documento sin nombre');
+          
+          const groupLabel = getModalityAndSemesterFromPath(cleanPath);
           
           if (!groups[groupLabel]) {
               groups[groupLabel] = [];
           }
           groups[groupLabel].push({
-              path: pathStr,
+              path: cleanPath,
               filename,
               originalDoc: doc
           });
@@ -221,27 +261,31 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
 
       Object.keys(groups).forEach(groupLabel => {
           // Sort documents inside this folder alphabetically to guarantee sequential ordering of files (e.g., 1_1_*, 2_1_*, 3_1_*)
-          groups[groupLabel].sort((a, b) => a.filename.localeCompare(b.filename));
+          groups[groupLabel].sort((a, b) => (a.filename || '').localeCompare(b.filename || ''));
           
           let pdfCounter = 1;
           
           groups[groupLabel] = groups[groupLabel].map(doc => {
-              const ext = doc.filename.split('.').pop()?.toUpperCase() || '';
+              const ext = (doc.filename && typeof doc.filename === 'string' ? doc.filename.split('.').pop() : '')?.toUpperCase() || '';
               const isPdf = ext === 'PDF';
               const isImage = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF'].includes(ext);
               
               let friendlyName = doc.filename;
               let docTypeLabel = '';
               
+              const description = doc.originalDoc?.description;
+              
               if (isImage) {
-                  friendlyName = 'Foto';
+                  friendlyName = description || 'Foto';
                   docTypeLabel = 'Foto';
               } else if (isPdf) {
-                  friendlyName = `Doc ${pdfCounter}`;
-                  docTypeLabel = `Doc ${pdfCounter}`;
-                  pdfCounter++;
+                  friendlyName = description || `Doc ${pdfCounter}`;
+                  docTypeLabel = description || `Doc ${pdfCounter}`;
+                  if (!description) {
+                      pdfCounter++;
+                  }
               } else {
-                  friendlyName = doc.filename;
+                  friendlyName = description || doc.filename;
                   docTypeLabel = ext;
               }
 
@@ -510,7 +554,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           const found = statusMap[res.status];
           let detail = '';
           if (res.allMatches.length === 1) {
-              detail = `${res.allMatches[0].ESCUELA} - ${res.allMatches[0].SEMESTRE_INGRESO || res.allMatches[0].PERIODO_INGRESO || 'N/A'} - MODALIDAD: ${res.allMatches[0].MODALIDAD_INGRESO || 'N/A'}`;
+              detail = `${res.allMatches[0].CARRERA} - ${res.allMatches[0].SEMESTRE || res.allMatches[0].ANIO || 'N/A'} - MODALIDAD: ${res.allMatches[0].MODALIDAD || 'N/A'}`;
           } else if (res.allMatches.length > 1) {
               detail = `Múltiples ingresos (${res.allMatches.length})`;
           }
@@ -551,7 +595,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       const tableData = batchResults.map(res => {
           let detail = '';
           if (res.allMatches.length === 1) {
-              detail = `${res.allMatches[0].ESCUELA}\n${res.allMatches[0].SEMESTRE_INGRESO || res.allMatches[0].PERIODO_INGRESO || 'N/A'}`;
+              detail = `${res.allMatches[0].CARRERA}\n${res.allMatches[0].SEMESTRE || res.allMatches[0].ANIO || 'N/A'}`;
           } else if (res.allMatches.length > 1) {
               detail = `Múltiples ingresos (${res.allMatches.length})`;
           }
@@ -1107,6 +1151,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                 <span className="material-symbols-outlined text-slate-400 text-[14px]">folder_open</span>
                                             </div>
                                         </div>
+<<<<<<< HEAD
 
                                         {loadingDocs ? (
                                             <div className="flex items-center gap-2 text-slate-400 text-xs font-bold">
@@ -1145,6 +1190,50 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                                 </div>
                                                                 <span className="material-symbols-outlined text-slate-500 text-[15px] shrink-0">
                                                                     {isExpanded ? 'expand_less' : 'expand_more'}
+=======
+                                    ) : localDocuments.length > 0 ? (
+                                        <div className="flex flex-col gap-3">
+                                            {Object.entries(getGroupedDocuments(localDocuments))
+                                                .sort(([labelA], [labelB]) => {
+                                                    const yearMatchA = labelA.match(/\b\d{4}\b/);
+                                                    const yearMatchB = labelB.match(/\b\d{4}\b/);
+                                                    const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
+                                                    const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
+                                                    
+                                                    if (yearA !== yearB) {
+                                                        return yearB - yearA; // Recientes primero
+                                                    }
+                                                    
+                                                    const getSemesterVal = (label: string) => {
+                                                        if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
+                                                        if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
+                                                        return 0;
+                                                    };
+                                                    
+                                                    const semA = getSemesterVal(labelA);
+                                                    const semB = getSemesterVal(labelB);
+                                                    
+                                                    if (semA !== semB) {
+                                                        return semB - semA; // II antes que I
+                                                    }
+                                                    
+                                                    return labelA.localeCompare(labelB);
+                                                })
+                                                .map(([folderLabel, docsInFolder], groupIdx) => {
+                                                    const isExpanded = !!expandedFolders[folderLabel];
+                                                return (
+                                                    <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                                                        {/* Folder Header */}
+                                                        <button
+                                                            onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
+                                                            type="button"
+                                                            className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
+                                                        >
+                                                            <div className="flex items-center gap-2 text-left min-w-0">
+                                                                <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
+                                                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
+                                                                    {folderLabel}
+>>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
                                                                 </span>
                                                             </button>
                                                             

@@ -343,7 +343,8 @@ Dirección de Admisión`);
         
         // Enviar correo de bienvenida al nuevo prospecto
         try {
-          const cancelUrl = insertedData ? `${window.location.origin}/#/unsubscribe?id=${insertedData.id}` : '#';
+          const originResolver = window.location.origin.includes('localhost') && import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL : window.location.origin;
+          const cancelUrl = insertedData ? `${originResolver}/#/unsubscribe?id=${insertedData.id}` : '#';
           const welcomeHtml = `
             <div style="font-family: sans-serif; padding: 20px;">
               <h2 style="color: #7b1523;">¡Bienvenido(a) a la plataforma de Atención y Orientación al Postulante UNSAAC!</h2>
@@ -574,7 +575,8 @@ _Dirección de Admisión UNSAAC_`;
           .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
           .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" style="color: #7b1523; text-decoration: underline; font-weight: bold;">$1</a>');
           
-        const cancelUrl = `${window.location.origin}/#/unsubscribe?id=${p.id}`;
+        const originResolver = window.location.origin.includes('localhost') && import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL : window.location.origin;
+        const cancelUrl = `${originResolver}/#/unsubscribe?id=${p.id}`;
         const finalHtmlBody = `<div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">${htmlContent}</div>
         <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
         <div style="text-align: center; font-size: 11px; color: #999;">

@@ -27,15 +27,33 @@ export const Dashboard: React.FC<{ user: User | null }> = ({ user }) => {
   const [upcomingReservationsCount, setUpcomingReservationsCount] = useState(0);
   const [upcomingSemesterStr, setUpcomingSemesterStr] = useState<string>('');
   const [reservationCounts, setReservationCounts] = useState<{semester: string, count: number}[]>([]);
+  const [assignedFilesCount, setAssignedFilesCount] = useState(0);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [user]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
       const today = startOfDay(new Date());
+
+      // 0. Expedientes Asignados Pendientes
+      if (user?.id) {
+        try {
+          const { data: assignedData } = await supabase
+            .from('expedientes')
+            .select('id')
+            .eq('assigned_to', user.id)
+            .eq('assignment_status', 'pending');
+          if (assignedData) {
+            setAssignedFilesCount(assignedData.length);
+          }
+        } catch (err) {
+          console.error("Error fetching assigned files:", err);
+        }
+      }
+
 
       // 1. Eventos Próximos (Desde hoy, próximos 30 días o los siguientes 5 eventos)
       const { data: eventsData } = await supabase
@@ -148,6 +166,28 @@ export const Dashboard: React.FC<{ user: User | null }> = ({ user }) => {
             <p className="text-slate-500 text-base font-medium">Resumen general y estado de operaciones</p>
           </div>
       </div>
+
+      {/* EXPEDIENTES ASIGNADOS ALERT BANNER */}
+      {assignedFilesCount > 0 && (
+          <Link 
+              to="/incoming?filter=Asignados%20a%20M%C3%AD" 
+              className="bg-gradient-to-r from-orange-500 to-amber-500 text-white p-6 rounded-3xl flex items-center justify-between gap-6 hover:shadow-xl hover:-translate-y-0.5 transition-all shadow-lg active:scale-[0.99] animate-in fade-in slide-in-from-top-4 duration-500"
+          >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+                  <div className="size-14 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-3xl shrink-0">
+                      <span className="material-symbols-outlined text-white font-black">assignment</span>
+                  </div>
+                  <div>
+                      <h4 className="font-black text-lg tracking-tight">Tienes expedientes pendientes asignados</h4>
+                      <p className="text-white/80 text-xs font-semibold uppercase tracking-wider mt-0.5">Tienes {assignedFilesCount} {assignedFilesCount === 1 ? 'expediente' : 'expedientes'} esperando tu revisión o atención en el sistema.</p>
+                  </div>
+              </div>
+              <div className="flex items-center gap-2 bg-white text-orange-600 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md shrink-0">
+                  <span>ATENDER</span>
+                  <span className="material-symbols-outlined text-sm">arrow_forward</span>
+              </div>
+          </Link>
+      )}
 
       {/* STAT CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">

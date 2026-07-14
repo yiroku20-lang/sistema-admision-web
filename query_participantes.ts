@@ -8,7 +8,11 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SU
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function run() {
-  const { data, error } = await supabase.from('participantes').select('MODALIDAD, FECHAINGRESO').limit(10);
+  const { data, error } = await supabase
+    .from('participantes')
+    .select('CODPOSTULANTE, NOMBRE, CARRERA, MODALIDAD, ANIO, SEMESTRE')
+    .gte('ANIO', '2023')
+    .limit(10);
   console.log("Sample data:", data);
 }
 run();

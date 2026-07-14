@@ -88,6 +88,13 @@ export default function Adjudication() {
   const [showCsvModal, setShowCsvModal] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvLoading, setCsvLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isAlreadyMigrated, setIsAlreadyMigrated] = useState(false);
+  // NUEVOS ESTADOS PARA EL MODAL DE MIGRACIÓN
+  const [showMigrateModal, setShowMigrateModal] = useState(false);
+  const [migrateDate, setMigrateDate] = useState("");
+  const [migrateStatus, setMigrateStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
+  const [migrateMessage, setMigrateMessage] = useState("");
   const [csvMessage, setCsvMessage] = useState<{
     text: string;
     type: "success" | "error";
@@ -202,6 +209,31 @@ export default function Adjudication() {
   useEffect(() => {
     fetchCrossReferences(ranking);
   }, [ranking]);
+
+  useEffect(() => {
+    const checkIfMigrated = async () => {
+      if (!activeProcessName) {
+        setIsAlreadyMigrated(false);
+        return;
+      }
+      try {
+        const { count, error } = await supabase
+          .from("participantes")
+          .select("*", { count: "exact", head: true })
+          .eq("MODALIDAD", activeProcessName);
+
+        if (!error && count !== null && count > 0) {
+          setIsAlreadyMigrated(true);
+        } else {
+          setIsAlreadyMigrated(false);
+        }
+      } catch (err) {
+        console.error("Error checking migration status in Adjudication:", err);
+        setIsAlreadyMigrated(false);
+      }
+    };
+    checkIfMigrated();
+  }, [activeProcessName]);
 
   // Keep selected index valid when ranking changes, only reset on area or process change
   useEffect(() => {
@@ -390,39 +422,38 @@ export default function Adjudication() {
 
   const fetchApprovedModalidadSchools = async (processName: string) => {
     try {
-      // Find the modality with matching name and an approved cuadro
+      // Obtener modalidades de cuadros aprobados
       const { data: modalitiesData, error: modError } = await supabase
         .from("cv_modalidades")
-        .select("id, cuadro_id, cv_cuadros_anuales!inner(anio, estado)")
-        .eq("nombre", processName)
+        .select("id, nombre, cuadro_id, cv_cuadros_anuales!inner(anio, estado)")
         .eq("cv_cuadros_anuales.estado", "Aprobado");
-
       if (modError) throw modError;
-
-      if (modalitiesData && modalitiesData.length > 0) {
-        const modalityIds = modalitiesData.map((m) => m.id);
-
+      // Normalización robusta e insensible a espacios, guiones, acentos y mayúsculas
+      const normName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
+      const targetNorm = normName(processName);
+      
+      const matchedModalities = modalitiesData?.filter(m => {
+        const mNorm = normName(m.nombre);
+        return mNorm === targetNorm || mNorm.includes(targetNorm) || targetNorm.includes(mNorm);
+      }) || [];
+      if (matchedModalities.length > 0) {
+        const modalityIds = matchedModalities.map((m) => m.id);
         // Fetch vacancies quantity greater than 0
         const { data: vacData, error: vacError } = await supabase
           .from("cv_vacantes")
           .select("escuela_id, cantidad")
           .in("modalidad_id", modalityIds)
           .gt("cantidad", 0);
-
         if (vacError) throw vacError;
-
         if (vacData && vacData.length > 0) {
           const escuelaIds = Array.from(new Set(vacData.map((v) => v.escuela_id)));
-
-          // Fetch original школы
+          // Fetch original escuelas
           const { data: escData, error: escError } = await supabase
             .from("cv_escuelas")
             .select("nombre, area")
             .in("id", escuelaIds)
             .order("nombre", { ascending: true });
-
           if (escError) throw escError;
-
           if (escData && escData.length > 0) {
             const grouped: Record<string, string[]> = { A: [], B: [], C: [], D: [] };
             escData.forEach((esc) => {
@@ -791,9 +822,7 @@ export default function Adjudication() {
         .from("adjudicacion_vacantes")
         .select("*")
         .eq("modalidad", activeProcessName);
-
       if (vErr) throw vErr;
-
       // 2. Fetch all adjudicated applicants
       let finalRanking: any[] = [];
       const res = await supabase
@@ -814,24 +843,22 @@ export default function Adjudication() {
       } else {
         finalRanking = res.data || [];
       }
-
       // Filter area "_" vacancies if any
       const vacanciesList = (allVacancies || []).filter((v) => v.area !== "_");
-
       // Sort vacancies by Area then by Escuela name
       vacanciesList.sort((a, b) => {
         if (a.area !== b.area) return a.area.localeCompare(b.area);
         return a.escuela.localeCompare(b.escuela);
       });
-
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
-
-      // Official UNSAAC styling: Red (#800000) and Gold (#FFC107) branding
+      // Official UNSAAC styling: Red (#800000) and Gold (#D4AF37) branding
       // Title Block
       doc.setFillColor(128, 0, 0); // Crimson Red
       doc.rect(0, 0, pageWidth, 42, "F");
-
+      // Elegant gold divider line under the banner
+      doc.setFillColor(212, 175, 55); // Metallic Gold (#D4AF37)
+      doc.rect(0, 42, pageWidth, 2.5, "F");
       // Title text helper
       doc.setTextColor(255, 255, 255);
       doc.setFont("Helvetica", "bold");
@@ -841,31 +868,25 @@ export default function Adjudication() {
       doc.setTextColor(255, 193, 7); // Gold
       doc.setFontSize(11);
       doc.text("DIRECCIÓN DE ADMISIÓN - REPORTE OFICIAL DE ADJUDICACIÓN", pageWidth / 2, 26, { align: "center" });
-
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(9);
       doc.text(`PROCESO: ${activeProcessName}`, pageWidth / 2, 35, { align: "center" });
-
       // Spacing and Report Summary Metadata
-      doc.setTextColor(51, 65, 85);
-      doc.setFontSize(14);
+      doc.setTextColor(30, 41, 59); // Deep Slate
+      doc.setFontSize(12);
       doc.setFont("Helvetica", "bold");
-      doc.text("I. CUADRO RESUMEN DE VACANTES DE ADJUDICACIÓN", 14, 52);
-
+      doc.text("I. CUADRO RESUMEN DE VACANTES DE ADJUDICACIÓN", 14, 54);
       let totalOfertadas = 0;
       let totalCubiertas = 0;
       let totalSobrantes = 0;
-
       const vacanciesTableBody = vacanciesList.map((v) => {
         const cubiertas = finalRanking.filter(
           (r) => r.escuela_adjudicada?.toUpperCase() === v.escuela?.toUpperCase()
         ).length;
         const sobrantes = Math.max(0, v.vacantes_totales - cubiertas);
-
         totalOfertadas += v.vacantes_totales;
         totalCubiertas += cubiertas;
         totalSobrantes += sobrantes;
-
         return [
           v.area,
           v.escuela,
@@ -874,7 +895,6 @@ export default function Adjudication() {
           sobrantes
         ];
       });
-
       // Add a Totals Row
       vacanciesTableBody.push([
         "",
@@ -883,10 +903,9 @@ export default function Adjudication() {
         totalCubiertas,
         totalSobrantes
       ]);
-
-      // Generate Table 1 - Vacancies
+      // Generate Table 1 - Vacancies (Width: 15 + 86 + 27 + 27 + 27 = 182mm)
       autoTable(doc, {
-        startY: 56,
+        startY: 58,
         head: [["ÁREA", "ESCUELA PROFESIONAL", "OFERTADAS", "CUBIERTAS", "SOBRANTES"]],
         body: vacanciesTableBody,
         theme: "striped",
@@ -894,14 +913,19 @@ export default function Adjudication() {
           fillColor: [128, 0, 0],
           textColor: [255, 255, 255],
           fontStyle: "bold",
-          fontSize: 9
+          fontSize: 8.5,
+          halign: "center"
         },
         columnStyles: {
           0: { cellWidth: 15, halign: "center" },
-          1: { cellWidth: 105 },
-          2: { halign: "center" },
-          3: { halign: "center" },
-          4: { halign: "center" }
+          1: { cellWidth: 86, halign: "left" },
+          2: { cellWidth: 27, halign: "center" },
+          3: { cellWidth: 27, halign: "center" },
+          4: { cellWidth: 27, halign: "center" }
+        },
+        styles: {
+          fontSize: 8.5,
+          cellPadding: 3
         },
         footStyles: {
           fillColor: [241, 245, 249],
@@ -916,22 +940,18 @@ export default function Adjudication() {
           }
         }
       });
-
       // Section 2: Relación de Adjudicados
       // Starting from where the table ends
       let nextY = (doc as any).lastAutoTable.finalY + 15;
-
       // Add new page if not enough space
       if (nextY > doc.internal.pageSize.getHeight() - 40) {
         doc.addPage();
         nextY = 20;
       }
-
-      doc.setTextColor(51, 65, 85);
-      doc.setFontSize(14);
+      doc.setTextColor(30, 41, 59);
+      doc.setFontSize(12);
       doc.setFont("Helvetica", "bold");
       doc.text("II. RELACIÓN DE POSTULANTES ADJUDICADOS", 14, nextY);
-
       const rankingTableBody = finalRanking.map((r, idx) => [
         idx + 1,
         r.orden_merito,
@@ -941,9 +961,8 @@ export default function Adjudication() {
         r.area,
         r.escuela_adjudicada || ""
       ]);
-
       autoTable(doc, {
-        startY: nextY + 4,
+        startY: nextY + 5,
         head: [["Nº", "MÉRITO", "DNI", "APELLIDOS Y NOMBRES", "PUNTAJE", "ÁREA", "CARRERA ADJUDICADA"]],
         body: rankingTableBody,
         theme: "striped",
@@ -951,22 +970,23 @@ export default function Adjudication() {
           fillColor: [30, 41, 59], // Slate Gray
           textColor: [255, 255, 255],
           fontStyle: "bold",
-          fontSize: 8
+          fontSize: 8.5,
+          halign: "center"
         },
         columnStyles: {
           0: { cellWidth: 10, halign: "center" },
           1: { cellWidth: 15, halign: "center" },
-          2: { cellWidth: 20, halign: "center" },
-          3: { cellWidth: 65 },
+          2: { cellWidth: 22, halign: "center" },
+          3: { cellWidth: 62, halign: "left" },
           4: { cellWidth: 18, halign: "center" },
           5: { cellWidth: 12, halign: "center" },
-          6: { cellWidth: 42 }
+          6: { cellWidth: 43, halign: "left" }
         },
         styles: {
-          fontSize: 8
+          fontSize: 8,
+          cellPadding: 2.5
         }
       });
-
       // Add footer callback for page numbers
       const totalPages = (doc as any).internal.getNumberOfPages();
       for (let i = 1; i <= totalPages; i++) {
@@ -981,7 +1001,6 @@ export default function Adjudication() {
           { align: "center" }
         );
       }
-
       doc.save(`Reporte_Oficial_Adjudicados_${activeProcessName.replace(/[^a-zA-Z0-9-]/g, "_")}.pdf`);
     } catch (err: any) {
       alert("Error al generar PDF: " + err.message);
@@ -1308,6 +1327,10 @@ export default function Adjudication() {
   };
 
   const cancelAdjudication = async () => {
+    if (isAlreadyMigrated) {
+      alert("No se puede modificar un proceso ya finalizado.");
+      return;
+    }
     if (!selectedStudent) return;
     const prevSchool = selectedStudent.escuela_adjudicada;
     if (!prevSchool) return;
@@ -1340,6 +1363,10 @@ export default function Adjudication() {
   };
 
   const confirmAdjudication = async () => {
+    if (isAlreadyMigrated) {
+      alert("No se puede modificar un proceso ya finalizado.");
+      return;
+    }
     if (!selectedStudent || !selectedSchool) return;
 
     try {
@@ -1385,6 +1412,240 @@ export default function Adjudication() {
       fetchData();
     } catch (e: any) {
       alert("Error: " + e.message);
+    }
+  };
+
+  const handleApproveAndMigrate = async () => {
+    if (!activeProcessName) return;
+    if (isAlreadyMigrated) {
+      alert("Este proceso ya ha sido aprobado y migrado de manera definitiva.");
+      return;
+    }
+    const fechaIngresoValida = migrateDate.trim() || new Date().toISOString().split("T")[0];
+    setIsSaving(true);
+    setMigrateStatus("saving");
+    setMigrateMessage("Migrando ingresantes, por favor espere...");
+    try {
+      // 1. Obtener la modalidad por nombre (normalización robusta)
+      const { data: modalities, error: modErr } = await supabase
+        .from("cv_modalidades")
+        .select("*");
+      if (modErr) throw modErr;
+      
+      const normName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
+      const targetNorm = normName(activeProcessName);
+      let modality = modalities?.find(m => normName(m.nombre) === targetNorm);
+      if (!modality) {
+        modality = modalities?.find(m => normName(m.nombre).includes(targetNorm) || targetNorm.includes(normName(m.nombre)));
+      }
+      if (!modality) {
+        throw new Error(`No se encontró la modalidad: ${activeProcessName}`);
+      }
+      // Obtener Cuadro Anual para obtener el año
+      const { data: cuadro, error: cuadroErr } = await supabase
+        .from("cv_cuadros_anuales")
+        .select("anio")
+        .eq("id", modality.cuadro_id)
+        .maybeSingle();
+      if (cuadroErr) throw cuadroErr;
+      const anio = cuadro ? cuadro.anio : new Date().getFullYear().toString();
+      const semestre = modality.semestre || "—";
+      // 2. Obtener todas las escuelas para resolver códigos y filiales
+      const { data: schools, error: schoolsErr } = await supabase
+        .from("cv_escuelas")
+        .select("nombre, codigo_carrera, filial");
+      if (schoolsErr) throw schoolsErr;
+      const schoolCodeMap: Record<string, string> = {};
+      const schoolFilialMap: Record<string, string> = {};
+      const findSchoolByString = (val: string) => {
+        if (!val || !schools) return null;
+        const normVal = val.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        const words = normVal.split(/\s+/).filter(w => w.length > 2);
+        
+        let found = schools.find(s => 
+          s.nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim() === normVal ||
+          s.codigo_carrera === val
+        );
+        if (found) return found;
+        if (words.length > 0) {
+          found = schools.find(s => {
+            const eName = s.nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+            return words.every(w => eName.includes(w));
+          });
+        }
+        return found || null;
+      };
+      if (schools) {
+        schools.forEach(s => {
+          schoolCodeMap[s.nombre] = s.codigo_carrera;
+          schoolFilialMap[s.nombre] = s.filial || "CUSCO";
+        });
+      }
+      const getRowValue = (row: any, keys: string[]): string => {
+        if (!row) return "";
+        for (const k of keys) {
+          if (row[k] !== undefined && row[k] !== null) {
+            return String(row[k]).trim();
+          }
+        }
+        return "";
+      };
+      const checkAdmitted = (row: any): boolean => {
+        const val = getRowValue(row, [
+          'OBSERVACION', 'Observacion', 'observacion', 
+          'OBSERVACIONES', 'observaciones', 
+          'ESTADO', 'estado', 'resultado', 'RESULTADO'
+        ]).toUpperCase();
+        
+        if (val.includes('NO INGRESA') || val.includes('NO INGRESANTE') || val.includes('NO INGRESO') || val.includes('NO ADMITIDO') || val.includes('NO_INGRESA')) {
+          return false;
+        }
+        if (val.includes('INGRESA') || val.includes('INGRESO') || val.includes('ADMITIDO') || val === 'SI' || val.includes('INGRESANTE')) {
+          return true;
+        }
+        const carreraIng = getRowValue(row, [
+          'CarreraIngreso', 'carreraIngreso', 'CARRERA_INGRESO', 
+          'carrera_ingreso', 'Carrera', 'carrera', 'CARRERA', 
+          'escuela', 'Escuela', 'ESCUELA', 'codigo_carrera', 'COD_CARRERA'
+        ]);
+        if (!val && carreraIng) {
+          const rowKeysLower = Object.keys(row).map(k => k.toLowerCase().replace(/[\s_-]/g, ''));
+          const hasObsColumn = rowKeysLower.some(k => k.includes('observa') || k.includes('estado') || k.includes('result'));
+          if (!hasObsColumn) {
+            return true;
+          }
+        }
+        return false;
+      };
+      // 3. Obtener el archivo CSV cargado en la pre-revisión mediante la API (Bypass RLS)
+      const apiRes = await fetch(`/api/get-pre-revision/${modality.id}`);
+      if (!apiRes.ok) {
+        throw new Error(`Error al obtener los datos del CSV desde el servidor: ${apiRes.statusText}`);
+      }
+      const fileRecord = await apiRes.json();
+      
+      // CORRECCIÓN DEL TYPO AQUÍ (leer del objeto wrapper data)
+      const record = fileRecord.data;
+      let csvRows: any[] = [];
+      if (record && record.csv_data) {
+        csvRows = typeof record.csv_data === "string" 
+          ? JSON.parse(record.csv_data) 
+          : record.csv_data;
+      }
+      // Normalizar ingresantes regulares del CSV
+      const directIngresantes: any[] = [];
+      const careerCounts: Record<string, number> = {};
+      csvRows.forEach(row => {
+        if (row && checkAdmitted(row)) {
+          const dni = getRowValue(row, ['NroDocumento', 'nroDocumento', 'NRODOCUMENTO', 'DNI', 'dni', 'Documento', 'documento', 'alumno', 'ALUMNO', 'CODPOSTULANTE', 'codpostulante']);
+          const nombre = getRowValue(row, ['nombre', 'Nombre', 'NOMBRE', 'postulante', 'POSTULANTE', 'nombres', 'Nombres', 'NOMBRES', 'ApeNom', 'apenom']);
+          const nota = getRowValue(row, ['Nota', 'nota', 'NOTA', 'Puntaje', 'puntaje', 'PUNTAJE']);
+          const pos = getRowValue(row, ['POS', 'Pos', 'pos', 'posicion', 'Posicion', 'puesto', 'Puesto', 'OMERITO', 'omerito', 'orden_merito']);
+          const rawCode = getRowValue(row, ['codigo_carrera', 'COD_CARRERA', 'codigo', 'Codigo', 'COD_CAR', 'cod_car', 'COD_ESC', 'cod_esc', 'COD_ESCP', 'cod_escp', 'CODIGO_CARRERA', 'CODIGO_ESCUELA', 'carrera_codigo', 'CODIGO', 'cod_carrera', 'CodCarrera']);
+          let sch = null;
+          if (rawCode) {
+            sch = schools?.find(e => e.codigo_carrera === rawCode.trim());
+          }
+          if (!sch) {
+            const rawIng = getRowValue(row, ['CarreraIngreso', 'carreraIngreso', 'CARRERA_INGRESO', 'carrera_ingreso', 'carrera_adjudicada', 'CARRERA_ADJUDICADA']);
+            sch = findSchoolByString(rawIng);
+          }
+          if (!sch) {
+            const rawPost = getRowValue(row, ['Escuela1', 'escuela1', 'ESCUELA1', 'carrera_postula', 'CARRERA_POSTULA', 'carrera_opcion', 'CARRERA_OPCION', 'opcion', 'OPCION', 'Carrera', 'carrera', 'CARRERA', 'escuela', 'Escuela', 'ESCUELA']);
+            sch = findSchoolByString(rawPost);
+          }
+          const schoolName = sch ? sch.nombre : "";
+          const schoolCode = sch ? sch.codigo_carrera : "";
+          const filial = sch ? (sch.filial || "CUSCO") : "CUSCO";
+          const orderNum = parseInt(pos) || 0;
+          if (schoolName) {
+            careerCounts[schoolName] = Math.max(careerCounts[schoolName] || 0, orderNum);
+          }
+          directIngresantes.push({
+            CODPOSTULANTE: dni,
+            NOMBRE: nombre,
+            codigo_carrera: schoolCode,
+            CARRERA: schoolName,
+            FILIAL: filial,
+            MODALIDAD: activeProcessName,
+            SEMESTRE: semestre,
+            ANIO: anio,
+            NOTA: nota,
+            OMERITO: pos || "—",
+            FECHAINGRESO: fechaIngresoValida
+          });
+        }
+      });
+      // 4. Obtener estudiantes adjudicados
+      const { data: adjRanking, error: adjErr } = await supabase
+        .from("adjudicacion_ranking")
+        .select("*")
+        .eq("modalidad", activeProcessName)
+        .eq("observacion", "Adjudicado");
+      if (adjErr) throw adjErr;
+      const adjStudentsBySchool: Record<string, typeof adjRanking> = {};
+      if (adjRanking) {
+        adjRanking.forEach(student => {
+          const schName = student.escuela_adjudicada;
+          if (schName) {
+            if (!adjStudentsBySchool[schName]) {
+              adjStudentsBySchool[schName] = [];
+            }
+            adjStudentsBySchool[schName].push(student);
+          }
+        });
+      }
+      const adjudicatedIngresantes: any[] = [];
+      Object.entries(adjStudentsBySchool).forEach(([schName, students]) => {
+        students.sort((a, b) => (parseFloat(a.nota) || 0) > (parseFloat(b.nota) || 0) ? -1 : 1);
+        const baseMerit = careerCounts[schName] || 0;
+        students.forEach((student, index) => {
+          const schCode = schoolCodeMap[schName] || null;
+          const filial = schoolFilialMap[schName] || "CUSCO";
+          const newMerit = baseMerit + index + 1;
+          adjudicatedIngresantes.push({
+            CODPOSTULANTE: student.dni,
+            NOMBRE: student.nombre,
+            codigo_carrera: schCode,
+            CARRERA: schName,
+            FILIAL: filial,
+            MODALIDAD: activeProcessName,
+            SEMESTRE: semestre,
+            ANIO: anio,
+            NOTA: String(student.nota),
+            OMERITO: String(newMerit),
+            FECHAINGRESO: fechaIngresoValida
+          });
+        });
+      });
+      // 5. Consolidar ambas listas
+      const finalIngresantes = [...directIngresantes, ...adjudicatedIngresantes];
+      // 6. Limpiar participantes antiguos de esta modalidad
+      const { error: delErr } = await supabase
+        .from("participantes")
+        .delete()
+        .eq("MODALIDAD", activeProcessName)
+        .eq("SEMESTRE", semestre)
+        .eq("ANIO", anio);
+      if (delErr) throw delErr;
+      // 7. Insertar todos los ingresantes consolidados en bloques
+      if (finalIngresantes.length > 0) {
+        const chunkSize = 100;
+        for (let i = 0; i < finalIngresantes.length; i += chunkSize) {
+          const chunk = finalIngresantes.slice(i, i + chunkSize);
+          const { error: insErr } = await supabase.from("participantes").insert(chunk);
+          if (insErr) throw insErr;
+        }
+      }
+      setMigrateStatus("success");
+      setMigrateMessage(`¡Proceso finalizado! Se migraron exitosamente ${finalIngresantes.length} ingresantes oficiales a participantes (${directIngresantes.length} regulares y ${adjudicatedIngresantes.length} adjudicados) con filiales y orden de mérito consecutivo resueltos.`);
+      setIsAlreadyMigrated(true);
+      fetchData();
+    } catch (e: any) {
+      setMigrateStatus("error");
+      setMigrateMessage("Error en la migración final: " + e.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -1525,16 +1786,9 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
               Procesos de Adjudicación
             </h1>
             <p className="text-slate-500 font-medium mt-1">
-              Seleccione una adjudicación existente o cree una nueva.
+              Seleccione una adjudicación existente.
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-6 py-3 bg-primary text-white rounded-xl font-black shadow-lg shadow-primary/30 hover:-translate-y-0.5 transition-all flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined">add</span>
-            Nueva Adjudicación
-          </button>
         </div>
 
         {loading ? (
@@ -1826,7 +2080,7 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
             </pre>
             <div className="mt-6 flex justify-end gap-4">
               <button
-                onClick={fetchData}
+                onClick={() => fetchData()}
                 className="px-6 py-3 bg-slate-100 text-slate-700 rounded-xl font-black text-sm hover:bg-slate-200 transition-colors"
                 title="Reintentar Carga"
               >
@@ -1840,6 +2094,20 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
           </div>
         ) : (
           <div className="space-y-6">
+            {isAlreadyMigrated && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-[24px] p-5 flex items-center gap-4 shadow-sm">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-2xl font-black">verified</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-emerald-950 uppercase tracking-wider">PROCESO FINALIZADO Y MIGRADO</h3>
+                  <p className="text-xs font-bold text-emerald-800 leading-normal mt-0.5">
+                    Este proceso de adjudicación ha sido aprobado y migrado de forma permanente a la lista oficial de ingresantes/participantes. Toda la información de vacantes y postulantes asignados ha sido congelada.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center justify-between bg-slate-50 p-3 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex bg-slate-200/60 p-1 rounded-xl w-max self-center lg:self-auto shadow-inner border border-slate-300/30">
                 {["A", "B", "C", "D"].map((area) => (
@@ -1928,6 +2196,35 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
                   </span>
                   Maximizar (MC)
                 </button>
+                {isAlreadyMigrated ? (
+                  <button
+                    disabled={true}
+                    className="px-4 py-2.5 bg-slate-100 text-slate-400 border border-slate-200 rounded-xl font-black text-xs uppercase tracking-wide flex items-center gap-1.5 cursor-not-allowed"
+                    title="Este proceso ya ha sido finalizado de forma permanente."
+                  >
+                    <span className="material-symbols-outlined text-[18px]">lock</span>
+                    Proceso Finalizado
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setMigrateDate(new Date().toISOString().split("T")[0]);
+                      setMigrateStatus("idle");
+                      setMigrateMessage("");
+                      setShowMigrateModal(true);
+                    }}
+                    disabled={!activeProcessName || isSaving}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-xs uppercase tracking-wide transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center gap-1.5 shadow-md disabled:opacity-40 disabled:pointer-events-none"
+                    title="Finalizar el proceso y migrar la lista consolidada de ingresantes oficiales a participantes"
+                  >
+                    {isSaving ? (
+                      <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                    ) : (
+                      <span className="material-symbols-outlined text-[18px]">fact_check</span>
+                    )}
+                    Aprobar y Migrar
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1980,7 +2277,7 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
                                 ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
                                 : "bg-slate-200 text-slate-500"
                             }`}>
-                              {student.orden_merito}
+                              {idx + 1}
                             </div>
                             <div className="flex-1 min-w-0">
                               <h3 className="font-black text-slate-900 text-base truncate" title={student.nombre}>
@@ -2676,6 +2973,110 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
         </div>
       )}
 
+      {showMigrateModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl p-8 border border-slate-100 flex flex-col items-center">
+            {migrateStatus === "idle" && (
+              <>
+                <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-4">
+                  <span className="material-symbols-outlined text-3xl font-black">fact_check</span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900 uppercase text-center">
+                  Aprobar y Migrar
+                </h3>
+                <p className="text-slate-500 font-medium text-sm mt-2 text-center">
+                  ¿Confirmar finalización y migrar todos los ingresantes oficiales del proceso <strong className="font-black text-slate-700">"{activeProcessName}"</strong> a participantes?
+                </p>
+                <div className="w-full mt-6">
+                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-2">
+                    Fecha Oficial de Ingreso
+                  </label>
+                  <input
+                    type="date"
+                    value={migrateDate}
+                    onChange={(e) => setMigrateDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none focus:border-primary"
+                  />
+                </div>
+                <div className="flex gap-4 w-full mt-8">
+                  <button
+                    onClick={() => setShowMigrateModal(false)}
+                    className="px-6 py-3 bg-slate-100 text-slate-500 hover:text-slate-700 rounded-xl font-black text-sm transition-colors flex-[1]"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleApproveAndMigrate}
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-sm shadow-lg shadow-emerald-600/30 transition-all flex-[2]"
+                  >
+                    Confirmar y Migrar
+                  </button>
+                </div>
+              </>
+            )}
+            {migrateStatus === "saving" && (
+              <div className="py-10 flex flex-col items-center">
+                <div className="material-symbols-outlined animate-spin text-5xl text-emerald-600 mb-6">
+                  progress_activity
+                </div>
+                <h3 className="text-lg font-black text-slate-900 uppercase text-center">
+                  Migrando ingresantes
+                </h3>
+                <p className="text-slate-500 font-medium text-sm mt-2 text-center">
+                  Procesando registros de asistencia, CSV de pre-revisión y adjudicaciones...
+                </p>
+              </div>
+            )}
+            {migrateStatus === "success" && (
+              <>
+                <div className="w-16 h-16 rounded-full bg-green-50 text-green-600 flex items-center justify-center mb-4">
+                  <span className="material-symbols-outlined text-3xl font-black">check_circle</span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900 uppercase text-center">
+                  ¡Migración Exitosa!
+                </h3>
+                <p className="text-slate-650 font-semibold text-sm mt-3 text-center px-2 leading-relaxed">
+                  {migrateMessage}
+                </p>
+                <button
+                  onClick={() => setShowMigrateModal(false)}
+                  className="w-full mt-8 px-6 py-3.5 bg-slate-900 text-white hover:bg-slate-800 rounded-xl font-black text-sm transition-all"
+                >
+                  Aceptar
+                </button>
+              </>
+            )}
+            {migrateStatus === "error" && (
+              <>
+                <div className="w-16 h-16 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-4">
+                  <span className="material-symbols-outlined text-3xl font-black">error</span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900 uppercase text-center">
+                  Error en la Migración
+                </h3>
+                <p className="text-red-650 font-semibold text-sm mt-3 text-center px-2 leading-relaxed">
+                  {migrateMessage}
+                </p>
+                <div className="flex gap-4 w-full mt-8">
+                  <button
+                    onClick={() => setShowMigrateModal(false)}
+                    className="px-6 py-3.5 bg-slate-100 text-slate-500 hover:text-slate-700 rounded-xl font-black text-sm transition-colors flex-[1]"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    onClick={handleApproveAndMigrate}
+                    className="px-6 py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-sm shadow-lg shadow-red-600/30 transition-all flex-[2]"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* MC Fullscreen / Maximized Mode Overlay */}
       {isMaximized && (
         <div className="fixed inset-0 z-[200] bg-slate-50 text-slate-900 flex flex-col p-6 overflow-hidden select-none">
@@ -2848,7 +3249,7 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
                             ? "bg-primary text-white shadow-lg"
                             : "bg-slate-100 border border-slate-250 text-slate-500"
                         }`}>
-                          {student.orden_merito}
+                          {idx + 1}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">

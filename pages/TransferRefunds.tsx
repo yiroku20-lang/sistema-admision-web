@@ -1173,7 +1173,20 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                                                       </div>
                                                   </div>
                                                   <div className="flex items-center gap-3 w-full md:w-auto pl-12 md:pl-0">
-                                                      <div className="flex flex-col items-start md:items-end">
+                                                      {(student.resolution_number || student.resolution_pdf) && (
+                                                          <a 
+                                                              href={student.resolution_pdf && student.resolution_pdf.startsWith('http') ? student.resolution_pdf : '#'} 
+                                                              target="_blank" 
+                                                              rel="noopener noreferrer" 
+                                                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-colors ${student.resolution_pdf && student.resolution_pdf.startsWith('http') ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-200 cursor-default'}`} 
+                                                              title={student.resolution_pdf && student.resolution_pdf.startsWith('http') ? "Ver Resolución" : "Resolución registrada sin documento"}
+                                                              onClick={(e) => !(student.resolution_pdf && student.resolution_pdf.startsWith('http')) && e.preventDefault()}
+                                                          >
+                                                              <span className="material-symbols-outlined text-[18px]">description</span>
+                                                              <span className="text-[10px] font-bold uppercase tracking-wider">{student.resolution_number && student.resolution_number.trim() !== '' ? student.resolution_number : 'VER RESOLUCIÓN'}</span>
+                                                          </a>
+                                                      )}
+                                                      <div className="flex flex-col items-start md:items-end ml-2">
                                                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Celular</span>
                                                           <span className="font-bold text-slate-700">{student.phone || 'No registrado'}</span>
                                                       </div>

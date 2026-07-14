@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabaseClient';
 import { User, ToastMessage, CVEscuela, CVCuadroAnual, CVModalidad, CVVacante } from '../types';
 import * as XLSX from 'xlsx';
-import html2pdf from 'html2pdf.js';
+
 
 import { VacancyAnalytics } from '../components/VacancyAnalytics';
 
@@ -515,34 +515,8 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
   };
 
   const handleExportPDF = () => {
-    if (!previewRef.current || !selectedCuadro) return;
+    window.print();
     
-    // Temporarily remove max-height and overflow to ensure full capture
-    const originalStyle = previewRef.current.style.cssText;
-    previewRef.current.style.maxHeight = 'none';
-    previewRef.current.style.overflow = 'visible';
-    previewRef.current.style.width = `${previewRef.current.scrollWidth}px`; // Revert to scrollWidth to prevent squishing
-    
-    const opt = {
-      margin:       0.2,
-      filename:     `Cuadro_Vacantes_${selectedCuadro.anio}.pdf`,
-      image:        { type: 'jpeg' as const, quality: 1 },
-      html2canvas:  { 
-        scale: 2, 
-        useCORS: true,
-        logging: false,
-        windowWidth: previewRef.current.scrollWidth // Crucial for capturing full width
-      },
-      jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' as const },
-      pagebreak:    { mode: 'css', before: '.page-break-row' }
-    };
-
-    html2pdf().set(opt).from(previewRef.current).save().then(() => {
-      // Restore original styles
-      if (previewRef.current) {
-        previewRef.current.style.cssText = originalStyle;
-      }
-    });
   };
 
   // Calculations

@@ -912,7 +912,7 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="flex flex-col gap-4">
                 <h4 className="text-xs font-black text-primary uppercase tracking-widest border-b pb-2">1. Seleccionar Bienes</h4>
-                <label className="flex flex-col gap-1 relative" ref={dropdownRef}>
+                <div className="flex flex-col gap-1 relative" ref={dropdownRef}>
                   <span className="text-[10px] font-black text-slate-500 uppercase">Buscar Bien (puede seleccionar varios) *</span>
                   <input 
                     type="text"
@@ -975,7 +975,7 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                       )}
                     </div>
                   )}
-                </label>
+                </div>
 
                 {newLoan.bienes_seleccionados.length > 0 && (
                   <div className="flex flex-col gap-2">

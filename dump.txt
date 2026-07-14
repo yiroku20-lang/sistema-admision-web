@@ -1,0 +1,16 @@
+                    <div className="hidden print:flex justify-between items-center bg-gray-100 p-4 rounded-lg font-bold mb-6">
+             <div>Total Personal: {totalPersonal} req.</div>
+             <div>Presupuesto Total: S/ {totalGeneral.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</div>
+          </div>
+
+            
+            <div className="hidden print:flex justify-between items-center bg-gray-100 p-4 rounded-lg font-bold mt-4">
+               <div>Total Personal: {totalPersonal} req.</div>
+               <div>Presupuesto Total: S/ {totalGeneral.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print:shadow-none print:border-none print:rounded-none">
+            <div className="flex border-b border-slate-100 print:hidden">
+              <button 
+                onClick={() => setActiveTab('Presupuesto')}

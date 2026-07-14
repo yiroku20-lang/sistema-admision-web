@@ -727,7 +727,7 @@ export const CalendarEvents: React.FC<CalendarEventsProps> = ({ user, notify }) 
             return (
               <div 
                 key={day.toString()} 
-                ref={isFirstDayOfMonth ? (el) => monthRefs.current[monthKey] = el : null}
+                ref={isFirstDayOfMonth ? (el) => { monthRefs.current[monthKey] = el; } : null}
                 className={`min-h-[120px] p-2 border-r border-b border-slate-100 relative group transition-colors hover:brightness-95 ${bgColorClass}`}
               >
                 <div className="flex justify-between items-center mb-1">

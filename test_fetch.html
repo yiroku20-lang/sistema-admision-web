@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script>
+    console.log(window.fetch);
+    try {
+      const h = html2pdf();
+    } catch (e) {
+      console.error(e);
+    }
+  </script>
+</body>
+</html>
