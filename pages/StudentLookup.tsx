@@ -30,7 +30,11 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || '';
   });
   
-  const isLocalApp = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const isLocalApp = typeof window !== 'undefined' && (
+    ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
+    window.navigator.userAgent.toLowerCase().includes('electron') ||
+    window.location.protocol === 'file:'
+  );
   
   // State for toggling individual folders in local documents
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
