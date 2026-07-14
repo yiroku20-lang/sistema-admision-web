@@ -20,7 +20,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
-<<<<<<< HEAD
   // Local API configuration (Cloudflare URL / Localhost fallback)
   const [localApiUrl] = useState(() => {
     const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -29,17 +28,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     }
     // Si estamos en producción (Netlify), usamos la ruta relativa (vacía) para ir a través del proxy de Netlify Functions
     return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || '';
-=======
-  // Local API configuration (Cloudflare URL)
-  const defaultApiUrl = 'https://june-entertainment-thanks-include.trycloudflare.com';
-  const [localApiUrl] = useState(() => {
-    const stored = localStorage.getItem('local_api_url');
-    if (stored && (stored.includes('night-fan-profiles-sides') || (stored.includes('trycloudflare.com') && !stored.includes('june-entertainment-thanks-include')))) {
-       localStorage.setItem('local_api_url', defaultApiUrl);
-       return defaultApiUrl;
-    }
-    return stored || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
->>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
   });
   
   const isLocalApp = typeof window !== 'undefined' && (
@@ -215,21 +203,12 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
 
   const getGroupedDocuments = (docs: any[]) => {
       const groups: { [key: string]: any[] } = {};
-<<<<<<< HEAD
-      if (!Array.isArray(docs)) return groups;
-      
-      docs.forEach(doc => {
-          if (!doc) return;
-          const pathStr = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || '');
-          const filename = typeof doc === 'string' ? doc.split(/[\/\\]/).pop()! : (doc.filename || doc.name || (pathStr ? pathStr.split(/[\/\\]/).pop() : '') || 'Archivo');
-=======
       if (!docs || !Array.isArray(docs)) return groups;
       
       docs.forEach(doc => {
           if (!doc) return;
           // Prefer relativePath since it's the exact clean path inside the H: drive root
           const rawPath = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || doc.file_path || doc.url || '');
->>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
           
           let cleanPath = rawPath;
           if (rawPath.includes('?path=')) {
@@ -1151,7 +1130,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                 <span className="material-symbols-outlined text-slate-400 text-[14px]">folder_open</span>
                                             </div>
                                         </div>
-<<<<<<< HEAD
 
                                         {loadingDocs ? (
                                             <div className="flex items-center gap-2 text-slate-400 text-xs font-bold">
@@ -1169,127 +1147,109 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                             </div>
                                         ) : localDocuments.length > 0 ? (
                                             <div className="flex flex-col gap-3">
-                                                {Object.entries(getGroupedDocuments(localDocuments)).map(([folderLabel, docsInFolder], groupIdx) => {
-                                                    const isExpanded = !!expandedFolders[folderLabel];
-                                                    return (
-                                                        <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                                                            {/* Folder Header */}
-                                                            <button
-                                                                onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
-                                                                type="button"
-                                                                className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
-                                                            >
-                                                                <div className="flex items-center gap-2 text-left min-w-0">
-                                                                    <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
-                                                                    <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
-                                                                        {folderLabel}
+                                                {Object.entries(getGroupedDocuments(localDocuments))
+                                                    .sort(([labelA], [labelB]) => {
+                                                        const yearMatchA = labelA.match(/\b\d{4}\b/);
+                                                        const yearMatchB = labelB.match(/\b\d{4}\b/);
+                                                        const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
+                                                        const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
+                                                        
+                                                        if (yearA !== yearB) {
+                                                            return yearB - yearA; // Recientes primero
+                                                        }
+                                                        
+                                                        const getSemesterVal = (label: string) => {
+                                                            if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
+                                                            if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
+                                                            return 0;
+                                                        };
+                                                        
+                                                        const semA = getSemesterVal(labelA);
+                                                        const semB = getSemesterVal(labelB);
+                                                        
+                                                        if (semA !== semB) {
+                                                            return semB - semA; // II antes que I
+                                                        }
+                                                        
+                                                        return labelA.localeCompare(labelB);
+                                                    })
+                                                    .map(([folderLabel, docsInFolder], groupIdx) => {
+                                                        const isExpanded = !!expandedFolders[folderLabel];
+                                                        return (
+                                                            <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                                                                {/* Folder Header */}
+                                                                <button
+                                                                    onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
+                                                                    type="button"
+                                                                    className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
+                                                                >
+                                                                    <div className="flex items-center gap-2 text-left min-w-0">
+                                                                        <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
+                                                                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
+                                                                            {folderLabel}
+                                                                        </span>
+                                                                        <span className="bg-slate-200 text-slate-700 text-[8px] font-black px-1.5 py-0.5 rounded-full shrink-0">
+                                                                            {docsInFolder.length}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className="material-symbols-outlined text-slate-500 text-[15px] shrink-0">
+                                                                        {isExpanded ? 'expand_less' : 'expand_more'}
                                                                     </span>
-                                                                    <span className="bg-slate-200 text-slate-700 text-[8px] font-black px-1.5 py-0.5 rounded-full shrink-0">
-                                                                        {docsInFolder.length}
-                                                                    </span>
-                                                                </div>
-                                                                <span className="material-symbols-outlined text-slate-500 text-[15px] shrink-0">
-                                                                    {isExpanded ? 'expand_less' : 'expand_more'}
-=======
-                                    ) : localDocuments.length > 0 ? (
-                                        <div className="flex flex-col gap-3">
-                                            {Object.entries(getGroupedDocuments(localDocuments))
-                                                .sort(([labelA], [labelB]) => {
-                                                    const yearMatchA = labelA.match(/\b\d{4}\b/);
-                                                    const yearMatchB = labelB.match(/\b\d{4}\b/);
-                                                    const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
-                                                    const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
-                                                    
-                                                    if (yearA !== yearB) {
-                                                        return yearB - yearA; // Recientes primero
-                                                    }
-                                                    
-                                                    const getSemesterVal = (label: string) => {
-                                                        if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
-                                                        if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
-                                                        return 0;
-                                                    };
-                                                    
-                                                    const semA = getSemesterVal(labelA);
-                                                    const semB = getSemesterVal(labelB);
-                                                    
-                                                    if (semA !== semB) {
-                                                        return semB - semA; // II antes que I
-                                                    }
-                                                    
-                                                    return labelA.localeCompare(labelB);
-                                                })
-                                                .map(([folderLabel, docsInFolder], groupIdx) => {
-                                                    const isExpanded = !!expandedFolders[folderLabel];
-                                                return (
-                                                    <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                                                        {/* Folder Header */}
-                                                        <button
-                                                            onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
-                                                            type="button"
-                                                            className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
-                                                        >
-                                                            <div className="flex items-center gap-2 text-left min-w-0">
-                                                                <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
-                                                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
-                                                                    {folderLabel}
->>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
-                                                                </span>
-                                                            </button>
-                                                            
-                                                            {/* Documents in Folder */}
-                                                            {isExpanded && (
-                                                                <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
-                                                                    {docsInFolder.map((doc, i) => {
-                                                                        const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "";
-                                                                        const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
-                                                                        
-                                                                        return (
-                                                                            <a
-                                                                                key={i}
-                                                                                href={docUrl}
-                                                                                target="_blank"
-                                                                                rel="noopener noreferrer"
-                                                                                className="flex items-center gap-2 bg-white border border-slate-150 rounded p-1.5 hover:border-primary hover:shadow-sm transition-all group relative overflow-hidden"
-                                                                            >
-                                                                                {/* Accent Left Bar */}
-                                                                                <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${doc.isPdf ? 'bg-red-500' : doc.isImage ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                                                                                
-                                                                                <span className={`material-symbols-outlined shrink-0 text-[16px] ${doc.isPdf ? 'text-red-500' : doc.isImage ? 'text-blue-500' : 'text-slate-400'} pl-0.5`}>
-                                                                                    {doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description'}
-                                                                                </span>
-                                                                                
-                                                                                <div className="flex-1 min-w-0 pr-1">
-                                                                                    <p className="text-[9px] font-bold text-slate-800 group-hover:text-primary leading-tight truncate">
-                                                                                        {doc.friendlyName}
-                                                                                    </p>
-                                                                                    <p className="text-[7.5px] text-slate-400 font-mono truncate select-all mt-0.5">
-                                                                                        {doc.filename}
-                                                                                    </p>
-                                                                                </div>
-                                                                                
-                                                                                <div className="flex items-center gap-1 shrink-0">
-                                                                                    <span className={`text-[7.5px] font-black px-1 py-0.2 rounded uppercase tracking-wider ${
-                                                                                        doc.isPdf 
-                                                                                            ? 'bg-red-50 text-red-600 border border-red-100' 
-                                                                                            : doc.isImage 
-                                                                                                ? 'bg-blue-50 text-blue-600 border border-blue-100' 
-                                                                                                : 'bg-slate-50 text-slate-600 border border-slate-100'
-                                                                                    }`}>
-                                                                                        {doc.ext}
+                                                                </button>
+                                                                
+                                                                {/* Documents in Folder */}
+                                                                {isExpanded && (
+                                                                    <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
+                                                                        {docsInFolder.map((doc, i) => {
+                                                                            const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "";
+                                                                            const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
+                                                                            
+                                                                            return (
+                                                                                <a
+                                                                                    key={i}
+                                                                                    href={docUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="flex items-center gap-2 bg-white border border-slate-150 rounded p-1.5 hover:border-primary hover:shadow-sm transition-all group relative overflow-hidden"
+                                                                                >
+                                                                                    {/* Accent Left Bar */}
+                                                                                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${doc.isPdf ? 'bg-red-500' : doc.isImage ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                                                                                    
+                                                                                    <span className={`material-symbols-outlined shrink-0 text-[16px] ${doc.isPdf ? 'text-red-500' : doc.isImage ? 'text-blue-500' : 'text-slate-400'} pl-0.5`}>
+                                                                                        {doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description'}
                                                                                     </span>
-                                                                                    <span className="material-symbols-outlined text-transparent group-hover:text-primary text-[12px] transition-all">
-                                                                                        open_in_new
-                                                                                    </span>
-                                                                                </div>
-                                                                            </a>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
+                                                                                    
+                                                                                    <div className="flex-1 min-w-0 pr-1">
+                                                                                        <p className="text-[9px] font-bold text-slate-800 group-hover:text-primary leading-tight truncate">
+                                                                                            {doc.friendlyName}
+                                                                                        </p>
+                                                                                        <p className="text-[7.5px] text-slate-400 font-mono truncate select-all mt-0.5">
+                                                                                            {doc.filename}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                    
+                                                                                    <div className="flex items-center gap-1 shrink-0">
+                                                                                        <span className={`text-[7.5px] font-black px-1 py-0.2 rounded uppercase tracking-wider ${
+                                                                                            doc.isPdf 
+                                                                                                ? 'bg-red-50 text-red-600 border border-red-100' 
+                                                                                                : doc.isImage 
+                                                                                                    ? 'bg-blue-50 text-blue-600 border border-blue-100' 
+                                                                                                    : 'bg-slate-50 text-slate-600 border border-slate-100'
+                                                                                        }`}>
+                                                                                            {doc.ext}
+                                                                                        </span>
+                                                                                        <span className="material-symbols-outlined text-transparent group-hover:text-primary text-[12px] transition-all">
+                                                                                            open_in_new
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </a>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
                                             </div>
                                         ) : (
                                             <p className="text-[10px] font-bold text-slate-500">No hay documentos registrados.</p>

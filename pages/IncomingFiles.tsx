@@ -80,8 +80,6 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [newNumber, setNewNumber] = useState('');
   const [newSubject, setNewSubject] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-<<<<<<< HEAD
-  const [currentFilter, setCurrentFilter] = useState('Todos');
   const [searchInputValue, setSearchInputValue] = useState('');
 
   useEffect(() => {
@@ -90,7 +88,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
     }, 400);
     return () => clearTimeout(timer);
   }, [searchInputValue]);
-=======
+
   const [currentFilter, setCurrentFilter] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const filterParam = params.get('filter');
@@ -108,7 +106,6 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [selectedOperatorId, setSelectedOperatorId] = useState('');
   const [assignmentNotes, setAssignmentNotes] = useState('');
   const [assignmentType, setAssignmentType] = useState<'action' | 'info'>('action');
->>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
 
   const [csvPreview, setCsvPreview] = useState<any[]>([]);
   const csvInputRef = useRef<HTMLInputElement>(null);

@@ -16,11 +16,7 @@ async function startServer() {
   // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
   app.use("/api/files", async (req, res) => {
     try {
-<<<<<<< HEAD
       const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
-=======
-      const baseUrl = process.env.VITE_API_URL || "https://june-entertainment-thanks-include.trycloudflare.com";
->>>>>>> 7184314c8c7a05a8e75a4737cb0c4f215e0eca93
       const targetUrl = `${baseUrl}/api/files${req.url}`;
       
       const fetchReq = await import('node-fetch').then(m => m.default);
