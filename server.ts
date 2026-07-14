@@ -603,6 +603,8 @@ async function startServer() {
 
       if (dbError) {
           return res.status(400).json({ error: "Error al actualizar perfil: " + dbError.message });
+      }
+
       res.status(200).json({ success: true, message: "Contraseña actualizada exitosamente." });
       
     } catch (error: any) {
