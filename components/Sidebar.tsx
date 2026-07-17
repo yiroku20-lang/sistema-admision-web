@@ -28,6 +28,7 @@ const navItems: (NavItem & { permission?: string })[] = [
   { label: 'Agenda de Eventos', icon: 'calendar_today', path: '/calendar', permission: 'view_agenda' },
   { label: 'Control Asistencia', icon: 'fingerprint', path: '/attendance', permission: 'view_asistencia' },
   { label: 'Adjudicaciones', icon: 'stars', path: '/adjudication', roles: ['Administrador', 'Director'], permission: 'view_adjudicaciones' },
+  { label: 'Evolución Vacantes', icon: 'trending_up', path: '/vacancy-evolution', roles: ['Administrador', 'Director'], permission: 'view_adjudicaciones' },
   { label: 'Pre-revisión Postulantes', icon: 'plagiarism', path: '/pre-review', roles: ['Administrador', 'Operador', 'Director'] },
   { label: 'Presupuesto Examen', icon: 'request_quote', path: '/budget', roles: ['Administrador', 'Director'], permission: 'view_presupuesto' },
   { label: 'Auditoría y Logs', icon: 'bar_chart', path: '/logs', roles: ['Administrador'], permission: 'view_auditoria' },

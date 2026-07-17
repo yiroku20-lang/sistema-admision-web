@@ -194,10 +194,10 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
             found: mapped.filter(it => it.found).length,
             notFound: mapped.filter(it => !it.found).length,
             alreadyReserved: mapped.filter(it => it.alreadyReserved).length,
-            apt: mapped.filter(it => it.found && !it.alreadyReserved).length
+            apt: mapped.filter(it => it.found).length
         };
         setCsvSummary(summary);
-        setSelectedForBatch(new Set(mapped.map((it, i) => (it.found && !it.alreadyReserved) ? i : -1).filter(i => i !== -1)));
+        setSelectedForBatch(new Set(mapped.map((it, i) => (it.found) ? i : -1).filter(i => i !== -1)));
         setIsProcessingCsv(false);
     };
     reader.readAsText(file);
@@ -239,6 +239,76 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
           setIsSaveBatchModalOpen(false);
           setActiveView('historial');
       } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+  };
+
+  const generatePreviewPDFReport = () => {
+      const doc = new jsPDF({
+          orientation: 'landscape',
+          unit: 'mm',
+          format: 'a4'
+      });
+
+      const unsaacRed: [number, number, number] = [165, 29, 45]; 
+
+      // Header Title
+      doc.setFontSize(16);
+      doc.setTextColor(unsaacRed[0], unsaacRed[1], unsaacRed[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.text('UNSAAC - DIRECCIÓN DE ADMISIÓN', 148, 15, { align: 'center' });
+      
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      doc.setFont('helvetica', 'normal');
+      doc.text('REPORTE PREVIO DE RESERVA DE VACANTES', 148, 22, { align: 'center' });
+
+      // Horizontal Line
+      doc.setDrawColor(unsaacRed[0], unsaacRed[1], unsaacRed[2]);
+      doc.setLineWidth(0.5);
+      doc.line(20, 26, 277, 26);
+
+      // Table
+      const tableData = tempList.map((s, index) => {
+          let estado = s.found ? (s.alreadyReserved ? `YA RESERVADO (${s.prevResolution})` : 'APTO') : 'NO ENCONTRADO';
+          let multiples = s.multiIngreso ? `Sí (${s.allOptions?.length} ingresos)` : 'No';
+
+          return [
+              index + 1,
+              s.code,
+              s.name,
+              s.carrera,
+              s.admissionModality,
+              s.gradeLevel,
+              multiples,
+              estado
+          ];
+      });
+
+      autoTable(doc, {
+          startY: 35,
+          head: [['Nº', 'CÓDIGO', 'NOMBRE COMPLETO', 'ESCUELA', 'MODALIDAD', 'AÑO SEC.', 'MÚLTIPLES ING.', 'ESTADO']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: { 
+              fillColor: [241, 245, 249], 
+              textColor: [71, 85, 105], 
+              fontStyle: 'bold',
+              lineWidth: 0.1,
+              lineColor: [226, 232, 240]
+          },
+          styles: { 
+              fontSize: 7, 
+              cellPadding: 2,
+              lineColor: [226, 232, 240],
+              lineWidth: 0.1
+          },
+          didDrawPage: (data) => {
+              doc.setFontSize(8);
+              doc.setTextColor(150, 150, 150);
+              doc.text(`Página ${data.pageNumber}`, 148, 200, { align: 'center' });
+          }
+      });
+
+      doc.save(`Reporte_Previo_Reserva_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const generatePDFReport = (oficio: string, expediente: string, students: TempReservation[]) => {
@@ -751,6 +821,9 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
                           {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))) && (
                             <>
                               <button onClick={() => csvInputRef.current?.click()} className="px-6 h-12 bg-white border-2 border-slate-100 text-slate-700 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all">SUBIR CSV</button>
+                              {tempList.length > 0 && (
+                                  <button onClick={generatePreviewPDFReport} className="px-6 h-12 bg-white border-2 border-slate-100 text-slate-700 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all">REPORTE PREVIO (PDF)</button>
+                              )}
                               <button onClick={() => setIsSaveBatchModalOpen(true)} disabled={selectedForBatch.size === 0} className="px-8 h-12 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl disabled:opacity-50 transition-all active:scale-95">GENERAR BLOQUE ({selectedForBatch.size})</button>
                             </>
                           )}
@@ -802,7 +875,7 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
                                       tempList.map((row, i) => (
                                           <tr key={i} className={`hover:bg-slate-50 transition-colors ${row.alreadyReserved ? 'bg-red-50/50' : ''}`}>
                                               <td className="px-6 py-4 text-center">
-                                                  <input type="checkbox" disabled={row.alreadyReserved || !row.found} checked={selectedForBatch.has(i)} onChange={() => {
+                                                  <input type="checkbox" disabled={!row.found} checked={selectedForBatch.has(i)} onChange={() => {
                                                       const next = new Set(selectedForBatch);
                                                       if (next.has(i)) next.delete(i); else next.add(i);
                                                       setSelectedForBatch(next);
