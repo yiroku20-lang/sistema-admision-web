@@ -37,6 +37,9 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     { id: 'view_agenda', label: 'Agenda de Eventos' },
     { id: 'view_auditoria', label: 'Auditoría y Logs' },
     { id: 'view_adjudicaciones', label: 'Adjudicaciones' },
+    { id: 'view_vacancy_evolution', label: 'Evolución de Vacantes' },
+    { id: 'view_pre_review', label: 'Pre-revisión de Postulantes' },
+    { id: 'view_presupuesto', label: 'Presupuesto de Examen' },
     { id: 'upload_csv', label: 'Cargar Archivos CSV / Padrones' },
     { id: 'view_personal', label: 'Gestión de Personal' }
   ];

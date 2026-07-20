@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { User } from '../types';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- INDEXEDDB DEFINITION FOR LOCAL OFFLINE STORAGE ---
 interface LocalFileRecord {
@@ -86,7 +89,7 @@ const getStoragePathFromUrl = (url: string) => {
 
 export const DataCleanup = ({ user }: { user: User }) => {
   // Navigation Tabs state
-  const [activeTab, setActiveTab] = useState<'homologacion' | 'pdf_backups'>('homologacion');
+  const [activeTab, setActiveTab] = useState<'homologacion' | 'pdf_backups' | 'reporte_ingresantes'>('homologacion');
 
   // New states for PDF backups
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -97,9 +100,11 @@ export const DataCleanup = ({ user }: { user: User }) => {
   const [pdfSearch, setPdfSearch] = useState('');
   const [pdfSyncingId, setPdfSyncingId] = useState<string | null>(null);
 
+  // States for Homologacion
   const [selectedField, setSelectedField] = useState<'CARRERA' | 'MODALIDAD' | 'FILIAL'>('CARRERA');
   const [selectedYear, setSelectedYear] = useState<string>('Todos');
   const [years, setYears] = useState<string[]>([]);
+  const [filterCombos, setFilterCombos] = useState<{anio: string, semestre: string, carrera: string, modalidad: string}[]>([]);
   const [dataStats, setDataStats] = useState<{ value: string; count: number }[]>([]);
   
   const [loading, setLoading] = useState(false);
@@ -116,6 +121,53 @@ export const DataCleanup = ({ user }: { user: User }) => {
   // References for suggestions
   const [carrerasData, setCarrerasData] = useState<{nombre: string, codigo_carrera: string}[]>([]);
   const [modalidadesRef, setModalidadesRef] = useState<string[]>([]);
+
+  // States for Reporte Ingresantes
+  const [reportYear, setReportYear] = useState<string>('Todos');
+  const [reportSemester, setReportSemester] = useState<string>('Todos');
+  const [reportCareer, setReportCareer] = useState<string>('Todos');
+  const [reportModality, setReportModality] = useState<string>('Todos');
+  const [reportData, setReportData] = useState<any[]>([]);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [semesters, setSemesters] = useState<string[]>([]);
+  const [reportCareers, setReportCareers] = useState<string[]>([]);
+  const [reportModalities, setReportModalities] = useState<string[]>([]);
+  
+  useEffect(() => {
+    if (filterCombos.length > 0) {
+      let filteredCombos = filterCombos;
+      if (reportYear !== 'Todos') {
+        filteredCombos = filteredCombos.filter(c => c.anio === reportYear);
+      }
+      const uniqueSemesters = Array.from(new Set(filteredCombos.map(c => c.semestre).filter(Boolean))).sort();
+      setSemesters(uniqueSemesters as string[]);
+      
+      // If the currently selected semester is not in the new list, reset to 'Todos'
+      if (reportSemester !== 'Todos' && !uniqueSemesters.includes(reportSemester)) {
+        setReportSemester('Todos');
+      }
+      
+      if (reportSemester !== 'Todos') {
+        filteredCombos = filteredCombos.filter(c => c.semestre === reportSemester);
+      }
+      
+      const uniqueCareers = Array.from(new Set(filteredCombos.map(c => c.carrera).filter(Boolean))).sort();
+      setReportCareers(uniqueCareers as string[]);
+      if (reportCareer !== 'Todos' && !uniqueCareers.includes(reportCareer)) {
+        setReportCareer('Todos');
+      }
+      
+      if (reportCareer !== 'Todos') {
+        filteredCombos = filteredCombos.filter(c => c.carrera === reportCareer);
+      }
+      
+      const uniqueModalities = Array.from(new Set(filteredCombos.map(c => c.modalidad).filter(Boolean))).sort();
+      setReportModalities(uniqueModalities as string[]);
+      if (reportModality !== 'Todos' && !uniqueModalities.includes(reportModality)) {
+        setReportModality('Todos');
+      }
+    }
+  }, [reportYear, reportSemester, reportCareer, filterCombos]);
 
   useEffect(() => {
       const fetchRefs = async () => {
@@ -138,24 +190,39 @@ export const DataCleanup = ({ user }: { user: User }) => {
   const fetchYears = async () => {
      setLoadingYears(true);
      try {
-         // Pagination to get all years
-         let allYears: any[] = [];
+         let allCombos: {anio: string, semestre: string, carrera: string, modalidad: string}[] = [];
          let start = 0;
          let step = 1000;
          let hasMore = true;
          while(hasMore) {
-             const { data, error } = await supabase.from('participantes').select('ANIO').range(start, start + step - 1);
+             const { data, error } = await supabase.from('participantes').select('ANIO, SEMESTRE, CARRERA, MODALIDAD').range(start, start + step - 1);
              if (error) break;
              if (data && data.length > 0) {
-                 allYears.push(...data.map(d => d.ANIO).filter(Boolean));
+                 allCombos.push(...data.map(d => ({ anio: d.ANIO, semestre: d.SEMESTRE, carrera: d.CARRERA, modalidad: d.MODALIDAD })));
                  if (data.length < step) hasMore = false;
                  else start += step;
              } else {
                  hasMore = false;
              }
          }
-         const uniqueYears = Array.from(new Set(allYears)).sort((a: any, b: any) => b - a);
+         
+         // Remove duplicates
+         const uniqueCombosMap = new Map();
+         allCombos.forEach(c => {
+             const key = `${c.anio}|${c.semestre}|${c.carrera}|${c.modalidad}`;
+             if (!uniqueCombosMap.has(key)) {
+                 uniqueCombosMap.set(key, c);
+             }
+         });
+         const uniqueCombos = Array.from(uniqueCombosMap.values());
+         setFilterCombos(uniqueCombos);
+         
+         const uniqueYears = Array.from(new Set(uniqueCombos.map(c => c.anio).filter(Boolean))).sort((a: any, b: any) => b - a);
          setYears(uniqueYears as string[]);
+         
+         const uniqueSemesters = Array.from(new Set(uniqueCombos.map(c => c.semestre).filter(Boolean))).sort();
+         setSemesters(uniqueSemesters as string[]);
+         
      } finally {
          setLoadingYears(false);
      }
@@ -683,10 +750,17 @@ export const DataCleanup = ({ user }: { user: User }) => {
               </span>
             )}
           </button>
+          <button 
+            onClick={() => setActiveTab('reporte_ingresantes')} 
+            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer ${activeTab === 'reporte_ingresantes' ? 'bg-white text-slate-800 shadow-sm font-black' : 'text-slate-500 hover:text-slate-800 font-medium'}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">summarize</span>
+            Reporte Ingresantes
+          </button>
         </div>
       </div>
 
-      {activeTab === 'homologacion' ? (
+      {activeTab === 'homologacion' && (
         <div className="flex flex-col md:flex-row gap-6 h-full min-h-0 overflow-hidden px-4 md:px-0 pb-4 md:pb-0">
           
           {/* Panel Izquierdo: Controles y Lista */}
@@ -903,7 +977,9 @@ export const DataCleanup = ({ user }: { user: User }) => {
           </div>
 
         </div>
-      ) : (
+      )}
+      
+      {activeTab === 'pdf_backups' && (
         /* PDF Backup Tab Content */
         <div className="flex flex-col gap-6 h-full min-h-0 overflow-y-auto px-4 md:px-0 pb-6 animate-in fade-in duration-300">
           
@@ -1211,6 +1287,187 @@ export const DataCleanup = ({ user }: { user: User }) => {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'reporte_ingresantes' && (
+        <div className="flex flex-col gap-6 h-full min-h-0 overflow-y-auto px-4 md:px-0 pb-6 animate-in fade-in duration-300">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+            <h2 className="text-lg font-black text-slate-800 tracking-tight flex items-center gap-2 mb-4">
+              <span className="material-symbols-outlined text-primary">filter_alt</span>
+              Filtros del Reporte
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-[10px] font-black tracking-widest text-slate-400 uppercase mb-1">Año</label>
+                <select 
+                  value={reportYear}
+                  onChange={(e) => setReportYear(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+                >
+                  <option value="Todos">Todos</option>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black tracking-widest text-slate-400 uppercase mb-1">Semestre</label>
+                <select 
+                  value={reportSemester}
+                  onChange={(e) => setReportSemester(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+                >
+                  <option value="Todos">Todos</option>
+                  {semesters.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black tracking-widest text-slate-400 uppercase mb-1">Carrera</label>
+                <select 
+                  value={reportCareer}
+                  onChange={(e) => setReportCareer(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+                >
+                  <option value="Todos">Todas</option>
+                  {reportCareers.map((nombre, i) => <option key={i} value={nombre}>{nombre}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black tracking-widest text-slate-400 uppercase mb-1">Modalidad</label>
+                <select 
+                  value={reportModality}
+                  onChange={(e) => setReportModality(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+                >
+                  <option value="Todos">Todas</option>
+                  {reportModalities.map((m, i) => <option key={i} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-3 mt-6 pt-6 border-t border-slate-100">
+              <button
+                onClick={async () => {
+                  setLoadingReport(true);
+                  try {
+                    let query = supabase.from('participantes').select('*');
+                    if (reportYear !== 'Todos') query = query.eq('ANIO', reportYear);
+                    if (reportSemester !== 'Todos') query = query.eq('SEMESTRE', reportSemester);
+                    if (reportCareer !== 'Todos') query = query.eq('CARRERA', reportCareer);
+                    if (reportModality !== 'Todos') query = query.eq('MODALIDAD', reportModality);
+                    
+                    const { data, error } = await query;
+                    if (error) throw error;
+                    setReportData(data || []);
+                    setAlertMessage({ type: 'success', text: `Reporte generado con ${data?.length || 0} registros.` });
+                  } catch (e: any) {
+                    setAlertMessage({ type: 'error', text: 'Error al generar reporte: ' + e.message });
+                  } finally {
+                    setLoadingReport(false);
+                  }
+                }}
+                disabled={loadingReport}
+                className="bg-primary hover:bg-primary/90 text-white disabled:opacity-50 font-bold py-2.5 px-6 rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
+              >
+                <span className="material-symbols-outlined text-[18px]">{loadingReport ? 'refresh' : 'search'}</span>
+                {loadingReport ? 'Generando...' : 'Generar Reporte'}
+              </button>
+              
+              {reportData.length > 0 && (
+                <>
+                  <button
+                    onClick={() => {
+                      const ws = XLSX.utils.json_to_sheet(reportData.map(d => ({
+                        'DNI': d.CODPOSTULANTE,
+                        'POSTULANTE': d.NOMBRE,
+                        'CARRERA': d.CARRERA,
+                        'MODALIDAD': d.MODALIDAD,
+                        'AÑO': d.ANIO,
+                        'SEMESTRE': d.SEMESTRE,
+                        'NOTA': d.NOTA,
+                        'PUESTO': d.OMERITO,
+                        'FECHA INGRESO': d.FECHAINGRESO,
+                        'FILIAL': d.FILIAL
+                      })));
+                      const wb = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb, ws, 'Ingresantes');
+                      XLSX.writeFile(wb, `Reporte_Ingresantes_${new Date().getTime()}.xlsx`);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">table_view</span>
+                    Exportar Excel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const doc = new jsPDF('l');
+                      doc.text('Reporte de Ingresantes', 14, 15);
+                      autoTable(doc, {
+                        startY: 20,
+                        head: [['DNI', 'Postulante', 'Carrera', 'Modalidad', 'Semestre', 'Nota', 'Puesto']],
+                        body: reportData.map(d => [
+                          d.CODPOSTULANTE || '', 
+                          d.NOMBRE || '', 
+                          d.CARRERA || '', 
+                          d.MODALIDAD || '', 
+                          d.SEMESTRE || '', 
+                          d.NOTA || '', 
+                          d.OMERITO || ''
+                        ]),
+                        styles: { fontSize: 8 },
+                        headStyles: { fillColor: [15, 23, 42] }
+                      });
+                      doc.save(`Reporte_Ingresantes_${new Date().getTime()}.pdf`);
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+                    Exportar PDF
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          
+          {reportData.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
+              <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                <h3 className="font-black text-slate-700 text-xs uppercase tracking-widest">
+                  Resultados del Reporte ({reportData.length})
+                </h3>
+              </div>
+              <div className="flex-1 overflow-auto p-0">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-400 font-black border-b border-slate-200">
+                      <th className="p-4">DNI</th>
+                      <th className="p-4">Postulante</th>
+                      <th className="p-4">Carrera</th>
+                      <th className="p-4">Modalidad</th>
+                      <th className="p-4">Semestre</th>
+                      <th className="p-4">Nota</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-xs">
+                    {reportData.slice(0, 50).map((row, idx) => (
+                      <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
+                        <td className="p-4 font-mono font-bold text-slate-600">{row.CODPOSTULANTE}</td>
+                        <td className="p-4 font-bold text-slate-800">{row.NOMBRE}</td>
+                        <td className="p-4 text-slate-600">{row.CARRERA}</td>
+                        <td className="p-4 text-slate-600">{row.MODALIDAD}</td>
+                        <td className="p-4 font-black text-slate-500">{row.SEMESTRE}</td>
+                        <td className="p-4 font-black text-primary">{row.NOTA}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {reportData.length > 50 && (
+                  <div className="p-4 text-center text-xs font-bold text-slate-400 bg-slate-50 border-t border-slate-100">
+                    Mostrando los primeros 50 registros de {reportData.length} en total.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

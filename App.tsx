@@ -161,10 +161,10 @@ function App() {
               {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_adjudicaciones'))) && (
                 <Route path="/adjudication" element={<Adjudication />} />
               )}
-              {(user.role === 'Administrador' || user.role === 'Director') && (
+              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_vacancy_evolution'))) && (
                 <Route path="/vacancy-evolution" element={<VacancyEvolution user={user} notify={addToast} />} />
               )}
-              {(user.role === 'Administrador' || user.role === 'Director' || user.role === 'Operador') && (
+              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_pre_review'))) && (
                 <Route path="/pre-review" element={<ApplicantPreReview user={user} notify={addToast} />} />
               )}
               

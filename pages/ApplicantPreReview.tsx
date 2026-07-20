@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { safeStorage } from '../lib/safeStorage';
 import { User, CVCuadroAnual, CVModalidad, CVEscuela, CVVacante } from '../types';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -150,7 +151,7 @@ const normalizeRow = (row: any, escuelas: any[]) => {
   if (!row) return row;
   const dni = getRowValue(row, ['NroDocumento', 'nroDocumento', 'NRODOCUMENTO', 'DNI', 'dni', 'Documento', 'documento', 'alumno', 'ALUMNO', 'CODPOSTULANTE', 'codpostulante']);
   const nombre = getRowValue(row, ['nombre', 'Nombre', 'NOMBRE', 'postulante', 'POSTULANTE', 'nombres', 'Nombres', 'NOMBRES', 'ApeNom', 'apenom']);
-  const nota = getRowValue(row, ['Nota', 'nota', 'NOTA', 'Puntaje', 'puntaje', 'PUNTAJE']);
+  const nota = getRowValue(row, ['Nota', 'nota', 'NOTA', 'Puntaje', 'puntaje', 'PUNTAJE', 'notavigesimal', 'notavigesimal', 'NOTA_VIGESIMAL', 'nota_vigesimal']);
   const pos = getRowValue(row, ['POS', 'Pos', 'pos', 'posicion', 'Posicion', 'puesto', 'Puesto', 'OMERITO', 'omerito', 'orden_merito']);
   
   // --- 1. Detección de la escuela a la que postuló ---
@@ -253,6 +254,83 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [fetchingPreRevisionMessage, setFetchingPreRevisionMessage] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const downloadXlsxTemplate = () => {
+    const headers = [
+      'DNI',
+      'POSTULANTE',
+      'NOTA',
+      'POS',
+      'ESCUELA1',
+      'ESTADO',
+      'COD_CARRERA',
+      'CARRERA_INGRESO',
+      'GRUPO',
+      'SEXO',
+      'EDAD',
+      'FECHA_NACIMIENTO',
+      'UBIGEO'
+    ];
+
+    const data = [
+      {
+        'DNI': '12345678',
+        'POSTULANTE': 'QUISPE QUISPE JUAN CARLOS',
+        'NOTA': '14.520',
+        'POS': '1',
+        'ESCUELA1': 'INGENIERÍA DE SISTEMAS',
+        'ESTADO': 'INGRESANTE',
+        'COD_CARRERA': '01',
+        'CARRERA_INGRESO': 'INGENIERÍA DE SISTEMAS',
+        'GRUPO': 'Área A',
+        'SEXO': 'M',
+        'EDAD': '18',
+        'FECHA_NACIMIENTO': '15/04/2008',
+        'UBIGEO': '080101'
+      },
+      {
+        'DNI': '87654321',
+        'POSTULANTE': 'MAMANI CONDORI MARIA LUZ',
+        'NOTA': '13.110',
+        'POS': '2',
+        'ESCUELA1': 'MEDICINA HUMANA',
+        'ESTADO': 'INGRESANTE',
+        'COD_CARRERA': '15',
+        'CARRERA_INGRESO': 'MEDICINA HUMANA',
+        'GRUPO': 'Área A',
+        'SEXO': 'F',
+        'EDAD': '19',
+        'FECHA_NACIMIENTO': '22/11/2007',
+        'UBIGEO': '080108'
+      },
+      {
+        'DNI': '44556677',
+        'POSTULANTE': 'HUAMAN OBLITAS RENE',
+        'NOTA': '9.500',
+        'POS': '24',
+        'ESCUELA1': 'DERECHO',
+        'ESTADO': 'NO INGRESANTE',
+        'COD_CARRERA': '',
+        'CARRERA_INGRESO': '',
+        'GRUPO': 'Área C',
+        'SEXO': 'M',
+        'EDAD': '17',
+        'FECHA_NACIMIENTO': '01/01/2009',
+        'UBIGEO': '080601'
+      }
+    ];
+
+    try {
+      const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Plantilla de Resultados');
+      XLSX.writeFile(wb, 'plantilla_pre_revision_resultados.xlsx');
+      notify?.('Plantilla de resultados descargada correctamente.', 'success');
+    } catch (error: any) {
+      console.error('Error generating template:', error);
+      notify?.(`Error al generar la plantilla: ${error.message}`, 'error');
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -1159,8 +1237,16 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const schoolOriginsData = useMemo(() => {
     const schoolCounts: Record<string, { total: number, admitted: number, code: string }> = {};
     normalizedCsvData.forEach(row => {
-      let schVal = getRowValue(row, ['nombrecolegio', 'colegio', 'COLEGIO', 'Colegio', 'colegio_origen', 'COLEGIO_ORIGEN', 'institucion', 'IE', 'I.E.', 'nombre_ie']);
-      let schCode = getRowValue(row, ['cod_colegio', 'codigo_colegio', 'COD_COLEGIO', 'CODIGO_COLEGIO', 'cod_modular', 'cod_mod']);
+      const originalRow = row._raw || row;
+      let schVal = getRowValue(originalRow, ['nombrecolegio', 'colegio', 'COLEGIO', 'Colegio', 'colegio_origen', 'COLEGIO_ORIGEN', 'institucion', 'IE', 'I.E.', 'nombre_ie']);
+      let schCode = getRowValue(originalRow, ['cod_colegio', 'codigo_colegio', 'COD_COLEGIO', 'CODIGO_COLEGIO', 'cod_modular', 'cod_mod']);
+      
+      if (!schCode) {
+        const potentialCode = getRowValue(originalRow, ['colegio', 'COLEGIO', 'Colegio']);
+        if (potentialCode && potentialCode !== schVal) {
+          schCode = potentialCode;
+        }
+      }
       
       if (!schVal && schCode) {
         schVal = `IE COD. ${schCode}`;
@@ -1693,33 +1779,85 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
             </div>
 
             {selectedModalidad && (
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Archivo CSV de Resultados</label>
-                {isFinalized ? (
-                  <div className="bg-slate-50 border-2 border-slate-200 rounded-2xl p-8 text-center flex flex-col items-center justify-center">
-                    <span className="material-symbols-outlined text-4xl text-emerald-600 mb-2">verified_user</span>
-                    <span className="text-sm font-black text-slate-700 uppercase tracking-wide">Proceso Aprobado y Migrado</span>
-                    <p className="text-xs text-slate-500 mt-1.5 max-w-xs leading-relaxed font-semibold">
-                      Este proceso ha sido cerrado de forma definitiva. Toda la información ha sido migrada con éxito a participantes y se encuentra congelada.
-                    </p>
+              <div className="space-y-5">
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                  <div className="flex gap-3">
+                    <span className="material-symbols-outlined text-primary text-[22px] shrink-0">info_outline</span>
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Estructura del archivo CSV / Excel</h4>
+                      <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
+                        El sistema procesa y normaliza las columnas de forma flexible (mayúsculas/minúsculas, guiones o espacios). Para que los postulantes se lean correctamente, el archivo debe cumplir con la siguiente estructura:
+                      </p>
+                    </div>
                   </div>
-                ) : (
-                  <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center hover:bg-slate-50 transition-colors">
-                    <input 
-                      type="file" 
-                      accept=".csv"
-                      className="hidden"
-                      id="csv-upload"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                    />
-                    <label htmlFor="csv-upload" className="cursor-pointer flex flex-col items-center">
-                      <span className="material-symbols-outlined text-4xl text-slate-400 mb-2">upload_file</span>
-                      <span className="text-sm font-bold text-primary">Haz clic para subir el archivo CSV</span>
-                      <span className="text-xs text-slate-500 mt-1">o arrastra y suelta aquí</span>
-                    </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px] bg-white p-4 rounded-xl border border-slate-100 font-semibold text-slate-600">
+                    <div className="space-y-1.5">
+                      <p className="font-bold text-slate-800 uppercase tracking-wide text-[10px] flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Campos Obligatorios:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 pl-1 text-slate-500">
+                        <li><span className="font-bold font-mono text-[10px] text-primary">DNI</span> <span className="text-slate-400">(NroDocumento, DNI, alumno)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">POSTULANTE</span> <span className="text-slate-400">(Nombre, Nombre completo)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">NOTA</span> <span className="text-slate-400">(Puntaje, Nota)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">POS</span> <span className="text-slate-400">(Posicion, Puesto, OMERITO)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">ESCUELA1</span> <span className="text-slate-400">(Carrera a la que postula)</span></li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <p className="font-bold text-slate-800 uppercase tracking-wide text-[10px] flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> Campos de Ingreso y Datos Opcionales:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 pl-1 text-slate-500">
+                        <li><span className="font-bold font-mono text-[10px] text-primary">ESTADO</span> <span className="text-slate-400">(Observación: 'INGRESANTE' para vacantes cubiertas)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">COD_CARRERA</span> <span className="text-slate-400">(Código de escuela de ingreso)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">GRUPO</span> <span className="text-slate-400">(Área, Grupo de examen)</span></li>
+                        <li><span className="font-bold font-mono text-[10px] text-primary">UBIGEO</span> <span className="text-slate-400">(6 dígitos)</span>, Sexo, Edad, FechaNacimiento</li>
+                      </ul>
+                    </div>
                   </div>
-                )}
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={downloadXlsxTemplate}
+                      className="px-4 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">download</span>
+                      Descargar Plantilla Excel (.XLSX)
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Archivo CSV de Resultados</label>
+                  {isFinalized ? (
+                    <div className="bg-slate-50 border-2 border-slate-200 rounded-2xl p-8 text-center flex flex-col items-center justify-center">
+                      <span className="material-symbols-outlined text-4xl text-emerald-600 mb-2">verified_user</span>
+                      <span className="text-sm font-black text-slate-700 uppercase tracking-wide">Proceso Aprobado y Migrado</span>
+                      <p className="text-xs text-slate-500 mt-1.5 max-w-xs leading-relaxed font-semibold">
+                        Este proceso ha sido cerrado de forma definitiva. Toda la información ha sido migrada con éxito a participantes y se encuentra congelada.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center hover:bg-slate-50 transition-colors">
+                      <input 
+                        type="file" 
+                        accept=".csv"
+                        className="hidden"
+                        id="csv-upload"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                      />
+                      <label htmlFor="csv-upload" className="cursor-pointer flex flex-col items-center">
+                        <span className="material-symbols-outlined text-4xl text-slate-400 mb-2">upload_file</span>
+                        <span className="text-sm font-bold text-primary">Haz clic para subir el archivo CSV</span>
+                        <span className="text-xs text-slate-500 mt-1">o arrastra y suelta aquí</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
