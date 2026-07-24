@@ -1,6 +1,8 @@
 // Archivo principal de Expedientes Entrantes
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 import { supabase } from '../lib/supabaseClient';
 import { IncomingFile, Participant, Template, PaymentRegistry, User } from '../types';
 import { UnifiedTimelineModal } from '../components/UnifiedTimelineModal';
@@ -921,6 +923,9 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           content = content.replace(new RegExp(escapedKey, 'g'), value || '');
       });
 
+      // 3. Clean justification styles that collapse spaces in HTML canvas rendering
+      content = content.replace(/text-align\s*:\s*justify/gi, 'text-align: left;');
+
       return content;
   };
 
@@ -1001,6 +1006,91 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       };
   };
 
+  const generatePdfBlobFromElement = async (element: HTMLElement): Promise<Blob> => {
+      // 1. Esperar a que las fuentes personalizadas (Poppins, Cinzel) estén cargadas
+      if (document.fonts && document.fonts.ready) {
+          await document.fonts.ready;
+      }
+
+      // 2. Crear un contenedor temporal aislado en document.body para renderizado perfecto a escala 1:1 (A4)
+      const tempContainer = document.createElement('div');
+      tempContainer.style.position = 'fixed';
+      tempContainer.style.left = '-9999px';
+      tempContainer.style.top = '0';
+      tempContainer.style.width = '210mm';
+      tempContainer.style.height = '296.5mm';
+      tempContainer.style.background = '#ffffff';
+      tempContainer.style.zIndex = '-9999';
+      tempContainer.style.transform = 'none';
+      tempContainer.style.webkitTransform = 'none';
+      tempContainer.style.zoom = '1';
+      tempContainer.style.boxSizing = 'border-box';
+      tempContainer.style.overflow = 'hidden';
+
+      // 3. Clonar el elemento
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.transform = 'none';
+      clone.style.webkitTransform = 'none';
+      clone.style.zoom = '1';
+      clone.style.margin = '0';
+      clone.style.width = '210mm';
+      clone.style.height = '296.5mm';
+      clone.style.boxSizing = 'border-box';
+
+      // 4. Sanitizar estilos en el clon para forzar alineación izquierda y evitar colapso de espacios por justificación o letter-spacing
+      const sanitizeNode = (node: HTMLElement) => {
+          const style = node.getAttribute('style') || '';
+          if (/text-align\s*:\s*justify/i.test(style) || node.style.textAlign === 'justify') {
+              node.setAttribute('style', style.replace(/text-align\s*:\s*justify/gi, 'text-align: left;'));
+              node.style.textAlign = 'left';
+          }
+          node.style.letterSpacing = 'normal';
+          node.style.wordSpacing = 'normal';
+
+          const tag = node.tagName.toLowerCase();
+          if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+              node.style.lineHeight = '1.3';
+          }
+      };
+
+      sanitizeNode(clone);
+      const allChildren = clone.querySelectorAll<HTMLElement>('*');
+      allChildren.forEach(sanitizeNode);
+
+      tempContainer.appendChild(clone);
+      document.body.appendChild(tempContainer);
+
+      try {
+          const canvas = await html2canvas(clone, {
+              scale: 2,
+              useCORS: true,
+              logging: false,
+              backgroundColor: '#ffffff',
+              width: clone.offsetWidth || 794,
+              height: clone.offsetHeight || 1121,
+              windowWidth: 794,
+              windowHeight: 1121,
+          });
+
+          const imgData = canvas.toDataURL('image/jpeg', 0.98);
+          const pdf = new jsPDF({
+              orientation: 'portrait',
+              unit: 'mm',
+              format: 'a4'
+          });
+
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+
+          return pdf.output('blob');
+      } finally {
+          if (document.body.contains(tempContainer)) {
+              document.body.removeChild(tempContainer);
+          }
+      }
+  };
+
   const downloadDraftOnly = async () => {
       if (!fileToAttend || !previewRef.current || !selectedStudent) return;
       setIsSubmitting(true);
@@ -1012,9 +1102,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           const element = previewRef.current;
           restoreDOM = await removeWhiteBackgrounds(element);
           
-          
-          
-          const pdfBlob = new Blob([], { type: "application/pdf" }); // Mocked PDF
+          const pdfBlob = await generatePdfBlobFromElement(element);
           
           const url = window.URL.createObjectURL(pdfBlob);
           const a = document.createElement('a');
@@ -1052,8 +1140,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
               const element = previewRef.current;
               restoreDOM = await removeWhiteBackgrounds(element);
               
-              
-              finalPdfBlob = new Blob([], { type: "application/pdf" }); // Mocked PDF
+              finalPdfBlob = await generatePdfBlobFromElement(element);
           }
 
           // 2. Upload to Supabase Storage
