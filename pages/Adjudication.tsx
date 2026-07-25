@@ -1697,18 +1697,13 @@ export default function Adjudication() {
           });
         }
       });
-      // 4. Obtener estudiantes adjudicados
-      const { data: adjRanking, error: adjErr } = await supabase
-        .from("adjudicacion_ranking")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .eq("observacion", "Adjudicado");
-      if (adjErr) throw adjErr;
-      const adjStudentsBySchool: Record<string, typeof adjRanking> = {};
-      if (adjRanking) {
+      // 4. Obtener estudiantes adjudicados usando la búsqueda robusta
+      const adjRanking = await getAdjudicatedRanking(activeProcessName);
+      const adjStudentsBySchool: Record<string, any[]> = {};
+      if (adjRanking && adjRanking.length > 0) {
         adjRanking.forEach(student => {
           const schName = student.escuela_adjudicada;
-          if (schName) {
+          if (schName && schName.trim() !== "") {
             if (!adjStudentsBySchool[schName]) {
               adjStudentsBySchool[schName] = [];
             }
@@ -1741,7 +1736,13 @@ export default function Adjudication() {
       });
       // 5. Consolidar ambas listas
       const finalIngresantes = [...directIngresantes, ...adjudicatedIngresantes];
-      // 6. Limpiar participantes antiguos de esta modalidad
+
+      // 6. PROTECCIÓN Y VALIDACIÓN: Prohibido borrar si la lista está vacía
+      if (finalIngresantes.length === 0) {
+        throw new Error("No se encontraron ingresantes válidos (regulares o adjudicados) para migrar. Operación abortada para proteger la tabla de participantes.");
+      }
+
+      // 7. Limpiar participantes antiguos de esta modalidad solo tras confirmar que hay datos válidos a insertar
       const { error: delErr } = await supabase
         .from("participantes")
         .delete()
@@ -1749,14 +1750,13 @@ export default function Adjudication() {
         .eq("SEMESTRE", semestre)
         .eq("ANIO", anio);
       if (delErr) throw delErr;
-      // 7. Insertar todos los ingresantes consolidados en bloques
-      if (finalIngresantes.length > 0) {
-        const chunkSize = 100;
-        for (let i = 0; i < finalIngresantes.length; i += chunkSize) {
-          const chunk = finalIngresantes.slice(i, i + chunkSize);
-          const { error: insErr } = await supabase.from("participantes").insert(chunk);
-          if (insErr) throw insErr;
-        }
+
+      // 8. Insertar todos los ingresantes consolidados en bloques
+      const chunkSize = 100;
+      for (let i = 0; i < finalIngresantes.length; i += chunkSize) {
+        const chunk = finalIngresantes.slice(i, i + chunkSize);
+        const { error: insErr } = await supabase.from("participantes").insert(chunk);
+        if (insErr) throw insErr;
       }
       setMigrateStatus("success");
       setMigrateMessage(`¡Proceso finalizado! Se migraron exitosamente ${finalIngresantes.length} ingresantes oficiales a participantes (${directIngresantes.length} regulares y ${adjudicatedIngresantes.length} adjudicados) con filiales y orden de mérito consecutivo resueltos.`);

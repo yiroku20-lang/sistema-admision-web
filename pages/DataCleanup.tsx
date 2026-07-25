@@ -133,103 +133,123 @@ export const DataCleanup = ({ user }: { user: User }) => {
   const [reportCareers, setReportCareers] = useState<string[]>([]);
   const [reportModalities, setReportModalities] = useState<string[]>([]);
   
-  useEffect(() => {
-    if (filterCombos.length > 0) {
-      let filteredCombos = filterCombos;
-      if (reportYear !== 'Todos') {
-        filteredCombos = filteredCombos.filter(c => c.anio === reportYear);
-      }
-      const uniqueSemesters = Array.from(new Set(filteredCombos.map(c => c.semestre).filter(Boolean))).sort();
-      setSemesters(uniqueSemesters as string[]);
-      
-      // If the currently selected semester is not in the new list, reset to 'Todos'
-      if (reportSemester !== 'Todos' && !uniqueSemesters.includes(reportSemester)) {
-        setReportSemester('Todos');
-      }
-      
-      if (reportSemester !== 'Todos') {
-        filteredCombos = filteredCombos.filter(c => c.semestre === reportSemester);
-      }
-      
-      const uniqueCareers = Array.from(new Set(filteredCombos.map(c => c.carrera).filter(Boolean))).sort();
-      setReportCareers(uniqueCareers as string[]);
-      if (reportCareer !== 'Todos' && !uniqueCareers.includes(reportCareer)) {
-        setReportCareer('Todos');
-      }
-      
-      if (reportCareer !== 'Todos') {
-        filteredCombos = filteredCombos.filter(c => c.carrera === reportCareer);
-      }
-      
-      const uniqueModalities = Array.from(new Set(filteredCombos.map(c => c.modalidad).filter(Boolean))).sort();
-      setReportModalities(uniqueModalities as string[]);
-      if (reportModality !== 'Todos' && !uniqueModalities.includes(reportModality)) {
-        setReportModality('Todos');
-      }
-    }
-  }, [reportYear, reportSemester, reportCareer, filterCombos]);
+  // Load filter options dynamically for Reporte Ingresantes
+  const loadReportFilterOptions = async (y: string, sem: string, car: string) => {
+    try {
+      // 1. Fetch official modalities with year and semester
+      const { data: modsData } = await supabase
+        .from('cv_modalidades')
+        .select('nombre, semestre, cv_cuadros_anuales(anio)');
 
-  useEffect(() => {
-      const fetchRefs = async () => {
-          try {
-              const { data: escData } = await supabase.from('cv_escuelas').select('nombre, codigo_carrera');
-              if (escData) {
-                  // Keep the actual objects for the data
-                  setCarrerasData(escData);
-              }
-              
-              const { data: modData } = await supabase.from('cv_modalidades').select('nombre');
-              if (modData) setModalidadesRef(Array.from(new Set(modData.map(m => m.nombre.toUpperCase()))).sort());
-          } catch (e) {
-              console.error("Refs error", e);
+      // 2. Fetch official schools/careers
+      const { data: escData } = await supabase
+        .from('cv_escuelas')
+        .select('nombre');
+
+      // 3. Fetch distinct combos from participantes for current filters (lightweight)
+      let pQuery = supabase.from('participantes').select('ANIO, SEMESTRE, CARRERA, MODALIDAD');
+      if (y !== 'Todos') pQuery = pQuery.eq('ANIO', y);
+      if (sem !== 'Todos') pQuery = pQuery.eq('SEMESTRE', sem);
+      const { data: partCombos } = await pQuery.limit(3000);
+
+      const allCombos: { anio: string; semestre: string; carrera: string; modalidad: string }[] = [];
+
+      if (modsData) {
+        const escList = escData && escData.length > 0 ? escData.map(e => e.nombre) : [''];
+        modsData.forEach(m => {
+          const modAnio = (m.cv_cuadros_anuales as any)?.anio ? String((m.cv_cuadros_anuales as any).anio) : '';
+          const modSem = m.semestre || '';
+          const modNom = m.nombre || '';
+          escList.forEach(cName => {
+            allCombos.push({ anio: modAnio, semestre: modSem, carrera: cName, modalidad: modNom });
+          });
+        });
+      }
+
+      if (partCombos) {
+        partCombos.forEach(p => {
+          if (p.MODALIDAD || p.CARRERA) {
+            allCombos.push({
+              anio: p.ANIO ? String(p.ANIO) : '',
+              semestre: p.SEMESTRE || '',
+              carrera: p.CARRERA || '',
+              modalidad: p.MODALIDAD || ''
+            });
           }
-      };
-      fetchRefs();
-  }, []);
+        });
+      }
 
-  const fetchYears = async () => {
-     setLoadingYears(true);
-     try {
-         let allCombos: {anio: string, semestre: string, carrera: string, modalidad: string}[] = [];
-         let start = 0;
-         let step = 1000;
-         let hasMore = true;
-         while(hasMore) {
-             const { data, error } = await supabase.from('participantes').select('ANIO, SEMESTRE, CARRERA, MODALIDAD').range(start, start + step - 1);
-             if (error) break;
-             if (data && data.length > 0) {
-                 allCombos.push(...data.map(d => ({ anio: d.ANIO, semestre: d.SEMESTRE, carrera: d.CARRERA, modalidad: d.MODALIDAD })));
-                 if (data.length < step) hasMore = false;
-                 else start += step;
-             } else {
-                 hasMore = false;
-             }
-         }
-         
-         // Remove duplicates
-         const uniqueCombosMap = new Map();
-         allCombos.forEach(c => {
-             const key = `${c.anio}|${c.semestre}|${c.carrera}|${c.modalidad}`;
-             if (!uniqueCombosMap.has(key)) {
-                 uniqueCombosMap.set(key, c);
-             }
-         });
-         const uniqueCombos = Array.from(uniqueCombosMap.values());
-         setFilterCombos(uniqueCombos);
-         
-         const uniqueYears = Array.from(new Set(uniqueCombos.map(c => c.anio).filter(Boolean))).sort((a: any, b: any) => b - a);
-         setYears(uniqueYears as string[]);
-         
-         const uniqueSemesters = Array.from(new Set(uniqueCombos.map(c => c.semestre).filter(Boolean))).sort();
-         setSemesters(uniqueSemesters as string[]);
-         
-     } finally {
-         setLoadingYears(false);
-     }
+      // Filter by year for semesters
+      let filteredForSem = allCombos;
+      if (y !== 'Todos') {
+        filteredForSem = filteredForSem.filter(c => c.anio === y);
+      }
+      const uniqueSemesters = Array.from(new Set(filteredForSem.map(c => c.semestre).filter(Boolean))).sort();
+      setSemesters(uniqueSemesters);
+
+      // Filter by semester for careers
+      let filteredForCar = filteredForSem;
+      if (sem !== 'Todos') {
+        filteredForCar = filteredForCar.filter(c => c.semestre === sem);
+      }
+      const uniqueCareers = Array.from(new Set(filteredForCar.map(c => c.carrera).filter(Boolean))).sort();
+      setReportCareers(uniqueCareers);
+
+      // Filter by career for modalities
+      let filteredForMod = filteredForCar;
+      if (car !== 'Todos') {
+        filteredForMod = filteredForMod.filter(c => c.carrera === car);
+      }
+      const uniqueModalities = Array.from(new Set(filteredForMod.map(c => c.modalidad).filter(Boolean))).sort();
+      setReportModalities(uniqueModalities);
+
+    } catch (err) {
+      console.error("Error loading filter options:", err);
+    }
   };
 
   useEffect(() => {
-     fetchYears();
+    if (activeTab === 'reporte_ingresantes') {
+      loadReportFilterOptions(reportYear, reportSemester, reportCareer);
+    }
+  }, [activeTab, reportYear, reportSemester, reportCareer]);
+
+  useEffect(() => {
+    const fetchRefs = async () => {
+      try {
+        const { data: escData } = await supabase.from('cv_escuelas').select('nombre, codigo_carrera');
+        if (escData) setCarrerasData(escData);
+        const { data: modData } = await supabase.from('cv_modalidades').select('nombre');
+        if (modData) setModalidadesRef(Array.from(new Set(modData.map(m => m.nombre.toUpperCase()))).sort());
+      } catch (e) {
+        console.error("Refs error", e);
+      }
+    };
+    fetchRefs();
+  }, []);
+
+  const fetchYears = async () => {
+    setLoadingYears(true);
+    try {
+      const { data: cData } = await supabase.from('cv_cuadros_anuales').select('anio');
+      const { data: pData } = await supabase.from('participantes').select('ANIO').not('ANIO', 'is', null).limit(1000);
+      const yrSet = new Set<string>();
+      if (cData) cData.forEach(c => c.anio && yrSet.add(String(c.anio)));
+      if (pData) pData.forEach(p => p.ANIO && yrSet.add(String(p.ANIO)));
+      if (yrSet.size === 0) {
+        ['2026', '2025', '2024', '2023'].forEach(y => yrSet.add(y));
+      }
+      const sortedYears = Array.from(yrSet).sort((a, b) => b.localeCompare(a));
+      setYears(sortedYears);
+    } catch (e) {
+      console.error("Error fetching years:", e);
+    } finally {
+      setLoadingYears(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchYears();
   }, []);
 
   const fetchDataStats = async () => {
@@ -277,10 +297,12 @@ export const DataCleanup = ({ user }: { user: User }) => {
   };
 
   useEffect(() => {
+    if (activeTab === 'homologacion') {
       fetchDataStats();
       setReplaceTarget(null);
       setNewValue('');
-  }, [selectedField, selectedYear]);
+    }
+  }, [activeTab, selectedField, selectedYear]);
 
   // Normalize string for comparison (remove accents)
   const normalizeForMatch = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
@@ -1349,16 +1371,31 @@ export const DataCleanup = ({ user }: { user: User }) => {
                 onClick={async () => {
                   setLoadingReport(true);
                   try {
-                    let query = supabase.from('participantes').select('*');
-                    if (reportYear !== 'Todos') query = query.eq('ANIO', reportYear);
-                    if (reportSemester !== 'Todos') query = query.eq('SEMESTRE', reportSemester);
-                    if (reportCareer !== 'Todos') query = query.eq('CARRERA', reportCareer);
-                    if (reportModality !== 'Todos') query = query.eq('MODALIDAD', reportModality);
-                    
-                    const { data, error } = await query;
-                    if (error) throw error;
-                    setReportData(data || []);
-                    setAlertMessage({ type: 'success', text: `Reporte generado con ${data?.length || 0} registros.` });
+                    let allData: any[] = [];
+                    let start = 0;
+                    let step = 1000;
+                    let hasMore = true;
+
+                    while (hasMore) {
+                      let query = supabase.from('participantes').select('*').range(start, start + step - 1);
+                      if (reportYear !== 'Todos') query = query.eq('ANIO', reportYear);
+                      if (reportSemester !== 'Todos') query = query.eq('SEMESTRE', reportSemester);
+                      if (reportCareer !== 'Todos') query = query.eq('CARRERA', reportCareer);
+                      if (reportModality !== 'Todos') query = query.eq('MODALIDAD', reportModality);
+
+                      const { data, error } = await query;
+                      if (error) throw error;
+                      if (data && data.length > 0) {
+                        allData.push(...data);
+                        if (data.length < step) hasMore = false;
+                        else start += step;
+                      } else {
+                        hasMore = false;
+                      }
+                    }
+
+                    setReportData(allData);
+                    setAlertMessage({ type: 'success', text: `Reporte generado exitosamente con ${allData.length} registros.` });
                   } catch (e: any) {
                     setAlertMessage({ type: 'error', text: 'Error al generar reporte: ' + e.message });
                   } finally {
