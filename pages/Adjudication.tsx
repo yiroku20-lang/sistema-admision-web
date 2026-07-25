@@ -433,14 +433,19 @@ export default function Adjudication() {
       const { data: rData } = await supabase
         .from("adjudicacion_ranking")
         .select("modalidad");
-      const { data: cData } = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("modalidad");
 
       const mods = new Set<string>();
       if (vData) vData.forEach((d) => mods.add(d.modalidad));
       if (rData) rData.forEach((d) => mods.add(d.modalidad));
-      if (cData) cData.forEach((d) => mods.add(d.modalidad));
+
+      try {
+        const { data: cData } = await supabase
+          .from("clasificacion_de_adjudicacion")
+          .select("modalidad");
+        if (cData) cData.forEach((d) => mods.add(d.modalidad));
+      } catch (_) {
+        // Ignorar si la vista no existe
+      }
 
       setProcesos(Array.from(mods));
     } catch (e) {
@@ -758,6 +763,58 @@ export default function Adjudication() {
     }
   };
 
+  const getAdjudicatedRanking = async (processName: string) => {
+    let finalRanking: any[] = [];
+    const resFb = await supabase
+      .from("adjudicacion_ranking")
+      .select("*")
+      .eq("modalidad", processName)
+      .not("escuela_adjudicada", "is", null)
+      .order("orden_merito", { ascending: true });
+
+    if (!resFb.error && resFb.data && resFb.data.length > 0) {
+      finalRanking = resFb.data;
+    } else {
+      const cleanPattern = `%${processName.replace(/[^a-zA-Z0-9]+/g, "%")}%`;
+      const resFlexible = await supabase
+        .from("adjudicacion_ranking")
+        .select("*")
+        .ilike("modalidad", cleanPattern)
+        .not("escuela_adjudicada", "is", null)
+        .order("orden_merito", { ascending: true });
+
+      if (!resFlexible.error && resFlexible.data && resFlexible.data.length > 0) {
+        finalRanking = resFlexible.data;
+      } else {
+        const resObs = await supabase
+          .from("adjudicacion_ranking")
+          .select("*")
+          .eq("observacion", "Adjudicado")
+          .not("escuela_adjudicada", "is", null)
+          .order("orden_merito", { ascending: true });
+
+        if (!resObs.error && resObs.data && resObs.data.length > 0) {
+          finalRanking = resObs.data;
+        } else {
+          try {
+            const resC = await supabase
+              .from("clasificacion_de_adjudicacion")
+              .select("*")
+              .eq("modalidad", processName)
+              .not("escuela_adjudicada", "is", null)
+              .order("orden_merito", { ascending: true });
+            if (!resC.error && resC.data && resC.data.length > 0) {
+              finalRanking = resC.data;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+    return finalRanking.filter(
+      (r) => r.escuela_adjudicada && r.escuela_adjudicada.trim() !== ""
+    );
+  };
+
   const exportOfficialExcelReport = async () => {
     if (!activeProcessName) return;
     setExportingExcel(true);
@@ -771,25 +828,7 @@ export default function Adjudication() {
       if (vErr) throw vErr;
 
       // 2. Fetch all adjudicated applicants
-      let finalRanking: any[] = [];
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .not("escuela_adjudicada", "is", null)
-        .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
-          .from("adjudicacion_ranking")
-          .select("*")
-          .eq("modalidad", activeProcessName)
-          .not("escuela_adjudicada", "is", null)
-          .order("orden_merito", { ascending: true });
-        finalRanking = resFb.data || [];
-      } else {
-        finalRanking = res.data || [];
-      }
+      const finalRanking = await getAdjudicatedRanking(activeProcessName);
 
       // Filter area "_" vacancies if any
       const vacanciesList = (allVacancies || []).filter((v) => v.area !== "_");
@@ -903,25 +942,7 @@ export default function Adjudication() {
         .eq("modalidad", activeProcessName);
       if (vErr) throw vErr;
       // 2. Fetch all adjudicated applicants
-      let finalRanking: any[] = [];
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .not("escuela_adjudicada", "is", null)
-        .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
-          .from("adjudicacion_ranking")
-          .select("*")
-          .eq("modalidad", activeProcessName)
-          .not("escuela_adjudicada", "is", null)
-          .order("orden_merito", { ascending: true });
-        finalRanking = resFb.data || [];
-      } else {
-        finalRanking = res.data || [];
-      }
+      const finalRanking = await getAdjudicatedRanking(activeProcessName);
       // Filter area "_" vacancies if any
       const vacanciesList = (allVacancies || []).filter((v) => v.area !== "_");
       // Sort vacancies by Area then by Escuela name
@@ -1284,29 +1305,50 @@ export default function Adjudication() {
         }
       }
 
-      // Intentamos cargar ranking
-      let qRanking = null;
-      let eRanking = null;
+      // Intentamos cargar ranking desde adjudicacion_ranking
+      let qRanking: any[] | null = null;
+      let eRanking: any = null;
 
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
+      const resFb = await supabase
+        .from("adjudicacion_ranking")
         .select("*")
         .eq("modalidad", activeProcessName)
         .eq("area", selectedArea)
         .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
+
+      if (!resFb.error && resFb.data && resFb.data.length > 0) {
+        qRanking = resFb.data;
+      } else {
+        const normModalidad = activeProcessName.replace(/[\s_-]+/g, '%');
+        const resFlexible = await supabase
           .from("adjudicacion_ranking")
           .select("*")
-          .eq("modalidad", activeProcessName)
+          .ilike("modalidad", `%${normModalidad}%`)
           .eq("area", selectedArea)
           .order("orden_merito", { ascending: true });
-        qRanking = resFb.data;
-        eRanking = resFb.error;
-      } else {
-        qRanking = res.data;
-        eRanking = res.error;
+
+        if (!resFlexible.error && resFlexible.data && resFlexible.data.length > 0) {
+          qRanking = resFlexible.data;
+        } else {
+          try {
+            const resC = await supabase
+              .from("clasificacion_de_adjudicacion")
+              .select("*")
+              .eq("modalidad", activeProcessName)
+              .eq("area", selectedArea)
+              .order("orden_merito", { ascending: true });
+            if (!resC.error && resC.data && resC.data.length > 0) {
+              qRanking = resC.data;
+            }
+          } catch (_) {}
+
+          if (!qRanking) {
+            qRanking = resFlexible.data || resFb.data || [];
+            if (resFb.error && resFb.error.code !== "PGRST116" && resFb.error.code !== "PGRST205") {
+              eRanking = resFb.error;
+            }
+          }
+        }
       }
 
       if (eRanking) {

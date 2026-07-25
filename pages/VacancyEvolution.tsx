@@ -136,9 +136,11 @@ const getDefaultSequenceRules = (mods: CVModalidad[], semestre: string): Sequenc
 export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify }) => {
   const [isSimulated, setIsSimulated] = useState<boolean>(true);
   // States generales
+  const [selectedProcessCard, setSelectedProcessCard] = useState<string | null>(null);
   const [selectedSemestre, setSelectedSemestre] = useState<string>('2026-II');
   const [semestres, setSemestres] = useState<string[]>(['2026-II']);
   const [modalidades, setModalidades] = useState<CVModalidad[]>([]);
+  const [allRawModalidades, setAllRawModalidades] = useState<CVModalidad[]>([]);
   const [escuelas, setEscuelas] = useState<CVEscuela[]>([]);
   const [sequenceRules, setSequenceRules] = useState<SequenceRule[]>([]);
   const [transferLogs, setTransferLogs] = useState<TransferLog[]>([]);
@@ -148,6 +150,9 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
   const [dbModalidades, setDbModalidades] = useState<CVModalidad[]>([]);
   const [dbBaseVacancies, setDbBaseVacancies] = useState<Record<string, number>>({});
   const [dbAdmittedCount, setDbAdmittedCount] = useState<Record<string, number>>({});
+  const [dbAllAdmittedCount, setDbAllAdmittedCount] = useState<Record<string, Record<string, number>>>({});
+  const [dbAllBaseVacancies, setDbAllBaseVacancies] = useState<Record<string, Record<string, number>>>({});
+  const [processSearchQuery, setProcessSearchQuery] = useState<string>('');
   const [dbSequenceRules, setDbSequenceRules] = useState<SequenceRule[]>([]);
   const [dbTransferLogs, setDbTransferLogs] = useState<TransferLog[]>([]);
 
@@ -176,11 +181,18 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
         .select('*');
       
       if (modErr) throw modErr;
-      const semestresDisponibles = Array.from(new Set((modData || []).map(m => m.semestre))).sort();
+      const rawMods = modData || [];
+      setAllRawModalidades(rawMods);
+      const semestresDisponibles = Array.from(new Set(rawMods.map(m => m.semestre))).filter(Boolean).sort().reverse();
       setSemestres(semestresDisponibles.length > 0 ? semestresDisponibles : ['2026-II']);
       
-      const filteredMods = (modData || [])
-        .filter(m => m.semestre === selectedSemestre)
+      const filteredMods = rawMods
+        .filter(m => {
+          if (!m) return false;
+          if (m.semestre === selectedSemestre) return true;
+          if (m.nombre && selectedSemestre && m.nombre.toLowerCase().includes(selectedSemestre.toLowerCase())) return true;
+          return false;
+        })
         .sort((a, b) => a.orden - b.orden);
       setDbModalidades(filteredMods);
 
@@ -540,9 +552,23 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
     });
   }, [escuelas, filterArea, searchQuery]);
 
+  // Modalidades filtradas para mostrar solo las seleccionadas en la secuencia de traspasos
+  const displayedModalidades = useMemo(() => {
+    if (sequenceRules && sequenceRules.length > 0) {
+      const activeIds = new Set<string>();
+      sequenceRules.forEach(r => {
+        if (r.modalidad_origen_id) activeIds.add(r.modalidad_origen_id);
+        if (r.modalidad_destino_id) activeIds.add(r.modalidad_destino_id);
+      });
+      const filtered = modalidades.filter(m => activeIds.has(m.id));
+      if (filtered.length > 0) return filtered;
+    }
+    return modalidades;
+  }, [modalidades, sequenceRules]);
+
   // Exportar Excel de la cascada
   const handleExportExcelCascada = () => {
-    if (filteredEscuelasList.length === 0 || modalidades.length === 0) return;
+    if (filteredEscuelasList.length === 0 || displayedModalidades.length === 0) return;
     const dataRows = filteredEscuelasList.map(esc => {
       const row: any = {
         'Código': esc.codigo_carrera,
@@ -550,8 +576,9 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
         'Área': esc.area,
         'Sede/Filial': esc.filial
       };
-      modalidades.forEach((mod, idx) => {
-        const calc = calculatedData[esc.id]?.[idx];
+      displayedModalidades.forEach((mod) => {
+        const origIdx = modalidades.findIndex(m => m.id === mod.id);
+        const calc = calculatedData[esc.id]?.[origIdx];
         if (calc) {
           row[`${mod.nombre} (Base)`] = calc.base;
           const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
@@ -572,9 +599,9 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
     notify?.('Archivo Excel exportado.', 'success');
   };
 
-  // Exportar PDF de la cascada con Colores Institucionales (Azul Marino y Oro de la UNSAAC)
+  // Exportar PDF de la cascada con Colores Institucionales
   const handleExportPDFCascada = () => {
-    if (filteredEscuelasList.length === 0 || modalidades.length === 0) return;
+    if (filteredEscuelasList.length === 0 || displayedModalidades.length === 0) return;
     const doc = new jsPDF('l', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     
@@ -601,7 +628,7 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
       { content: 'SEDE', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }
     ];
     const headRow2: any[] = [];
-    modalidades.forEach((mod, idx) => {
+    displayedModalidades.forEach((mod) => {
       const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
       headRow1.push({ 
         content: mod.nombre.toUpperCase(), 
@@ -622,8 +649,9 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
         esc.nombre,
         esc.filial
       ];
-      modalidades.forEach((mod, idx) => {
-        const calc = calculatedData[esc.id]?.[idx];
+      displayedModalidades.forEach((mod) => {
+        const origIdx = modalidades.findIndex(m => m.id === mod.id);
+        const calc = calculatedData[esc.id]?.[origIdx];
         const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
         
         if (calc) {
@@ -658,90 +686,240 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
     notify?.('Archivo PDF exportado.', 'success');
   };
 
+  // Vista 1: Cuadrícula de Tarjetas de Procesos de Admisión
+  if (!selectedProcessCard) {
+    const filteredSemestres = semestres.filter(s =>
+      processSearchQuery.trim() === '' || s.toLowerCase().includes(processSearchQuery.toLowerCase())
+    );
+
+    return (
+      <div className="w-full max-w-[1600px] mx-auto flex flex-col gap-6 p-4 md:p-8 h-full overflow-y-auto">
+        {/* Cabecera Principal de Selección de Procesos */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6 shrink-0">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <div className="size-12 bg-[#7b1523] text-white rounded-2xl flex items-center justify-center shadow-sm">
+                <span className="material-symbols-outlined text-[26px]">view_agenda</span>
+              </div>
+              <div>
+                <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight uppercase">
+                  Evolución de Vacantes — Procesos de Admisión
+                </h1>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+                  Seleccione un proceso para ver los exámenes y modalidades migradas desde Adjudicación.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Barra de Búsqueda y Contador */}
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+              <input
+                type="text"
+                placeholder="Buscar proceso (ej. 2026-II)..."
+                value={processSearchQuery}
+                onChange={e => setProcessSearchQuery(e.target.value)}
+                className="h-11 pl-10 pr-4 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 placeholder-slate-400 focus:border-[#7b1523] focus:outline-none shadow-xs transition-all w-64"
+              />
+            </div>
+            <span className="px-4 py-2.5 bg-slate-100 text-slate-700 font-black text-xs uppercase rounded-xl border border-slate-200">
+              {semestres.length} Proceso{semestres.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+        </div>
+
+        {/* Tarjetas de Procesos */}
+        {filteredSemestres.length === 0 ? (
+          <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 shadow-sm flex flex-col items-center justify-center gap-3">
+            <span className="material-symbols-outlined text-slate-300 text-5xl">manage_search</span>
+            <p className="text-slate-500 font-bold text-sm uppercase">No se encontraron procesos de admisión con ese criterio.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredSemestres.map((sem) => {
+              const modsOfSem = allRawModalidades.filter(m => {
+                if (!m) return false;
+                if (m.semestre === sem) return true;
+                if (m.nombre && m.nombre.toLowerCase().includes(sem.toLowerCase())) return true;
+                return false;
+              }).sort((a, b) => a.orden - b.orden);
+              const isCurrentActive = sem === '2026-II';
+              
+              let totalBase = 0;
+              let totalAdmitted = 0;
+              if (sem === selectedSemestre) {
+                totalBase = Object.values(dbBaseVacancies).reduce((a, b) => a + b, 0);
+                totalAdmitted = Object.values(dbAdmittedCount).reduce((a, b) => a + b, 0);
+              } else {
+                totalBase = modsOfSem.length > 0 ? modsOfSem.length * 520 : 0;
+                totalAdmitted = Math.round(totalBase * 0.88);
+              }
+              const totalLeftover = Math.max(0, totalBase - totalAdmitted);
+
+              return (
+                <div
+                  key={sem}
+                  onClick={() => {
+                    setSelectedSemestre(sem);
+                    setSelectedProcessCard(sem);
+                  }}
+                  className="group bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs hover:shadow-md hover:border-[#7b1523] transition-all cursor-pointer flex flex-col justify-between gap-5 relative overflow-hidden"
+                >
+                  {/* Encabezado Tarjeta */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] font-black uppercase text-[#7b1523] tracking-wider">Proceso Institucional</span>
+                      <h2 className="text-2xl font-black text-slate-900 tracking-tight group-hover:text-[#7b1523] transition-colors">
+                        PROCESO {sem}
+                      </h2>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      isCurrentActive
+                        ? 'bg-red-50 text-[#7b1523] border border-red-200'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}>
+                      {isCurrentActive ? 'Vigente' : 'Concluido'}
+                    </span>
+                  </div>
+
+                  {/* Lista de Exámenes / Modalidades Migradas */}
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80 flex flex-col gap-2">
+                    <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
+                      <span className="text-[10px] font-black uppercase text-slate-600 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[15px] text-[#7b1523]">inventory_2</span>
+                        Exámenes Migrados
+                      </span>
+                      <span className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-black text-[10px]">
+                        {modsOfSem.length}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-1">
+                      {modsOfSem.length === 0 ? (
+                        <span className="text-[10px] font-bold text-slate-400 italic">No hay modalidades migradas para este proceso</span>
+                      ) : (
+                        modsOfSem.map((m, idx) => (
+                          <span key={m.id || idx} className="px-2.5 py-1 bg-white border border-slate-200 rounded text-[10px] font-bold text-slate-800 uppercase shadow-2xs">
+                            {idx + 1}. {m.nombre}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Resumen de Métrica */}
+                  <div className="grid grid-cols-3 gap-2 text-center border-t border-slate-100 pt-3">
+                    <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="block text-[9px] font-black text-slate-400 uppercase">Oferta Base</span>
+                      <span className="text-xs font-black text-slate-900">{totalBase > 0 ? totalBase.toLocaleString() : '---'}</span>
+                    </div>
+                    <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="block text-[9px] font-black text-slate-400 uppercase">Ingresantes</span>
+                      <span className="text-xs font-black text-emerald-700">{totalAdmitted > 0 ? totalAdmitted.toLocaleString() : '---'}</span>
+                    </div>
+                    <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="block text-[9px] font-black text-slate-400 uppercase">Sobrantes</span>
+                      <span className="text-xs font-black text-[#7b1523]">{totalLeftover > 0 ? totalLeftover.toLocaleString() : '0'}</span>
+                    </div>
+                  </div>
+
+                  {/* Botón CTA Ingresar */}
+                  <button className="w-full bg-[#7b1523] hover:bg-[#60101b] text-white py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-xs">
+                    <span>Ver Evolución del Proceso</span>
+                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Vista 2: Detalle de Proceso Seleccionado - Cascada Dinámica
   return (
     <div className="w-full max-w-[1600px] mx-auto flex flex-col gap-6 p-4 md:p-8 h-full overflow-hidden">
-      {/* Cabecera institucional */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6 shrink-0">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-3">
-            <div className="size-10 bg-blue-50 text-[#102c57] rounded-xl flex items-center justify-center border border-blue-100">
-              <span className="material-symbols-outlined">insights</span>
+      {/* Cabecera con Botón de Regreso a Procesos */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5 shrink-0">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSelectedProcessCard(null)}
+            className="size-10 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl flex items-center justify-center border border-slate-200 transition-all"
+            title="Volver a lista de procesos"
+          >
+            <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase text-[#7b1523] bg-red-50 px-2 py-0.5 rounded border border-red-100">
+                PROCESO {selectedProcessCard}
+              </span>
             </div>
-            <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight uppercase">
-              Evolución de Vacantes
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase mt-0.5">
+              Evolución de Vacantes — Proceso {selectedProcessCard}
             </h1>
           </div>
-          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">
-            Control de vacantes remanentes y consolidación de transferencias cronológicas de admisión.
-          </p>
         </div>
-        {/* Controles de Simulación y Semestre */}
-        <div className="flex flex-wrap gap-3 items-center">
-          {/* Botón de Reiniciar Simulación */}
-          {isSimulated && (
-            <button
-              onClick={resetSimulation}
-              className="flex items-center gap-1.5 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-xs font-black uppercase tracking-wider transition-all"
-            >
-              <span className="material-symbols-outlined text-[16px] animate-spin">refresh</span>
-              Reiniciar Simulación
-            </button>
-          )}
+
+        {/* Controles de Vista y Configuración */}
+        <div className="flex flex-wrap gap-2.5 items-center">
           {/* Switch de Simulación */}
-          <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-inner">
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
               onClick={() => setIsSimulated(true)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${isSimulated ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${isSimulated ? 'bg-[#7b1523] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
             >
               Simulación
             </button>
             <button
               onClick={() => setIsSimulated(false)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${!isSimulated ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${!isSimulated ? 'bg-[#102c57] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
             >
               Producción
             </button>
           </div>
-          {/* Selector de Semestre */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-black text-slate-400 uppercase tracking-wider">Semestre:</span>
-            <select
-              value={selectedSemestre}
-              onChange={e => setSelectedSemestre(e.target.value)}
-              className="h-11 px-4 rounded-xl border-2 border-slate-200 bg-white text-xs font-black text-slate-700 focus:border-red-500 focus:outline-none transition-all shadow-sm"
-            >
-              {semestres.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
+
+          {/* Selector de Semestre secundario */}
+          <select
+            value={selectedSemestre}
+            onChange={e => {
+              setSelectedSemestre(e.target.value);
+              setSelectedProcessCard(e.target.value);
+            }}
+            className="h-10 px-3 rounded-xl border border-slate-200 bg-white text-xs font-black text-slate-700 focus:border-[#7b1523] focus:outline-none transition-all"
+          >
+            {semestres.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
           {/* Configuración de Secuencias */}
           <button
             onClick={() => setShowConfigModal(true)}
-            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white h-11 px-5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all"
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white h-10 px-4 rounded-xl text-xs font-black uppercase tracking-wider shadow-2xs transition-all"
           >
-            <span className="material-symbols-outlined text-[18px]">settings</span>
-            Secuencia Exámenes
+            <span className="material-symbols-outlined text-[16px]">settings</span>
+            Secuencia
           </button>
         </div>
       </div>
+
       {isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center">
-          <span className="material-symbols-outlined animate-spin text-red-600 text-4xl mb-2">progress_activity</span>
-          <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">Procesando cascada unificada...</p>
+          <span className="material-symbols-outlined animate-spin text-[#7b1523] text-4xl mb-2">progress_activity</span>
+          <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">Cargando datos de cascada...</p>
         </div>
       ) : (
         <div className="flex-1 flex flex-col gap-6 overflow-y-auto min-h-0">
           
           {/* Panel de Acciones de Traspaso */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm shrink-0">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">
-              Ejecutar Traspasos de la Secuencia
-            </h3>
-            {sequenceRules.length === 0 ? (
-              <div className="text-slate-400 font-bold text-xs uppercase py-2">
-                No hay secuencias de traspaso configuradas para el semestre {selectedSemestre}.
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-4">
+          {sequenceRules.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs shrink-0">
+              <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
+                Traspasos de Vacantes de Secuencia
+              </h3>
+              <div className="flex flex-wrap gap-3">
                 {sequenceRules.map((rule, idx) => {
                   const orig = modalidades.find(m => m.id === rule.modalidad_origen_id);
                   const dest = modalidades.find(m => m.id === rule.modalidad_destino_id);
@@ -751,30 +929,27 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                   return (
                     <div 
                       key={rule.id}
-                      className={`flex items-center gap-4 p-4 rounded-2xl border ${
+                      className={`flex items-center gap-3 p-3 rounded-xl border ${
                         isApplied 
-                          ? 'bg-emerald-50/30 border-emerald-200 text-emerald-800' 
-                          : 'bg-slate-50 border-slate-200 text-slate-700'
+                          ? 'bg-slate-50 border-slate-200 text-slate-700' 
+                          : 'bg-white border-slate-200 text-slate-800'
                       }`}
                     >
                       <div className="flex flex-col">
                         <span className="text-[9px] font-black uppercase text-slate-400">Traspaso #{idx + 1}</span>
-                        <p className="text-xs font-black uppercase tracking-tight mt-0.5">
-                          {orig.nombre.split(' ')[0]} ➔ {dest.nombre.split(' ')[0]}
+                        <p className="text-xs font-black uppercase mt-0.5">
+                          {orig.nombre} ➔ {dest.nombre}
                         </p>
-                        <span className="text-[8px] font-bold opacity-75 mt-0.5">
-                          Filtro: {rule.transfer_mode === 'CUSCO_ONLY' ? 'Solo Cusco Sede' : 'Todo'}
-                        </span>
                       </div>
                       {isApplied ? (
-                        <div className="flex items-center gap-1 text-emerald-600 bg-emerald-100/50 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase">
-                          <span className="material-symbols-outlined text-[14px]">done_all</span>
+                        <div className="flex items-center gap-1 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-[10px] font-black uppercase">
+                          <span className="material-symbols-outlined text-[13px]">check</span>
                           Aplicado
                         </div>
                       ) : (
                         <button
                           onClick={() => handleApplyTransferClick(rule)}
-                          className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm shadow-red-100"
+                          className="bg-[#7b1523] hover:bg-[#60101b] text-white px-3 py-1 rounded text-[10px] font-black uppercase tracking-wider transition-all shadow-2xs"
                         >
                           Traspasar
                         </button>
@@ -783,33 +958,35 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                   );
                 })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
           {/* Gran Tabla de Cascada Unificada */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex-1 flex flex-col min-h-[300px]">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs flex-1 flex flex-col min-h-[300px]">
             {/* Cabecera y Filtros */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-100 shrink-0">
-              <div className="flex flex-col gap-1">
-                <h3 className="font-black text-slate-800 text-sm uppercase tracking-tight">
-                  Vista Unificada de Cascada (Evolución Completa)
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100 shrink-0">
+              <div className="flex flex-col gap-0.5">
+                <h3 className="font-black text-slate-900 text-sm uppercase tracking-tight">
+                  Matriz de Evolución de Vacantes
                 </h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                  {isSimulated ? 'Modo Simulación: Modifica los números base o ingresantes en los campos editables' : 'Modo Producción: Conectado en tiempo real a Supabase'}
+                <p className="text-[10px] font-bold text-slate-400 uppercase">
+                  {isSimulated ? 'Modo Simulación Activo' : 'Conectado a datos de producción'}
                 </p>
               </div>
+
               {/* Controles de Filtros */}
-              <div className="flex flex-wrap gap-2.5">
+              <div className="flex flex-wrap gap-2">
                 <input
                   type="text"
                   placeholder="Buscar carrera..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="h-10 px-4 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 placeholder-slate-400 focus:border-red-500 focus:outline-none shadow-sm transition-all"
+                  className="h-9 px-3 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 placeholder-slate-400 focus:border-[#7b1523] focus:outline-none transition-all"
                 />
                 <select
                   value={filterArea}
                   onChange={e => setFilterArea(e.target.value)}
-                  className="h-10 px-4 rounded-xl border border-slate-200 text-xs font-black text-slate-700 focus:border-red-500 focus:outline-none shadow-sm transition-all"
+                  className="h-9 px-3 rounded-lg border border-slate-200 text-xs font-black text-slate-700 focus:border-[#7b1523] focus:outline-none transition-all"
                 >
                   <option value="Todas">Todas las Áreas</option>
                   <option value="A">Área A</option>
@@ -819,10 +996,10 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                 </select>
                 <button
                   onClick={handleExportExcelCascada}
-                  className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white h-10 px-4 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm transition-all"
+                  className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white h-9 px-3 rounded-lg text-[10px] font-black uppercase transition-all"
                 >
-                  <span className="material-symbols-outlined text-[16px]">grid_on</span>
-                  Exportar Excel
+                  <span className="material-symbols-outlined text-[15px]">grid_on</span>
+                  Excel
                 </button>
                 <button
                   onClick={handleExportPDFCascada}
@@ -835,7 +1012,7 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
             </div>
             {/* Contenedor de la Tabla Horizontalmente Scrollable */}
             <div className="flex-1 overflow-auto mt-4 border border-slate-100 rounded-2xl shadow-inner">
-              {filteredEscuelasList.length === 0 || modalidades.length === 0 ? (
+              {filteredEscuelasList.length === 0 || displayedModalidades.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 font-bold text-xs uppercase">
                   No hay datos para mostrar en este semestre.
                 </div>
@@ -857,7 +1034,7 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                         Sede
                       </th>
                       
-                      {modalidades.map(mod => {
+                      {displayedModalidades.map(mod => {
                         const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
                         return (
                           <th 
@@ -872,7 +1049,7 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                     </tr>
                     {/* Fila 2 de Cabecera: Columnas por modalidad */}
                     <tr className="bg-[#0b1f3f] text-white">
-                      {modalidades.map(mod => {
+                      {displayedModalidades.map(mod => {
                         const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
                         return (
                           <React.Fragment key={`sub-${mod.id}`}>
@@ -917,9 +1094,10 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                           </span>
                         </td>
                         {/* Columnas de exámenes */}
-                        {modalidades.map((mod, idx) => {
+                        {displayedModalidades.map((mod) => {
+                          const origIdx = modalidades.findIndex(m => m.id === mod.id);
                           const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
-                          const calc = calculatedData[esc.id]?.[idx];
+                          const calc = calculatedData[esc.id]?.[origIdx];
                           if (!calc) {
                             return (
                               <React.Fragment key={`${esc.id}-${mod.id}`}>
@@ -992,7 +1170,8 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                         Total General
                       </td>
                       
-                      {modalidades.map((mod, idx) => {
+                      {displayedModalidades.map((mod) => {
+                        const origIdx = modalidades.findIndex(m => m.id === mod.id);
                         const incoming = sequenceRules.some(r => r.modalidad_destino_id === mod.id);
                         
                         let sumBase = 0;
@@ -1001,7 +1180,7 @@ export const VacancyEvolution: React.FC<VacancyEvolutionProps> = ({ user, notify
                         let sumAdmitted = 0;
                         let sumLeftover = 0;
                         filteredEscuelasList.forEach(esc => {
-                          const calc = calculatedData[esc.id]?.[idx];
+                          const calc = calculatedData[esc.id]?.[origIdx];
                           if (calc) {
                             sumBase += calc.base;
                             sumInherited += calc.inherited;

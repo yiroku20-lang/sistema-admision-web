@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
 
@@ -332,6 +332,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [selectedModalidad, setSelectedModalidad] = useState('');
   
   const [csvData, setCsvData] = useState<any[]>([]);
+  const [pagosData, setPagosData] = useState<any[]>([]);
+  const [validacionesData, setValidacionesData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   
   const [activeTab, setActiveTab] = useState<'Cobertura' | 'Lista' | 'Ranking' | 'Dashboard'>('Cobertura');
@@ -343,6 +345,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [coberturaSortBy, setCoberturaSortBy] = useState<string>('area-asc');
   
   const [listSearchTerm, setListSearchTerm] = useState('');
+  const [listSchoolFilter, setListSchoolFilter] = useState('TODAS');
+  const [selectedApplicantDetail, setSelectedApplicantDetail] = useState<any | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -364,6 +368,10 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [schoolsSortBy, setSchoolsSortBy] = useState<'postulantes-desc' | 'postulantes-asc' | 'ingresantes-desc' | 'vacantes-desc' | 'ratio-desc' | 'tasa-desc' | 'nombre-asc'>('postulantes-desc');
   const [schoolsFilterVacancies, setSchoolsFilterVacancies] = useState<'todos' | 'con-vacantes' | 'sin-vacantes'>('todos');
   const [schoolsFilterArea, setSchoolsFilterArea] = useState('Todas las Áreas');
+
+  // Controles de Análisis Temporal de Pagos y Validaciones
+  const [temporalViewMode, setTemporalViewMode] = useState<'dias' | 'horas'>('dias');
+  const [temporalChartType, setTemporalChartType] = useState<'barras' | 'lineas' | 'area'>('barras');
 
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [isFetchingPreRevision, setIsFetchingPreRevision] = useState(false);
@@ -617,7 +625,19 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
             parsedData = [];
           }
         }
-        setCsvData(Array.isArray(parsedData) ? parsedData : []);
+        if (parsedData && !Array.isArray(parsedData) && typeof parsedData === 'object') {
+          const postulantes = Array.isArray(parsedData.postulantes) ? parsedData.postulantes : [];
+          const pagos = Array.isArray(parsedData.pagos) ? parsedData.pagos : [];
+          const validaciones = Array.isArray(parsedData.validaciones) ? parsedData.validaciones : [];
+          
+          setCsvData(postulantes);
+          setPagosData(pagos);
+          setValidacionesData(validaciones);
+        } else {
+          setCsvData(Array.isArray(parsedData) ? parsedData : []);
+          setPagosData([]);
+          setValidacionesData([]);
+        }
         setIsLoaded(true);
         setActiveTab('Cobertura');
         notify?.('Pre-revisión cargada correctamente.', 'success');
@@ -729,6 +749,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
 
   const clearData = () => {
     setCsvData([]);
+    setPagosData([]);
+    setValidacionesData([]);
     setIsLoaded(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
     setActiveTab('Cobertura');
@@ -769,6 +791,87 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const normalizedCsvData = useMemo(() => {
     return (csvData || []).map(row => normalizeRow(row, escuelas));
   }, [csvData, escuelas]);
+
+  // Mapas de consulta cruzada rápida por DNI
+  const pagosMap = useMemo(() => {
+    const map = new Map<string, any>();
+    (pagosData || []).forEach(p => {
+      if (p && p.alumno) {
+        map.set(String(p.alumno).trim(), p);
+      }
+    });
+    return map;
+  }, [pagosData]);
+
+  const validacionesMap = useMemo(() => {
+    const map = new Map<string, any[]>();
+    (validacionesData || []).forEach(v => {
+      const doc = String(v?.nro_documento || v?.alumno || '').trim();
+      if (doc) {
+        if (!map.has(doc)) map.set(doc, []);
+        map.get(doc)!.push(v);
+      }
+    });
+    return map;
+  }, [validacionesData]);
+
+  // Helper para analizar el estado consolidado de un requisito detectando subsanaciones
+  const getReqSubsanacionInfo = (valList: any[], reqId: number) => {
+    const items = (valList || [])
+      .filter(v => Number(v?.id_requisito) === reqId)
+      .sort((a, b) => {
+        const tA = String(a?.fecha_subida || a?.fecha_validacion || '');
+        const tB = String(b?.fecha_subida || b?.fecha_validacion || '');
+        return tA.localeCompare(tB);
+      });
+
+    if (items.length === 0) {
+      return {
+        status: 'sin_registro' as const,
+        latest: null,
+        hasSubsanacion: false,
+        history: [],
+        obsPrevia: null
+      };
+    }
+
+    const latest = items[items.length - 1];
+    const previousObsItems = items.slice(0, items.length - 1).filter(
+      x => Number(x?.valido) === 0 || (x?.observaciones && String(x.observaciones).trim() !== '')
+    );
+
+    const hasSubsanacion = Number(latest?.valido) === 1 && (
+      previousObsItems.length > 0 || items.some(x => Number(x?.valido) === 0 || (x?.observaciones && String(x.observaciones).trim() !== ''))
+    );
+
+    let status: 'aprobado' | 'subsanado' | 'observado' | 'sin_registro' = 'sin_registro';
+    if (Number(latest?.valido) === 1) {
+      status = hasSubsanacion ? 'subsanado' : 'aprobado';
+    } else {
+      status = 'observado';
+    }
+
+    const obsPrevia = previousObsItems.length > 0 ? previousObsItems[previousObsItems.length - 1] : null;
+
+    return {
+      status,
+      latest,
+      hasSubsanacion,
+      history: items,
+      obsPrevia
+    };
+  };
+
+  const subsanacionesTotalCount = useMemo(() => {
+    let count = 0;
+    validacionesMap.forEach((valList) => {
+      [1, 2, 3].forEach(reqId => {
+        const info = getReqSubsanacionInfo(valList, reqId);
+        if (info.hasSubsanacion) count++;
+      });
+    });
+    return count;
+  }, [validacionesMap]);
 
   useEffect(() => {
     const fetchUbigeoMappings = async () => {
@@ -1183,24 +1286,129 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   }, [rankingData]);
 
   // --- Calculations for Lista ---
+  const getSchoolName = (code: string) => {
+    if (!code) return '';
+    const school = escuelas.find(e => e.codigo_carrera === code || e.nombre === code);
+    return school ? school.nombre : code;
+  };
+
+  const listSchoolOptions = useMemo(() => {
+    const set = new Set<string>();
+    normalizedCsvData.forEach(row => {
+      if (row.CarreraPostula) set.add(row.CarreraPostula);
+      if (row.CarreraIngreso) set.add(row.CarreraIngreso);
+      if (row.Carrera1) set.add(row.Carrera1);
+      if (row.Carrera2) set.add(row.Carrera2);
+    });
+    escuelas.forEach(e => {
+      if (e.codigo_carrera) set.add(e.codigo_carrera);
+    });
+    const codes = Array.from(set).filter(Boolean);
+
+    const optionsMap = new Map<string, { code: string; name: string }>();
+    codes.forEach(code => {
+      const sch = escuelas.find(e => e.codigo_carrera === code || e.nombre === code);
+      const name = sch ? `${sch.codigo_carrera} - ${sch.nombre}` : code;
+      const key = sch ? sch.codigo_carrera : code;
+      if (!optionsMap.has(key)) {
+        optionsMap.set(key, { code: key, name });
+      }
+    });
+
+    const result = Array.from(optionsMap.values());
+    result.sort((a, b) => a.name.localeCompare(b.name));
+    return result;
+  }, [normalizedCsvData, escuelas]);
+
   const filteredList = useMemo(() => {
+    let list = normalizedCsvData;
+
+    if (listSchoolFilter && listSchoolFilter !== 'TODAS') {
+      const targetSchool = escuelas.find(e => e.codigo_carrera === listSchoolFilter || e.nombre === listSchoolFilter);
+      const targetCode = targetSchool ? targetSchool.codigo_carrera.toLowerCase().trim() : listSchoolFilter.toLowerCase().trim();
+      const targetName = targetSchool ? targetSchool.nombre.toLowerCase().trim() : listSchoolFilter.toLowerCase().trim();
+
+      const rowMatchesTargetSchool = (val: string) => {
+        if (!val) return false;
+        const v = String(val).trim().toLowerCase();
+        if (targetCode && v === targetCode) return true;
+        if (targetName && v === targetName) return true;
+        const sch = escuelas.find(e => e.codigo_carrera.toLowerCase() === v || e.nombre.toLowerCase() === v);
+        if (sch && targetSchool) {
+          return sch.id === targetSchool.id || sch.codigo_carrera === targetSchool.codigo_carrera;
+        }
+        return false;
+      };
+
+      const mappedList = list.map(row => {
+        if (!row) return null;
+        const isIngresante = isAdmittedRow(row);
+        const obs = (row.OBSERVACION || '').trim().toUpperCase();
+        const isSO = obs === 'INGRESANTE S.O.' || obs.includes('SEGUNDA OPCION') || obs.includes('SEGUNDA OPCIÓN');
+
+        const isIngresoTarget = isIngresante && rowMatchesTargetSchool(row.CarreraIngreso);
+        const isC1Target = rowMatchesTargetSchool(row.Carrera1 || row.CarreraPostula);
+        const isC2Target = rowMatchesTargetSchool(row.Carrera2);
+
+        // Para Carrera 2, solo debe aparecer si ingresó a la carrera filtrada (isIngresoTarget)
+        if (!isIngresoTarget && !isC1Target) {
+          return null;
+        }
+
+        let _groupPriority = 3; // 3 = No Ingresó a esta carrera
+        if (isIngresoTarget) {
+          if (isSO) {
+            _groupPriority = 2; // 2 = Ingresante por Segunda Opción (S.O.)
+          } else {
+            _groupPriority = 1; // 1 = Ingresante Directo / Primera Opción
+          }
+        }
+
+        return {
+          ...row,
+          _groupPriority,
+          _isIngresoTarget: isIngresoTarget,
+          _isC1Target: isC1Target,
+          _isC2Target: isC2Target
+        };
+      }).filter(Boolean) as any[];
+
+      mappedList.sort((a, b) => {
+        if (a._groupPriority !== b._groupPriority) {
+          return a._groupPriority - b._groupPriority;
+        }
+        const posA = Number(a.POS) || 999999;
+        const posB = Number(b.POS) || 999999;
+        if (posA !== posB) return posA - posB;
+
+        const notaA = Number(a.Nota) || 0;
+        const notaB = Number(b.Nota) || 0;
+        return notaB - notaA;
+      });
+
+      list = mappedList;
+    }
+
     const term = listSearchTerm.toLowerCase().trim();
-    if (!term) return normalizedCsvData;
-    return normalizedCsvData.filter(row => {
+    if (!term) return list;
+
+    return list.filter(row => {
       if (!row) return false;
+      const schoolNamePost = getSchoolName(row.CarreraPostula || '');
+      const schoolNameIng = getSchoolName(row.CarreraIngreso || '');
+      const schoolName1 = getSchoolName(row.Carrera1 || '');
+      const schoolName2 = getSchoolName(row.Carrera2 || '');
       return (row.NroDocumento || '').toLowerCase().includes(term) ||
              (row.nombre || '').toLowerCase().includes(term) ||
              (row.CarreraIngreso || '').toLowerCase().includes(term) ||
              (row.CarreraPostula || '').toLowerCase().includes(term) ||
+             schoolNamePost.toLowerCase().includes(term) ||
+             schoolNameIng.toLowerCase().includes(term) ||
+             schoolName1.toLowerCase().includes(term) ||
+             schoolName2.toLowerCase().includes(term) ||
              (row.OBSERVACION || '').toLowerCase().includes(term);
     });
-  }, [normalizedCsvData, listSearchTerm]);
-
-  const getSchoolName = (code: string) => {
-    if (!code) return '';
-    const school = escuelas.find(e => e.codigo_carrera === code);
-    return school ? school.nombre : code;
-  };
+  }, [normalizedCsvData, listSearchTerm, listSchoolFilter, escuelas]);
 
   // Calcular los puestos correlativos locales por escuela para los ingresantes
   const localPuestosMap = useMemo(() => {
@@ -1660,6 +1868,128 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       ]
     };
   }, [normalizedCsvData]);
+
+  // --- Analytics for Pagos y Validaciones por Fecha y Hora ---
+  const temporalAnalytics = useMemo(() => {
+    const pagosByDate: Record<string, number> = {};
+    const pagosByHour: number[] = Array(24).fill(0);
+    let totalPagos = 0;
+
+    (pagosData || []).forEach(p => {
+      const dateStr = String(p.fecha_pago || p.FechaPago || '').trim();
+      if (!dateStr) return;
+      
+      const datePart = dateStr.split(' ')[0] || dateStr.split('T')[0];
+      if (datePart && /^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        pagosByDate[datePart] = (pagosByDate[datePart] || 0) + 1;
+        totalPagos++;
+      }
+
+      const timePart = dateStr.split(' ')[1] || dateStr.split('T')[1] || '';
+      if (timePart) {
+        const hour = parseInt(timePart.split(':')[0], 10);
+        if (!isNaN(hour) && hour >= 0 && hour < 24) {
+          pagosByHour[hour]++;
+        }
+      }
+    });
+
+    const validacionesByDate: Record<string, number> = {};
+    const validacionesByHour: number[] = Array(24).fill(0);
+    let totalValidaciones = 0;
+
+    (validacionesData || []).forEach(v => {
+      const dateStr = String(v.fecha_validacion || v.fecha_subida || v.FechaValidacion || '').trim();
+      if (!dateStr) return;
+
+      const datePart = dateStr.split(' ')[0] || dateStr.split('T')[0];
+      if (datePart && /^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        validacionesByDate[datePart] = (validacionesByDate[datePart] || 0) + 1;
+        totalValidaciones++;
+      }
+
+      const timePart = dateStr.split(' ')[1] || dateStr.split('T')[1] || '';
+      if (timePart) {
+        const hour = parseInt(timePart.split(':')[0], 10);
+        if (!isNaN(hour) && hour >= 0 && hour < 24) {
+          validacionesByHour[hour]++;
+        }
+      }
+    });
+
+    const allDates = Array.from(new Set([...Object.keys(pagosByDate), ...Object.keys(validacionesByDate)])).sort();
+
+    const daysData = allDates.map(dateKey => {
+      const pagosCount = pagosByDate[dateKey] || 0;
+      const validacionesCount = validacionesByDate[dateKey] || 0;
+
+      const [year, month, day] = dateKey.split('-');
+      const d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      
+      const dayName = !isNaN(d.getTime()) ? dayNames[d.getDay()] : '';
+      const formattedLabel = !isNaN(d.getTime()) ? `${dayName} ${day}/${month}` : dateKey;
+      const fullFormattedDate = !isNaN(d.getTime()) ? `${day}/${month}/${year}` : dateKey;
+
+      return {
+        dateKey,
+        fullFormattedDate,
+        dayName,
+        label: formattedLabel,
+        pagos: pagosCount,
+        validaciones: validacionesCount,
+        pagosPct: totalPagos > 0 ? parseFloat(((pagosCount / totalPagos) * 100).toFixed(1)) : 0,
+        validacionesPct: totalValidaciones > 0 ? parseFloat(((validacionesCount / totalValidaciones) * 100).toFixed(1)) : 0,
+      };
+    });
+
+    let peakPagoDay = { label: '--', count: 0, dateKey: '' };
+    let peakValidacionDay = { label: '--', count: 0, dateKey: '' };
+
+    daysData.forEach(d => {
+      if (d.pagos > peakPagoDay.count) {
+        peakPagoDay = { label: d.fullFormattedDate, count: d.pagos, dateKey: d.dateKey };
+      }
+      if (d.validaciones > peakValidacionDay.count) {
+        peakValidacionDay = { label: d.fullFormattedDate, count: d.validaciones, dateKey: d.dateKey };
+      }
+    });
+
+    const hoursData = Array.from({ length: 24 }, (_, h) => {
+      const hourStr = `${String(h).padStart(2, '0')}:00`;
+      const pCount = pagosByHour[h];
+      const vCount = validacionesByHour[h];
+      return {
+        hour: hourStr,
+        hourNum: h,
+        pagos: pCount,
+        validaciones: vCount,
+      };
+    });
+
+    let peakPagoHour = { hour: '--', count: 0 };
+    let peakValidacionHour = { hour: '--', count: 0 };
+    hoursData.forEach(h => {
+      if (h.pagos > peakPagoHour.count) {
+        peakPagoHour = { hour: `${h.hour} - ${String(h.hourNum + 1).padStart(2, '0')}:00`, count: h.pagos };
+      }
+      if (h.validaciones > peakValidacionHour.count) {
+        peakValidacionHour = { hour: `${h.hour} - ${String(h.hourNum + 1).padStart(2, '0')}:00`, count: h.validaciones };
+      }
+    });
+
+    return {
+      totalPagos,
+      totalValidaciones,
+      daysData,
+      hoursData,
+      peakPagoDay,
+      peakValidacionDay,
+      peakPagoHour,
+      peakValidacionHour
+    };
+  }, [pagosData, validacionesData]);
 
   const schoolsApplicantsData = useMemo(() => {
     let list = coberturaRows.map(item => ({
@@ -2602,13 +2932,6 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                 </button>
               </div>
               <div className="flex gap-3">
-                <button 
-                  onClick={clearData}
-                  className="px-4 py-2 rounded-xl text-sm font-bold uppercase tracking-wider border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors flex items-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-[18px]">clear_all</span>
-                  Limpiar
-                </button>
                 {/* NUEVO: Botón de Sincronizar Puestos en la BD */}
                 <button 
                   onClick={handleSyncParticipantesOmerito}
@@ -2910,41 +3233,154 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
             {/* Lista Tab */}
             {activeTab === 'Lista' && (
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-4 bg-slate-50">
-                  <div className="relative flex-1 max-w-md">
-                    <span className="material-symbols-outlined absolute left-3 top-2 text-slate-400">search</span>
-                    <input 
-                      type="text" 
-                      placeholder="Buscar por DNI, alumno o nombre..." 
-                      value={listSearchTerm}
-                      onChange={(e) => setListSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                    />
+                <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4 bg-slate-50">
+                  <div className="flex flex-wrap items-center gap-3 flex-1 max-w-2xl">
+                    {/* Buscador de Texto */}
+                    <div className="relative flex-1 min-w-[220px]">
+                      <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400 text-[18px]">search</span>
+                      <input 
+                        type="text" 
+                        placeholder="Buscar por DNI, alumno o nombre..." 
+                        value={listSearchTerm}
+                        onChange={(e) => setListSearchTerm(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white"
+                      />
+                    </div>
+
+                    {/* Filtro por Carrera / Escuela */}
+                    <div className="relative min-w-[220px] max-w-[320px]">
+                      <select
+                        value={listSchoolFilter}
+                        onChange={(e) => setListSchoolFilter(e.target.value)}
+                        className="w-full pl-3 pr-8 py-2 text-xs font-bold border border-slate-200 rounded-xl focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-white text-slate-700 appearance-none shadow-2xs truncate"
+                      >
+                        <option value="TODAS">🏫 Todas las Carreras ({listSchoolOptions.length})</option>
+                        {listSchoolOptions.map(opt => (
+                          <option key={opt.code} value={opt.code}>
+                            {opt.name}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute right-2.5 top-2 text-slate-400 pointer-events-none text-[20px]">
+                        arrow_drop_down
+                      </span>
+                    </div>
+
+                    {/* Botón de reset de filtro */}
+                    {(listSearchTerm || listSchoolFilter !== 'TODAS') && (
+                      <button
+                        onClick={() => {
+                          setListSearchTerm('');
+                          setListSchoolFilter('TODAS');
+                        }}
+                        className="px-3 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-200/80 hover:bg-slate-200 rounded-xl transition-colors flex items-center gap-1 shadow-2xs"
+                        title="Restablecer filtros de búsqueda"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                        Limpiar filtros
+                      </button>
+                    )}
                   </div>
-                  <span className="text-xs font-bold text-slate-400">Mostrando {filteredList.length} registros</span>
+                  <div className="flex items-center gap-3">
+                    {pagosData.length > 0 && (
+                      <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[15px]">payments</span>
+                        {pagosData.length.toLocaleString()} Pagos Vinculados
+                      </span>
+                    )}
+                    {validacionesData.length > 0 && (
+                      <span className="px-3 py-1 bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[15px]">fact_check</span>
+                        {validacionesData.length.toLocaleString()} Validaciones
+                      </span>
+                    )}
+                    {subsanacionesTotalCount > 0 && (
+                      <span className="px-3 py-1 bg-teal-50 text-teal-800 font-bold text-xs rounded-xl border border-teal-200/80 flex items-center gap-1 shadow-2xs" title="Casos donde un requisito tuvo observación previa y fue posteriormente subsanado y aprobado">
+                        <span className="material-symbols-outlined text-[15px] text-teal-600">published_with_changes</span>
+                        {subsanacionesTotalCount.toLocaleString()} Subsanaciones Detectadas
+                      </span>
+                    )}
+                    <span className="text-xs font-bold text-slate-400">Mostrando {filteredList.length} registros</span>
+                  </div>
                 </div>
                 <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                   <table className="w-full text-left border-collapse">
                     <thead className="sticky top-0 bg-white shadow-sm z-10">
-                      <tr className="text-slate-500 text-[10px] uppercase tracking-wider">
+                      <tr className="text-slate-500 text-[10px] uppercase tracking-wider border-b border-slate-100">
                         <th className="p-4 font-black">Nro Doc</th>
                         <th className="p-4 font-black">Nombre del Postulante</th>
+                        <th className="p-4 font-black text-center">Validación Requisitos</th>
                         <th className="p-4 font-black text-center">Nota</th>
                         <th className="p-4 font-black text-center">Puesto</th>
                         <th className="p-4 font-black">Escuela (Ingreso)</th>
                         <th className="p-4 font-black">Observación</th>
+                        <th className="p-4 font-black text-center">Detalle</th>
                       </tr>
                     </thead>
                     <tbody className="text-sm divide-y divide-slate-100">
-                      {filteredList.map((row, idx) => {
-                        const obs = row.OBSERVACION?.trim().toUpperCase() || '';
-                        const isIngresante = obs.includes('INGRESANTE');
-                        const isSO = obs === 'INGRESANTE S.O.';
-                        const isNSP = obs === 'NSP';
-                        
-                        return (
-                          <tr key={idx} className={`transition-colors ${isIngresante ? (isSO ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'bg-emerald-50/30 hover:bg-emerald-50') : 'hover:bg-slate-50'}`}>
-                            <td className="p-4 font-mono text-slate-600">{row.NroDocumento || row.alumno}</td>
+                      {(() => {
+                        let prevGroupPriority: number | null = null;
+                        return filteredList.map((row, idx) => {
+                          const obs = row.OBSERVACION?.trim().toUpperCase() || '';
+                          const isIngresante = obs.includes('INGRESANTE');
+                          const isSO = obs === 'INGRESANTE S.O.';
+                          const isNSP = obs === 'NSP';
+
+                          const currentPriority = row._groupPriority;
+                          const showDivider = listSchoolFilter !== 'TODAS' && currentPriority !== undefined && currentPriority !== prevGroupPriority;
+                          if (showDivider) {
+                            prevGroupPriority = currentPriority;
+                          }
+
+                          const dni = String(row.NroDocumento || row.alumno || '').trim();
+                          const valList = validacionesMap.get(dni) || [];
+                          const r1 = getReqSubsanacionInfo(valList, 1);
+                          const r2 = getReqSubsanacionInfo(valList, 2);
+                          const r3 = getReqSubsanacionInfo(valList, 3);
+                          
+                          return (
+                            <React.Fragment key={idx}>
+                              {showDivider && (
+                                <tr className="border-y-2 border-slate-200">
+                                  <td colSpan={8} className="p-0">
+                                    {currentPriority === 1 && (
+                                      <div className="bg-emerald-100/90 text-emerald-950 font-black text-xs px-4 py-2 flex items-center justify-between border-l-4 border-l-emerald-600">
+                                        <span className="flex items-center gap-2 uppercase tracking-wider">
+                                          <span className="material-symbols-outlined text-[18px] text-emerald-700">stars</span>
+                                          1. Ingresantes Directos / Primera Opción a esta Escuela
+                                        </span>
+                                        <span className="bg-emerald-200 text-emerald-900 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
+                                          {filteredList.filter(r => r._groupPriority === 1).length} ingresantes
+                                        </span>
+                                      </div>
+                                    )}
+                                    {currentPriority === 2 && (
+                                      <div className="bg-amber-100/90 text-amber-950 font-black text-xs px-4 py-2 flex items-center justify-between border-l-4 border-l-amber-600">
+                                        <span className="flex items-center gap-2 uppercase tracking-wider">
+                                          <span className="material-symbols-outlined text-[18px] text-amber-700">published_with_changes</span>
+                                          2. Ingresantes por Segunda Opción (S.O.) a esta Escuela
+                                        </span>
+                                        <span className="bg-amber-200 text-amber-900 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
+                                          {filteredList.filter(r => r._groupPriority === 2).length} ingresantes S.O.
+                                        </span>
+                                      </div>
+                                    )}
+                                    {currentPriority === 3 && (
+                                      <div className="bg-slate-200/90 text-slate-900 font-black text-xs px-4 py-2 flex items-center justify-between border-l-4 border-l-slate-500">
+                                        <span className="flex items-center gap-2 uppercase tracking-wider">
+                                          <span className="material-symbols-outlined text-[18px] text-slate-600">person_off</span>
+                                          3. Postulantes No Ingresantes (Postularon en 1ra Opción a esta Escuela)
+                                        </span>
+                                        <span className="bg-slate-300 text-slate-800 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
+                                          {filteredList.filter(r => r._groupPriority === 3).length} postulantes
+                                        </span>
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                              <tr className={`transition-colors ${isIngresante ? (isSO ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'bg-emerald-50/30 hover:bg-emerald-50') : 'hover:bg-slate-50'}`}>
+                            <td className="p-4 font-mono text-slate-600 font-bold">{dni}</td>
                             
                             {/* Visualización de Nombre + Carreras de Elección */}
                             <td className="p-4">
@@ -2956,6 +3392,48 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                                   {row.Carrera2 && <span>2da: <strong className="text-slate-500">{getSchoolName(row.Carrera2)}</strong></span>}
                                 </p>
                               )}
+                            </td>
+
+                            {/* Validación de Requisitos con Detección de Subsanación */}
+                            <td className="p-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {[
+                                  { label: 'Foto', emoji: '📷', info: r1 },
+                                  { label: 'DNI', emoji: '🪪', info: r2 },
+                                  { label: 'Certificado', emoji: '📜', info: r3 }
+                                ].map((reqItem, rIdx) => {
+                                  const { status, latest, obsPrevia, history } = reqItem.info;
+                                  
+                                  let bgStyle = 'bg-slate-100 text-slate-400 border border-slate-200';
+                                  let tooltipMsg = `${reqItem.label}: No registrado`;
+
+                                  if (status === 'aprobado') {
+                                    bgStyle = 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+                                    tooltipMsg = `${reqItem.label}: Aprobado Directo (@${latest?.usuario_validacion || 'Sistemas'})`;
+                                  } else if (status === 'subsanado') {
+                                    bgStyle = 'bg-teal-100 text-teal-900 border-2 border-teal-500 shadow-2xs font-black relative';
+                                    tooltipMsg = `${reqItem.label}: APROBADO - SUBSANADO (Observación previa: "${obsPrevia?.observaciones || 'Observado previamente'}"). Total revisiones: ${history.length}`;
+                                  } else if (status === 'observado') {
+                                    bgStyle = 'bg-amber-100 text-amber-800 border border-amber-300';
+                                    tooltipMsg = `${reqItem.label}: Observado ("${latest?.observaciones || 'En revisión'}")`;
+                                  }
+
+                                  return (
+                                    <span 
+                                      key={rIdx}
+                                      title={tooltipMsg}
+                                      className={`size-6 rounded-md flex items-center justify-center text-[12px] font-bold relative transition-transform hover:scale-110 cursor-help ${bgStyle}`}
+                                    >
+                                      {reqItem.emoji}
+                                      {status === 'subsanado' && (
+                                        <span className="absolute -top-1 -right-1 size-2.5 bg-teal-600 rounded-full border border-white flex items-center justify-center text-[7px] text-white font-black" title="Subsanado">
+                                          ✓
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
                             </td>
                             
                             <td className="p-4 text-center font-black text-slate-700">{row.Nota}</td>
@@ -3001,9 +3479,21 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                                 </span>
                               )}
                             </td>
+
+                            <td className="p-4 text-center">
+                              <button
+                                onClick={() => setSelectedApplicantDetail(row)}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1 mx-auto"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">visibility</span>
+                                Ver
+                              </button>
+                            </td>
                           </tr>
-                        );
-                      })}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                     </tbody>
                   </table>
                 </div>
@@ -3115,6 +3605,316 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                       <span className="text-lg font-extrabold text-amber-600">{gradeStats.max}</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Panel de Análisis Temporal de Pagos y Validaciones */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col space-y-6">
+                  {/* Encabezado y Selector de Vistas */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-emerald-600">finance_mode</span>
+                        <h4 className="font-black text-slate-800 uppercase tracking-tight text-base">
+                          Análisis Temporal: Pagos Registrados y Validaciones de Requisitos
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Estadísticas cronológicas por día y hora para identificar los picos de actividad de vouchers de pago y verificación de requisitos.
+                      </p>
+                    </div>
+
+                    {/* Botones de Control de Vista */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Toggle Días vs Horas */}
+                      <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200/60">
+                        <button
+                          onClick={() => setTemporalViewMode('dias')}
+                          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1 ${
+                            temporalViewMode === 'dias'
+                              ? 'bg-white text-slate-800 shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-sm">calendar_month</span>
+                          Por Días
+                        </button>
+                        <button
+                          onClick={() => setTemporalViewMode('horas')}
+                          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1 ${
+                            temporalViewMode === 'horas'
+                              ? 'bg-white text-slate-800 shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-sm">schedule</span>
+                          Por Hora (24h)
+                        </button>
+                      </div>
+
+                      {/* Toggle Tipo de Gráfico */}
+                      <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 border border-slate-200/60">
+                        <button
+                          onClick={() => setTemporalChartType('barras')}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                            temporalChartType === 'barras'
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                          title="Gráfico de Barras"
+                        >
+                          <span className="material-symbols-outlined text-sm block">bar_chart</span>
+                        </button>
+                        <button
+                          onClick={() => setTemporalChartType('lineas')}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                            temporalChartType === 'lineas'
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                          title="Gráfico de Líneas"
+                        >
+                          <span className="material-symbols-outlined text-sm block">show_chart</span>
+                        </button>
+                        <button
+                          onClick={() => setTemporalChartType('area')}
+                          className={`px-2.5 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                            temporalChartType === 'area'
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                          title="Gráfico de Área"
+                        >
+                          <span className="material-symbols-outlined text-sm block">area_chart</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4 Cards de Métricas Específicas de Pagos & Validaciones */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 flex flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider">Total Pagos</span>
+                        <span className="material-symbols-outlined text-emerald-600 text-xl">payments</span>
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-2xl font-black text-emerald-900">{temporalAnalytics.totalPagos.toLocaleString()}</span>
+                        <p className="text-[11px] font-bold text-emerald-700 mt-0.5">
+                          Día Pico: <span className="underline">{temporalAnalytics.peakPagoDay.label}</span> ({temporalAnalytics.peakPagoDay.count.toLocaleString()} pagos)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 flex flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-indigo-800 uppercase tracking-wider">Total Validaciones</span>
+                        <span className="material-symbols-outlined text-indigo-600 text-xl">fact_check</span>
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-2xl font-black text-indigo-900">{temporalAnalytics.totalValidaciones.toLocaleString()}</span>
+                        <p className="text-[11px] font-bold text-indigo-700 mt-0.5">
+                          Día Pico: <span className="underline">{temporalAnalytics.peakValidacionDay.label}</span> ({temporalAnalytics.peakValidacionDay.count.toLocaleString()} val.)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-100 flex flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider">Hora Pico de Pago</span>
+                        <span className="material-symbols-outlined text-amber-600 text-xl">schedule</span>
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-xl font-black text-amber-900">{temporalAnalytics.peakPagoHour.hour}</span>
+                        <p className="text-[11px] font-bold text-amber-700 mt-0.5">
+                          {temporalAnalytics.peakPagoHour.count.toLocaleString()} pagos en ese rango
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 flex flex-col justify-between">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black text-blue-800 uppercase tracking-wider">Hora Pico de Validación</span>
+                        <span className="material-symbols-outlined text-blue-600 text-xl">bolt</span>
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-xl font-black text-blue-900">{temporalAnalytics.peakValidacionHour.hour}</span>
+                        <p className="text-[11px] font-bold text-blue-700 mt-0.5">
+                          {temporalAnalytics.peakValidacionHour.count.toLocaleString()} validaciones en ese rango
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gráfico Recharts Principal */}
+                  <div className="min-h-[300px] w-full pt-2">
+                    <ResponsiveContainer width="100%" height={320}>
+                      {temporalChartType === 'barras' ? (
+                        <BarChart
+                          data={temporalViewMode === 'dias' ? temporalAnalytics.daysData : temporalAnalytics.hoursData}
+                          margin={{ top: 10, right: 10, left: -10, bottom: 20 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis
+                            dataKey={temporalViewMode === 'dias' ? 'label' : 'hour'}
+                            tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }}
+                            axisLine={false}
+                            tickLine={false}
+                            interval={0}
+                            angle={temporalViewMode === 'dias' ? -35 : 0}
+                            textAnchor={temporalViewMode === 'dias' ? 'end' : 'middle'}
+                            height={45}
+                          />
+                          <YAxis tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                          <Tooltip
+                            formatter={(value: any, name: any, item: any) => {
+                              const isPago = item?.dataKey === 'pagos' || String(name).toLowerCase().includes('pago');
+                              const labelText = isPago ? 'Pagos (Vouchers)' : 'Validaciones Requisitos';
+                              const unitText = isPago ? 'pagos' : 'validaciones';
+                              return [`${Number(value).toLocaleString()} ${unitText}`, labelText];
+                            }}
+                            labelFormatter={(label) => `${temporalViewMode === 'dias' ? 'Fecha' : 'Hora'}: ${label}`}
+                          />
+                          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 700 }} />
+                          <Bar dataKey="pagos" name="Pagos (Vouchers)" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={350} />
+                          <Bar dataKey="validaciones" name="Validaciones Requisitos" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={350} />
+                        </BarChart>
+                      ) : temporalChartType === 'lineas' ? (
+                        <LineChart
+                          data={temporalViewMode === 'dias' ? temporalAnalytics.daysData : temporalAnalytics.hoursData}
+                          margin={{ top: 10, right: 10, left: -10, bottom: 20 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis
+                            dataKey={temporalViewMode === 'dias' ? 'label' : 'hour'}
+                            tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }}
+                            axisLine={false}
+                            tickLine={false}
+                            interval={0}
+                            angle={temporalViewMode === 'dias' ? -35 : 0}
+                            textAnchor={temporalViewMode === 'dias' ? 'end' : 'middle'}
+                            height={45}
+                          />
+                          <YAxis tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                          <Tooltip
+                            formatter={(value: any, name: any, item: any) => {
+                              const isPago = item?.dataKey === 'pagos' || String(name).toLowerCase().includes('pago');
+                              const labelText = isPago ? 'Pagos (Vouchers)' : 'Validaciones Requisitos';
+                              const unitText = isPago ? 'pagos' : 'validaciones';
+                              return [`${Number(value).toLocaleString()} ${unitText}`, labelText];
+                            }}
+                            labelFormatter={(label) => `${temporalViewMode === 'dias' ? 'Fecha' : 'Hora'}: ${label}`}
+                          />
+                          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 700 }} />
+                          <Line type="monotone" dataKey="pagos" name="Pagos (Vouchers)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} isAnimationActive={true} animationDuration={350} />
+                          <Line type="monotone" dataKey="validaciones" name="Validaciones Requisitos" stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} isAnimationActive={true} animationDuration={350} />
+                        </LineChart>
+                      ) : (
+                        <AreaChart
+                          data={temporalViewMode === 'dias' ? temporalAnalytics.daysData : temporalAnalytics.hoursData}
+                          margin={{ top: 10, right: 10, left: -10, bottom: 20 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis
+                            dataKey={temporalViewMode === 'dias' ? 'label' : 'hour'}
+                            tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }}
+                            axisLine={false}
+                            tickLine={false}
+                            interval={0}
+                            angle={temporalViewMode === 'dias' ? -35 : 0}
+                            textAnchor={temporalViewMode === 'dias' ? 'end' : 'middle'}
+                            height={45}
+                          />
+                          <YAxis tick={{ fontSize: 10, fontWeight: 700, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                          <Tooltip
+                            formatter={(value: any, name: any, item: any) => {
+                              const isPago = item?.dataKey === 'pagos' || String(name).toLowerCase().includes('pago');
+                              const labelText = isPago ? 'Pagos (Vouchers)' : 'Validaciones Requisitos';
+                              const unitText = isPago ? 'pagos' : 'validaciones';
+                              return [`${Number(value).toLocaleString()} ${unitText}`, labelText];
+                            }}
+                            labelFormatter={(label) => `${temporalViewMode === 'dias' ? 'Fecha' : 'Hora'}: ${label}`}
+                          />
+                          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 700 }} />
+                          <Area type="monotone" dataKey="pagos" name="Pagos (Vouchers)" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} isAnimationActive={true} animationDuration={350} />
+                          <Area type="monotone" dataKey="validaciones" name="Validaciones Requisitos" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} strokeWidth={2} isAnimationActive={true} animationDuration={350} />
+                        </AreaChart>
+                      )}
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Tabla Desglosada Detallada por Día */}
+                  {temporalViewMode === 'dias' && temporalAnalytics.daysData.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 pt-2">
+                      <div className="px-4 py-2 border-b border-slate-200 flex items-center justify-between">
+                        <h5 className="font-bold text-xs text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-sm text-slate-500">table_chart</span>
+                          Detalle Diario Registrado
+                        </h5>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          {temporalAnalytics.daysData.length} Días con Actividad
+                        </span>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-black sticky top-0 border-b border-slate-200">
+                            <tr>
+                              <th className="p-2.5 pl-4">Fecha</th>
+                              <th className="p-2.5">Día</th>
+                              <th className="p-2.5 text-right">Pagos</th>
+                              <th className="p-2.5 w-1/4">% Pagos</th>
+                              <th className="p-2.5 text-right">Validaciones</th>
+                              <th className="p-2.5 w-1/4">% Validaciones</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200/60 bg-white">
+                            {temporalAnalytics.daysData.map((row, idx) => {
+                              const isPeakP = row.dateKey === temporalAnalytics.peakPagoDay.dateKey;
+                              const isPeakV = row.dateKey === temporalAnalytics.peakValidacionDay.dateKey;
+
+                              return (
+                                <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                  <td className="p-2.5 pl-4 font-mono font-bold text-slate-800">
+                                    {row.fullFormattedDate}
+                                  </td>
+                                  <td className="p-2.5 font-semibold text-slate-600">
+                                    {row.dayName}
+                                  </td>
+                                  <td className="p-2.5 text-right font-black text-emerald-700">
+                                    {row.pagos.toLocaleString()}
+                                    {isPeakP && (
+                                      <span className="ml-1 text-[9px] bg-emerald-100 text-emerald-800 px-1 rounded font-bold">Pico</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
+                                        <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.min(row.pagosPct * 2.5, 100)}%` }}></div>
+                                      </div>
+                                      <span className="text-[10px] font-bold text-slate-500 w-10 text-right">{row.pagosPct}%</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2.5 text-right font-black text-indigo-700">
+                                    {row.validaciones.toLocaleString()}
+                                    {isPeakV && (
+                                      <span className="ml-1 text-[9px] bg-indigo-100 text-indigo-800 px-1 rounded font-bold">Pico</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
+                                        <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${Math.min(row.validacionesPct * 2.5, 100)}%` }}></div>
+                                      </div>
+                                      <span className="text-[10px] font-bold text-slate-500 w-10 text-right">{row.validacionesPct}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Analytical Charts Row 1 */}
@@ -3612,6 +4412,220 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         )}
 
       </div>
+
+      {/* Modal de Detalle de Postulante, Pago y Validaciones de Requisitos */}
+      {selectedApplicantDetail && (() => {
+        const row = selectedApplicantDetail;
+        const dni = String(row.NroDocumento || row.alumno || '').trim();
+        const pagoInfo = pagosMap.get(dni);
+        const valList = validacionesMap.get(dni) || [];
+        const r1 = getReqSubsanacionInfo(valList, 1);
+        const r2 = getReqSubsanacionInfo(valList, 2);
+        const r3 = getReqSubsanacionInfo(valList, 3);
+        const obs = row.OBSERVACION?.trim().toUpperCase() || '';
+        const isIngresante = obs.includes('INGRESANTE');
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              {/* Modal Header */}
+              <div className="bg-[#102c57] text-white p-5 flex items-start justify-between gap-4 shrink-0">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-blue-300">account_circle</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-200 font-mono">
+                      DNI: {dni}
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-black text-white mt-1 leading-tight">{row.nombre}</h2>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Modalidad: <span className="font-semibold text-white">{currentModalityName}</span>
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSelectedApplicantDetail(null)}
+                  className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">close</span>
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-6 flex-1 text-slate-700">
+                {/* Grid de Resumen de Resultados */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Nota Examen</span>
+                    <span className="text-base font-black text-slate-800">{row.Nota || '--'}</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Puesto</span>
+                    <span className="text-base font-black text-slate-800">
+                      {isIngresante ? (localPuestosMap[`${dni}_${row.CarreraIngreso}`] || '--') : (row.POS || '--')}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 col-span-2">
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Condición / Observación</span>
+                    <span className="text-xs font-bold text-slate-800">{row.OBSERVACION || '--'}</span>
+                  </div>
+                </div>
+
+                {/* Sección 1: Registro de Pago */}
+                <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-emerald-600">payments</span>
+                      Registro de Pago de Inscripción
+                    </h3>
+                    {pagoInfo ? (
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                        Pago Verificado
+                      </span>
+                    ) : (
+                      <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200">
+                        Sin Registro
+                      </span>
+                    )}
+                  </div>
+
+                  {pagoInfo ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-3 rounded-lg border border-slate-200/70 text-xs">
+                      <div>
+                        <span className="block text-slate-400 text-[10px] font-bold uppercase">ID Pago / Voucher</span>
+                        <span className="font-mono font-bold text-slate-800">#{pagoInfo.id_pago}</span>
+                      </div>
+                      <div>
+                        <span className="block text-slate-400 text-[10px] font-bold uppercase">Fecha de Pago</span>
+                        <span className="font-semibold text-slate-700">{pagoInfo.fecha_pago}</span>
+                      </div>
+                      <div>
+                        <span className="block text-slate-400 text-[10px] font-bold uppercase">Titular / Nombre</span>
+                        <span className="font-semibold text-slate-700 truncate block">{pagoInfo.nombre}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 italic">No se encontró registro de comprobante de pago vinculado a este DNI.</p>
+                  )}
+                </div>
+
+                {/* Sección 2: Validación de Requisitos */}
+                <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
+                  <h3 className="font-bold text-sm text-slate-900 flex items-center justify-between mb-3">
+                    <span className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-indigo-600">fact_check</span>
+                      Validación de Requisitos Exigidos (Pre-Revisión)
+                    </span>
+                    {(r1.hasSubsanacion || r2.hasSubsanacion || r3.hasSubsanacion) && (
+                      <span className="bg-teal-100 text-teal-900 font-bold text-[10px] px-2.5 py-0.5 rounded-full border border-teal-300 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[13px] text-teal-700">published_with_changes</span>
+                        Subsanación Detectada
+                      </span>
+                    )}
+                  </h3>
+
+                  <div className="space-y-3">
+                    {[
+                      { title: 'Requisito 1: Fotografías del Postulante', emoji: '📷', info: r1 },
+                      { title: 'Requisito 2: Documento Nacional de Identidad (DNI)', emoji: '🪪', info: r2 },
+                      { title: 'Requisito 3: Certificado de Estudios Secundaria', emoji: '📜', info: r3 }
+                    ].map((reqItem, rIdx) => {
+                      const { status, latest, hasSubsanacion, history, obsPrevia } = reqItem.info;
+
+                      return (
+                        <div key={rIdx} className="bg-white p-3 rounded-xl border border-slate-200/80 text-xs shadow-2xs">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                              <span>{reqItem.emoji}</span> {reqItem.title}
+                            </span>
+                            {status === 'aprobado' && (
+                              <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded border border-emerald-300">
+                                ✅ Aprobado Directo
+                              </span>
+                            )}
+                            {status === 'subsanado' && (
+                              <span className="bg-teal-100 text-teal-900 font-black text-[10px] px-2.5 py-0.5 rounded border border-teal-400 shadow-2xs flex items-center gap-1">
+                                🔄 Aprobado (Subsanado)
+                              </span>
+                            )}
+                            {status === 'observado' && (
+                              <span className="bg-amber-100 text-amber-800 font-bold text-[10px] px-2 py-0.5 rounded border border-amber-300">
+                                ⚠️ Observado
+                              </span>
+                            )}
+                            {status === 'sin_registro' && (
+                              <span className="bg-slate-100 text-slate-400 font-bold text-[10px] px-2 py-0.5 rounded border border-slate-200">
+                                No registrado
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Banner de alerta de subsanación */}
+                          {hasSubsanacion && (
+                            <div className="my-2 p-2 bg-teal-50 border border-teal-200 rounded-lg text-teal-900 text-[11px] flex items-start gap-2">
+                              <span className="material-symbols-outlined text-teal-600 text-sm mt-0.5 shrink-0">published_with_changes</span>
+                              <div>
+                                <strong className="font-bold">Observación Previa Subsanada:</strong>
+                                <p className="text-teal-800 text-[10px] mt-0.5 leading-snug">
+                                  Este requisito registró una observación previa ({obsPrevia?.fecha_validacion || obsPrevia?.fecha_subida || 'anterior'}) que fue subsanada y aprobada.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Historial de revisiones del requisito */}
+                          {history.length > 0 && (
+                            <div className="mt-2 border-t border-slate-100 pt-2 text-[11px]">
+                              <span className="block font-bold text-slate-400 text-[9px] uppercase tracking-wider mb-1.5">
+                                Historial de Revisiones ({history.length} {history.length === 1 ? 'registro' : 'registros'})
+                              </span>
+                              <div className="space-y-1.5">
+                                {history.map((item: any, hIdx: number) => {
+                                  const isApp = Number(item.valido) === 1;
+                                  return (
+                                    <div key={hIdx} className={`p-2 rounded-lg border ${isApp ? 'bg-emerald-50/50 border-emerald-200/60' : 'bg-amber-50/50 border-amber-200/60'}`}>
+                                      <div className="flex items-center justify-between font-bold">
+                                        <span className={`flex items-center gap-1 ${isApp ? 'text-emerald-800' : 'text-amber-800'}`}>
+                                          {isApp ? '✅ Intento #' + (hIdx + 1) + ' — Aprobado' : '⚠️ Intento #' + (hIdx + 1) + ' — Observado'}
+                                        </span>
+                                        <span className="text-slate-400 text-[10px] font-mono">
+                                          {item.fecha_validacion || item.fecha_subida || '--'}
+                                        </span>
+                                      </div>
+                                      <p className="text-slate-600 text-[11px] mt-0.5">
+                                        <strong className="text-slate-700">Validador:</strong> @{item.usuario_validacion || 'Sistemas'}
+                                      </p>
+                                      {item.observaciones && (
+                                        <p className="text-amber-900 font-medium text-[11px] mt-1 bg-amber-100/70 p-1.5 rounded border border-amber-200/60 leading-snug">
+                                          <strong>Observación:</strong> {item.observaciones}
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 p-4 flex justify-end shrink-0">
+                <button
+                  onClick={() => setSelectedApplicantDetail(null)}
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
