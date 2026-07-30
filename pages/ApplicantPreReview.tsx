@@ -488,9 +488,17 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
           setAllModalidades(modalidadesRes.data);
         }
 
-        if (statusRes && statusRes.success && Array.isArray(statusRes.savedModalidadIds)) {
-          setSavedModalidadIds(statusRes.savedModalidadIds);
+        let savedIds: string[] = [];
+        if (statusRes && statusRes.success && Array.isArray(statusRes.savedModalidadIds) && statusRes.savedModalidadIds.length > 0) {
+          savedIds = statusRes.savedModalidadIds;
         }
+        // Direct Supabase query as fallback for static deploys (Netlify)
+        const { data: dbPreData } = await supabase.from('pre_revision_archivos').select('modalidad_id');
+        if (dbPreData && dbPreData.length > 0) {
+          const directIds = dbPreData.map(item => item.modalidad_id).filter(Boolean);
+          savedIds = Array.from(new Set([...savedIds, ...directIds]));
+        }
+        setSavedModalidadIds(savedIds);
       } catch (err) {
         console.error("Error in parallel initial mount fetching:", err);
       } finally {
@@ -670,13 +678,34 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     try {
       await new Promise(resolve => setTimeout(resolve, 150));
       setFetchingPreRevisionMessage('Descargando archivo de resultados...');
-      const res = await fetch(`/api/get-pre-revision/${modId}`);
-      if (!res.ok) throw new Error("Error en la respuesta del servidor");
       
+      let result: any = null;
+      try {
+        const res = await fetch(`/api/get-pre-revision/${modId}`);
+        if (res.ok) {
+          result = await res.json();
+        }
+      } catch (err) {
+        console.warn("API fetch failed, trying direct Supabase query:", err);
+      }
+
+      if (!result || !result.data) {
+        const { data: dbRow, error: dbErr } = await supabase
+          .from('pre_revision_archivos')
+          .select('*')
+          .eq('modalidad_id', modId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (dbErr) throw dbErr;
+        if (dbRow) {
+          result = { data: dbRow };
+        }
+      }
+
       setFetchingPreRevisionMessage('Procesando y decodificando datos del archivo...');
-      const result = await res.json();
-      
-      if (result.data && result.data.csv_data) {
+
+      if (result && result.data && result.data.csv_data) {
         setFetchingPreRevisionMessage('Analizando y estructurando postulantes...');
         let parsedData = result.data.csv_data;
         if (typeof parsedData === 'string') {
@@ -725,26 +754,43 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     const processData = async (dataToProcess: any[]) => {
       setCsvData(dataToProcess);
       setIsLoaded(true);
-      setShowUploadModal(false);
-      setActiveTab('Cobertura');
-
-      if (selectedModalidad) {
+      setShowUploadModal(false);      if (selectedModalidad) { 
          try {
            setFetchingPreRevisionMessage('Subiendo y persistiendo archivo en el servidor...');
-           const res = await fetch('/api/save-pre-revision', {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({
+           let savedOk = false;
+           try {
+             const res = await fetch('/api/save-pre-revision', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({
+                 modalidad_id: selectedModalidad,
+                 csv_data: dataToProcess
+               })
+             });
+             if (res.ok) {
+               const data = await res.json();
+               if (data && data.success) savedOk = true;
+             }
+           } catch (e) {
+             console.warn("API save failed, falling back to direct Supabase save:", e);
+           }
+
+           if (!savedOk) {
+             await supabase.from('pre_revision_archivos').delete().eq('modalidad_id', selectedModalidad);
+             const { error: insErr } = await supabase.from('pre_revision_archivos').insert({
                modalidad_id: selectedModalidad,
                csv_data: dataToProcess
-             })
-           });
-           const data = await res.json();
-           if (!res.ok || data.error) {
-             console.error("Error saving pre_revision:", data.error);
-             notify?.('Archivo cargado pero no se pudo guardar en pre-revisión.', 'warning');
-           } else {
-             notify?.('Archivo guardado en pre-revisión correctamente.', 'success'); 
+             });
+             if (insErr) {
+               console.error("Error saving pre_revision in Supabase:", insErr);
+               notify?.('Archivo cargado pero no se pudo guardar en pre-revisión.', 'warning');
+             } else {
+               savedOk = true;
+             }
+           }
+
+           if (savedOk) {
+             notify?.('Archivo guardado en pre-revisión correctamente.', 'success');
              setSavedModalidadIds(prev => prev.includes(selectedModalidad) ? prev : [...prev, selectedModalidad]);
            }
          } catch (e) {
@@ -2613,18 +2659,42 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       for (let i = 0; i < allUpdates.length; i += chunkSize) {
         const chunk = allUpdates.slice(i, i + chunkSize);
         
-        const res = await fetch('/api/sync-participantes-omerito', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ updates: chunk })
-        });
-        
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          throw new Error(data.error || 'Error al comunicarse con el servidor');
+        let chunkSuccess = false;
+        try {
+          const res = await fetch('/api/sync-participantes-omerito', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: chunk })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.success) {
+              totalUpdatedCount += data.updatedCount || 0;
+              chunkSuccess = true;
+            }
+          }
+        } catch (e) {
+          console.warn("API sync failed, falling back to direct Supabase updates:", e);
         }
-        
-        totalUpdatedCount += data.updatedCount;
+
+        if (!chunkSuccess) {
+          let cCount = 0;
+          for (const item of chunk) {
+            const { dni, omerito, codigo_carrera, semestre } = item;
+            if (!dni || !omerito || !semestre) continue;
+            const { error: upErr } = await supabase
+              .from('participantes')
+              .update({
+                OMERITO: omerito,
+                codigo_carrera: codigo_carrera || null
+              })
+              .eq('CODPOSTULANTE', dni)
+              .eq('SEMESTRE', semestre);
+            if (!upErr) cCount++;
+          }
+          totalUpdatedCount += cCount;
+        }
+
         setSyncProcessed(prev => Math.min(prev + chunk.length, ingresantes.length));
       }
 

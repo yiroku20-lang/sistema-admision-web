@@ -506,6 +506,12 @@ export default function Adjudication() {
         console.error("Error fetching pre-revisions status:", e);
       }
 
+      // Direct Supabase query fallback for Netlify
+      const { data: dbPreStatusData } = await supabase.from("pre_revision_archivos").select("modalidad_id");
+      if (dbPreStatusData) {
+        dbPreStatusData.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
+      }
+
       setActiveModalidadIds(activeSet);
 
       const { data: vData } = await supabase
@@ -1667,6 +1673,10 @@ export default function Adjudication() {
       } catch (e) {
         console.error("Error fetching pre-revisions status:", e);
       }
+      const { data: dbPreStatusData2 } = await supabase.from("pre_revision_archivos").select("modalidad_id");
+      if (dbPreStatusData2) {
+        dbPreStatusData2.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
+      }
 
       candidates.sort((a, b) => {
         const aActive = activeSet.has(a.id) ? 1 : 0;
@@ -1681,29 +1691,48 @@ export default function Adjudication() {
       let modality = candidates[0];
       let fileRecord: any = null;
 
-      // Iterar sobre candidatos para encontrar el que contenga datos de pre-revisión CSV
-      for (const cand of candidates) {
+      const fetchPreRevisionHelper = async (modId: string) => {
         try {
-          const apiRes = await fetch(`/api/get-pre-revision/${cand.id}`);
+          const apiRes = await fetch(`/api/get-pre-revision/${modId}`);
           if (apiRes.ok) {
             const resJson = await apiRes.json();
-            if (resJson.data && resJson.data.csv_data) {
-              modality = cand;
-              fileRecord = resJson;
-              break;
-            }
+            if (resJson && resJson.data && resJson.data.csv_data) return resJson;
           }
         } catch (err) {
-          console.error("Error al verificar pre-revisión:", cand.id, err);
+          console.warn("API fetch pre-revision failed, falling back to direct Supabase query:", err);
+        }
+        const { data, error } = await supabase
+          .from('pre_revision_archivos')
+          .select('*')
+          .eq('modalidad_id', modId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data && data.csv_data) {
+          let csvData = data.csv_data;
+          if (typeof csvData === 'string') {
+            try { csvData = JSON.parse(csvData); } catch (e) {}
+          }
+          return { success: true, data: { ...data, csv_data: csvData } };
+        }
+        return null;
+      };
+
+      // Iterar sobre candidatos para encontrar el que contenga datos de pre-revisión CSV
+      for (const cand of candidates) {
+        const rec = await fetchPreRevisionHelper(cand.id);
+        if (rec && rec.data && rec.data.csv_data) {
+          modality = cand;
+          fileRecord = rec;
+          break;
         }
       }
 
       if (!fileRecord) {
-        const apiRes = await fetch(`/api/get-pre-revision/${modality.id}`);
-        if (!apiRes.ok) {
-          throw new Error(`Error al obtener los datos del CSV desde el servidor: ${apiRes.statusText}`);
-        }
-        fileRecord = await apiRes.json();
+        fileRecord = await fetchPreRevisionHelper(modality.id);
+      }
+      if (!fileRecord || !fileRecord.data) {
+        throw new Error("No se encontraron datos de pre-revisión para esta modalidad.");
       }
       // Obtener Cuadro Anual para obtener el año
       const { data: cuadro, error: cuadroErr } = await supabase

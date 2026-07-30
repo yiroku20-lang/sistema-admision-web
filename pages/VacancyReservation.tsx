@@ -21,6 +21,7 @@ interface TempReservation {
     multiIngreso: boolean;
     allOptions?: Participant[];
     selectedOptionIndex?: number;
+    observation?: string;
 }
 
 interface VacancyReservationProps {
@@ -165,12 +166,18 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
 
         const codes = raw.map(r => r.code);
         const { data: dbMatches } = await supabase.from('participantes').select('*').in('CODPOSTULANTE', codes);
-        const { data: existingReservations } = await supabase.from('reserva_vacantes_detalles').select('student_code, is_withdrawn, batch:reserva_vacantes_bloques(resolution_number)').in('student_code', codes);
+        const { data: existingReservations } = await supabase.from('reserva_vacantes_detalles').select('student_code, is_withdrawn, carrera, admission_modality, batch:reserva_vacantes_bloques(resolution_number)').in('student_code', codes);
 
         const mapped = raw.map(item => {
             const matches = dbMatches?.filter(m => String(m.CODPOSTULANTE).trim() === String(item.code).trim()) || [];
             const match = matches[0];
             const prevRes = existingReservations?.find(r => String(r.student_code).trim() === String(item.code).trim() && !r.is_withdrawn);
+            
+            let obs = '';
+            if (prevRes) {
+                const resNum = (prevRes.batch as any)?.resolution_number || 'TRÁMITE';
+                obs = `RES: ${resNum} / ${prevRes.carrera} (${prevRes.admission_modality})`;
+            }
 
             return {
                 code: item.code,
@@ -184,7 +191,8 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
                 startingSemester: calculateStartingSemester(item.grade),
                 multiIngreso: matches.length > 1,
                 allOptions: matches,
-                selectedOptionIndex: matches.length > 0 ? 0 : undefined
+                selectedOptionIndex: matches.length > 0 ? 0 : undefined,
+                observation: obs
             };
         });
 
@@ -301,6 +309,9 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
               lineColor: [226, 232, 240],
               lineWidth: 0.1
           },
+          columnStyles: {
+              0: { cellWidth: 15, halign: 'center' }
+          },
           didDrawPage: (data) => {
               doc.setFontSize(8);
               doc.setTextColor(150, 150, 150);
@@ -313,7 +324,7 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
 
   const generatePDFReport = (oficio: string, expediente: string, students: TempReservation[]) => {
       const doc = new jsPDF({
-          orientation: 'portrait',
+          orientation: 'landscape',
           unit: 'mm',
           format: 'a4'
       });
@@ -324,17 +335,17 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
       doc.setFontSize(16);
       doc.setTextColor(unsaacRed[0], unsaacRed[1], unsaacRed[2]);
       doc.setFont('helvetica', 'bold');
-      doc.text('UNSAAC - DIRECCIÓN DE ADMISIÓN', 105, 15, { align: 'center' });
+      doc.text('UNSAAC - DIRECCIÓN DE ADMISIÓN', 148, 15, { align: 'center' });
       
       doc.setFontSize(10);
       doc.setTextColor(60, 60, 60);
       doc.setFont('helvetica', 'normal');
-      doc.text('RESERVA DE VACANTE', 105, 22, { align: 'center' });
+      doc.text('RESERVA DE VACANTE', 148, 22, { align: 'center' });
 
       // Horizontal Line
       doc.setDrawColor(unsaacRed[0], unsaacRed[1], unsaacRed[2]);
       doc.setLineWidth(0.5);
-      doc.line(20, 26, 190, 26);
+      doc.line(20, 26, 277, 26);
 
       // Batch Info
       doc.setFontSize(10);
@@ -344,7 +355,7 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
       
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(100, 100, 100);
-      doc.text(`Expediente: ${expediente}`, 190, 35, { align: 'right' });
+      doc.text(`Expediente: ${expediente}`, 277, 35, { align: 'right' });
 
       // Intro Text
       doc.setFontSize(9);
@@ -358,12 +369,13 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
           s.name,
           `${s.carrera}\n(${s.admissionModality})`,
           s.gradeLevel,
-          s.startingSemester
+          s.startingSemester,
+          s.observation || '-'
       ]);
 
       autoTable(doc, {
           startY: 50,
-          head: [['Nº', 'CÓDIGO', 'NOMBRE COMPLETO', 'ESCUELA / MODALIDAD', 'AÑO SECUNDARIA', 'INICIO SEMESTRE']],
+          head: [['Nº', 'CÓDIGO', 'NOMBRE COMPLETO', 'ESCUELA / MODALIDAD', 'AÑO SEC.', 'SEMESTRE', 'OBSERVACIONES']],
           body: tableData,
           theme: 'grid',
           headStyles: { 
@@ -380,18 +392,19 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
               lineWidth: 0.1
           },
           columnStyles: {
-              0: { cellWidth: 10, halign: 'center' },
-              1: { cellWidth: 20 },
-              2: { cellWidth: 'auto', fontStyle: 'bold' },
-              3: { cellWidth: 55 },
-              4: { cellWidth: 25 },
-              5: { cellWidth: 25, fontStyle: 'bold', textColor: unsaacRed }
+              0: { cellWidth: 15, halign: 'center' },
+              1: { cellWidth: 25 },
+              2: { cellWidth: 50, fontStyle: 'bold' },
+              3: { cellWidth: 65 },
+              4: { cellWidth: 20 },
+              5: { cellWidth: 20, fontStyle: 'bold', textColor: unsaacRed },
+              6: { cellWidth: 'auto' }
           },
           didDrawPage: (data) => {
               // Footer
               doc.setFontSize(8);
               doc.setTextColor(150, 150, 150);
-              doc.text(`Página ${data.pageNumber}`, 105, 285, { align: 'center' });
+              doc.text(`Página ${data.pageNumber}`, 148, 195, { align: 'center' });
           }
       });
 
@@ -409,17 +422,26 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
           
           if (error) throw error;
           
-          const students = (data as VacancyReservationDetail[]).map(d => ({
-              code: d.student_code,
-              name: d.student_name,
-              carrera: d.carrera,
-              admissionModality: d.admission_modality || '',
-              gradeLevel: d.grade_level,
-              startingSemester: d.starting_semester,
-              found: true,
-              alreadyReserved: false,
-              multiIngreso: false
-          }));
+          const students = (data as VacancyReservationDetail[]).map(d => {
+              const prevRes = globalDetails.find(gd => gd.student_code === d.student_code && gd.batch_id !== batch.id && !gd.is_withdrawn);
+              let obs = '';
+              if (prevRes) {
+                  const resNum = (prevRes.batch as any)?.resolution_number || 'TRÁMITE';
+                  obs = `RES: ${resNum} / ${prevRes.carrera} (${prevRes.admission_modality})`;
+              }
+              return {
+                  code: d.student_code,
+                  name: d.student_name,
+                  carrera: d.carrera,
+                  admissionModality: d.admission_modality || '',
+                  gradeLevel: d.grade_level,
+                  startingSemester: d.starting_semester,
+                  found: true,
+                  alreadyReserved: !!prevRes,
+                  multiIngreso: false,
+                  observation: obs
+              };
+          });
           
           generatePDFReport(batch.report_code, batch.expediente_number, students);
           if (notify) notify("PDF generado correctamente", "success");

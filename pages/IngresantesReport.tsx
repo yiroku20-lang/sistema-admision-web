@@ -285,7 +285,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
       headStyles: { fillColor: [123, 21, 35], textColor: [255, 255, 255], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
-        0: { cellWidth: 10 },
+        0: { cellWidth: 12 },
         1: { cellWidth: 12 },
         2: { cellWidth: 22 },
         3: { cellWidth: 65 },
