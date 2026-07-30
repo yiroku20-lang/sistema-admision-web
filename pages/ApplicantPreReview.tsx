@@ -326,6 +326,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [escuelas, setEscuelas] = useState<CVEscuela[]>([]);
   const [vacantes, setVacantes] = useState<CVVacante[]>([]);
   const [adjudicacionVacantes, setAdjudicacionVacantes] = useState<any[]>([]);
+  const [adjudicadosList, setAdjudicadosList] = useState<any[]>([]);
 
   const [selectedCuadro, setSelectedCuadro] = useState(() => safeStorage.getItem('pre_rev_selectedCuadro') || '');
   const [selectedSemestre, setSelectedSemestre] = useState(() => safeStorage.getItem('pre_rev_selectedSemestre') || '');
@@ -594,11 +595,72 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     }
   };
 
+  const fetchAdjudicadosForModality = async (modId: string) => {
+    try {
+      const currentMod = allModalidades.find(m => m.id === modId) || modalidades.find(m => m.id === modId);
+      if (!currentMod) {
+        setAdjudicadosList([]);
+        return;
+      }
+      const normName = (s: string) => (s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
+      const targetNorm = normName(currentMod.nombre);
+
+      // Consultar adjudicacion_ranking
+      const { data: adjRank } = await supabase
+        .from("adjudicacion_ranking")
+        .select("*")
+        .not("escuela_adjudicada", "is", null);
+
+      let list: any[] = [];
+      if (adjRank) {
+        list = adjRank.filter(r => {
+          const rNorm = normName(r.modalidad || '');
+          return rNorm === targetNorm || rNorm.includes(targetNorm) || targetNorm.includes(rNorm);
+        });
+      }
+
+      // Consultar la tabla de participantes por si ya fue migrado
+      const { data: partData } = await supabase
+        .from("participantes")
+        .select("*")
+        .ilike("OBSERVACION", "%ADJUDICA%");
+
+      if (partData) {
+        const partMatched = partData.filter(p => {
+          const pNorm = normName(p.MODALIDAD || '');
+          return pNorm === targetNorm || pNorm.includes(targetNorm) || targetNorm.includes(pNorm);
+        });
+
+        partMatched.forEach(p => {
+          const doc = String(p.CODPOSTULANTE || '').trim();
+          if (doc && !list.some(x => String(x.dni).trim() === doc)) {
+            list.push({
+              dni: doc,
+              nombre: p.NOMBRE || '',
+              nota: p.NOTA || 0,
+              orden_merito: p.OMERITO || '--',
+              escuela_adjudicada: p.CARRERA || '',
+              modalidad: p.MODALIDAD,
+              area: ''
+            });
+          }
+        });
+      }
+
+      setAdjudicadosList(list);
+    } catch (err) {
+      console.error("Error in fetchAdjudicadosForModality:", err);
+      setAdjudicadosList([]);
+    }
+  };
+
   useEffect(() => {
     if (selectedModalidad) {
       fetchVacantesForModality(selectedModalidad);
+      fetchAdjudicadosForModality(selectedModalidad);
     } else {
       setVacantes([]);
+      setAdjudicadosList([]);
     }
   }, [selectedModalidad, allModalidades, modalidades]);
 
@@ -789,8 +851,56 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
 
   // --- Dynamic Normalization and Mapping ---
   const normalizedCsvData = useMemo(() => {
-    return (csvData || []).map(row => normalizeRow(row, escuelas));
-  }, [csvData, escuelas]);
+    const baseRows = (csvData || []).map(row => normalizeRow(row, escuelas));
+    if (!adjudicadosList || adjudicadosList.length === 0) {
+      return baseRows;
+    }
+
+    const baseDniMap = new Map<string, number>();
+    baseRows.forEach((row, idx) => {
+      const doc = String(row.NroDocumento || row.alumno || '').trim();
+      if (doc) baseDniMap.set(doc, idx);
+    });
+
+    const mergedRows = [...baseRows];
+
+    adjudicadosList.forEach(adj => {
+      const doc = String(adj.dni || '').trim();
+      const sch = findSchool(adj.escuela_adjudicada, escuelas);
+      const schCode = sch ? sch.codigo_carrera : '';
+      const schName = sch ? sch.nombre : adj.escuela_adjudicada;
+
+      if (doc && baseDniMap.has(doc)) {
+        const existingIdx = baseDniMap.get(doc)!;
+        const existingRow = mergedRows[existingIdx];
+        
+        mergedRows[existingIdx] = {
+          ...existingRow,
+          OBSERVACION: "INGRESANTE ADJUDICACIÓN",
+          CarreraIngreso: schCode || existingRow.CarreraIngreso || '',
+          CarreraIngresoNombre: schName || existingRow.CarreraIngresoNombre || '',
+          isAdjudicado: true,
+          tipoIngreso: "Adjudicación"
+        };
+      } else {
+        mergedRows.push({
+          NroDocumento: doc,
+          nombre: adj.nombre || '',
+          Nota: String(adj.nota || '0'),
+          POS: String(adj.orden_merito || '--'),
+          OBSERVACION: "INGRESANTE ADJUDICACIÓN",
+          CarreraIngreso: schCode,
+          CarreraIngresoNombre: schName,
+          CarreraPostula: schCode,
+          grupo: adj.area || '',
+          isAdjudicado: true,
+          tipoIngreso: "Adjudicación"
+        });
+      }
+    });
+
+    return mergedRows;
+  }, [csvData, escuelas, adjudicadosList]);
 
   // Mapas de consulta cruzada rápida por DNI
   const pagosMap = useMemo(() => {
@@ -1099,14 +1209,18 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     return map;
   }, [vacantes, selectedModalidad, modalidades, allModalidades, escuelas, savedModalidadIds, adjudicacionVacantes, selectedCuadro]);
 
-  const { admittedBySchool, totalApplicantsBySchool } = useMemo(() => {
+  const { admittedBySchool, admittedDirectBySchool, admittedAdjBySchool, totalApplicantsBySchool } = useMemo(() => {
     const admitted: Record<string, number> = {};
+    const admittedDirect: Record<string, number> = {};
+    const admittedAdj: Record<string, number> = {};
     const totalApplicants: Record<string, number> = {};
     
     // Inicializar ambas estructuras
     escuelas.forEach(e => {
       totalApplicants[e.codigo_carrera] = 0;
       admitted[e.codigo_carrera] = 0;
+      admittedDirect[e.codigo_carrera] = 0;
+      admittedAdj[e.codigo_carrera] = 0;
     });
     normalizedCsvData.forEach(row => {
       if (row) {
@@ -1117,40 +1231,59 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
             totalApplicants[codePostula]++;
           }
         }
+        
+        const obsUpper = (row.OBSERVACION || '').toUpperCase();
+        const isIngresante = isAdmittedRow(row);
+        const isAdj = row.isAdjudicado || obsUpper.includes('ADJUDICA');
+
         // Contamos el ingreso solo si se consolidó como ingresante y tiene código de ingreso
-        if (row.OBSERVACION?.toUpperCase().includes('INGRESANTE') && row.CarreraIngreso) {
+        if (isIngresante && row.CarreraIngreso) {
           const codeIngreso = row.CarreraIngreso;
           if (admitted[codeIngreso] !== undefined) {
             admitted[codeIngreso]++;
+            if (isAdj) {
+              admittedAdj[codeIngreso] = (admittedAdj[codeIngreso] || 0) + 1;
+            } else {
+              admittedDirect[codeIngreso] = (admittedDirect[codeIngreso] || 0) + 1;
+            }
           }
         }
       }
     });
-    return { admittedBySchool: admitted, totalApplicantsBySchool: totalApplicants };
+    return { 
+      admittedBySchool: admitted, 
+      admittedDirectBySchool: admittedDirect,
+      admittedAdjBySchool: admittedAdj,
+      totalApplicantsBySchool: totalApplicants 
+    };
   }, [escuelas, normalizedCsvData]);
 
   const coberturaRows = useMemo(() => {
     return escuelas.map(e => {
       const vac = vacanciesBySchool[e.codigo_carrera] || 0;
-      const adm = admittedBySchool[e.codigo_carrera] || 0;
+      const admTotal = admittedBySchool[e.codigo_carrera] || 0;
+      const admDirect = admittedDirectBySchool[e.codigo_carrera] || 0;
+      const admAdj = admittedAdjBySchool[e.codigo_carrera] || 0;
       const totalApp = totalApplicantsBySchool[e.codigo_carrera] || 0;
       
-      if (vac > 0 || adm > 0 || totalApp > 0) {
+      if (vac > 0 || admTotal > 0 || totalApp > 0) {
         let status = 'Cubierto';
-        if (adm < vac) status = 'Sobran Vacantes';
-        if (adm > vac) status = 'Exceso de Ingresantes';
+        if (admTotal < vac) status = 'Sobran Vacantes';
+        if (admTotal > vac) status = 'Exceso de Ingresantes';
 
         const ratio = vac > 0 ? (totalApp / vac).toFixed(1) : '—';
-        const admissionRate = totalApp > 0 ? ((adm / totalApp) * 100).toFixed(1) : '0.0';
+        const admissionRate = totalApp > 0 ? ((admTotal / totalApp) * 100).toFixed(1) : '0.0';
 
         return {
           schoolName: e.nombre,
           schoolCode: e.codigo_carrera,
           area: e.area,
           vacancies: vac,
-          admitted: adm,
+          admittedDirect: admDirect,
+          admittedAdj: admAdj,
+          admitted: admTotal,
           applicants: totalApp,
-          difference: vac - adm,
+          difference: vac - admTotal,
           ratio,
           admissionRate,
           status: status
@@ -1158,7 +1291,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       }
       return null;
     }).filter(Boolean) as any[];
-  }, [escuelas, vacanciesBySchool, admittedBySchool, totalApplicantsBySchool]);
+  }, [escuelas, vacanciesBySchool, admittedBySchool, admittedDirectBySchool, admittedAdjBySchool, totalApplicantsBySchool]);
 
   const sortedCoberturaRows = useMemo(() => {
     const filteredCoberturaRows = coberturaRows.filter(row => {
@@ -1355,9 +1488,11 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
           return null;
         }
 
-        let _groupPriority = 3; // 3 = No Ingresó a esta carrera
+        let _groupPriority = 4; // 4 = No Ingresó a esta carrera
         if (isIngresoTarget) {
-          if (isSO) {
+          if (row.isAdjudicado || obs.includes('ADJUDICA')) {
+            _groupPriority = 3; // 3 = Ingresante por Adjudicación
+          } else if (isSO) {
             _groupPriority = 2; // 2 = Ingresante por Segunda Opción (S.O.)
           } else {
             _groupPriority = 1; // 1 = Ingresante Directo / Primera Opción
@@ -1410,13 +1545,15 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     });
   }, [normalizedCsvData, listSearchTerm, listSchoolFilter, escuelas]);
 
-  // Calcular los puestos correlativos locales por escuela para los ingresantes
+  // Calcular los puestos correlativos locales por escuela para todos los ingresantes (incluyendo adjudicados)
   const localPuestosMap = useMemo(() => {
     const map: Record<string, number> = {}; 
     // Agrupar ingresantes por escuela de ingreso
     const ingresantesPorEscuela: Record<string, any[]> = {};
     normalizedCsvData.forEach(row => {
-      if (row && row.OBSERVACION?.toUpperCase().includes('INGRESANTE') && row.CarreraIngreso) {
+      const obsUpper = (row.OBSERVACION || '').toUpperCase();
+      const isIng = isAdmittedRow(row) || row.isAdjudicado || obsUpper.includes('INGRESANTE');
+      if (row && isIng && row.CarreraIngreso) {
         const esc = row.CarreraIngreso;
         if (!ingresantesPorEscuela[esc]) {
           ingresantesPorEscuela[esc] = [];
@@ -1428,9 +1565,14 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     Object.keys(ingresantesPorEscuela).forEach(escCode => {
       const list = ingresantesPorEscuela[escCode];
       
-      // Separar primera y segunda opción
-      const regular = list.filter(r => r.OBSERVACION === 'INGRESANTE');
-      const so = list.filter(r => r.OBSERVACION === 'INGRESANTE S.O.');
+      const isAdjRow = (r: any) => Boolean(r.isAdjudicado || (r.OBSERVACION || '').toUpperCase().includes('ADJUDICA'));
+      const isSoRow = (r: any) => !isAdjRow(r) && (r.OBSERVACION || '').toUpperCase().includes('S.O.');
+
+      // Separar primera opción / regular, segunda opción y adjudicación
+      const regular = list.filter(r => !isAdjRow(r) && !isSoRow(r));
+      const so = list.filter(r => isSoRow(r));
+      const adj = list.filter(r => isAdjRow(r));
+
       // Ordenar por nota descendente. En caso de empate, por puesto original o nombre
       const sortFn = (a: any, b: any) => {
         const notaA = parseFloat(a.Nota) || 0;
@@ -1445,11 +1587,29 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       };
       regular.sort(sortFn);
       so.sort(sortFn);
-      // Combinar primero regular y luego SO (el correlativo continuado)
-      const combined = [...regular, ...so];
-      combined.forEach((row, index) => {
-        const key = `${row.NroDocumento || row.alumno}_${escCode}`;
-        map[key] = index + 1; // Puesto correlativo local asignado
+      adj.sort(sortFn);
+
+      let maxDirectPos = regular.length + so.length;
+      const combinedDirect = [...regular, ...so];
+      combinedDirect.forEach((row, index) => {
+        const doc = String(row.NroDocumento || row.alumno || row.dni || '').trim();
+        const parsedPos = parseInt(row.POS) || 0;
+        if (parsedPos > maxDirectPos) {
+          maxDirectPos = parsedPos;
+        }
+        if (doc) {
+          const key = `${doc}_${escCode}`;
+          map[key] = parsedPos > 0 ? parsedPos : (index + 1);
+        }
+      });
+
+      // Para los adjudicados, el número de orden de mérito continúa a partir del último que ingresó
+      adj.forEach((row, index) => {
+        const doc = String(row.NroDocumento || row.alumno || row.dni || '').trim();
+        if (doc) {
+          const key = `${doc}_${escCode}`;
+          map[key] = maxDirectPos + index + 1;
+        }
       });
     });
     return map;
@@ -2127,13 +2287,16 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     doc.line(margin, y, margin + 50, y);
     y += 8;
     const totalPostulantes = normalizedCsvData.length;
-    const totalIngresantes = normalizedCsvData.filter(r => r.OBSERVACION?.toUpperCase().includes('INGRESANTE')).length;
+    const totalIngresantesDirectos = normalizedCsvData.filter(r => isAdmittedRow(r) && !r.isAdjudicado && !(r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length;
+    const totalIngresantesAdj = normalizedCsvData.filter(r => r.isAdjudicado || (r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length;
+    const totalIngresantes = normalizedCsvData.filter(r => isAdmittedRow(r)).length;
     const tasaGlobal = totalPostulantes > 0 ? ((totalIngresantes / totalPostulantes) * 100).toFixed(1) : '0.0';
-    const boxW = (pageWidth - margin * 2 - 9) / 4;
+    const boxW = (pageWidth - margin * 2 - 12) / 5;
     const metrics = [
-      { l: 'Postulantes', v: String(totalPostulantes), c: [16, 44, 87] as [number, number, number] }, // UNSAAC Navy
-      { l: 'Ingresantes', v: String(totalIngresantes), c: [16, 185, 129] as [number, number, number] },
-      { l: 'Promedio Gral.', v: gradeStats.avg, c: [124, 58, 237] as [number, number, number] },
+      { l: 'Postulantes', v: String(totalPostulantes), c: [16, 44, 87] as [number, number, number] },
+      { l: 'Ing. Directos', v: String(totalIngresantesDirectos), c: [16, 185, 129] as [number, number, number] },
+      { l: 'Adjudicados', v: String(totalIngresantesAdj), c: [147, 51, 234] as [number, number, number] },
+      { l: 'Ing. Totales', v: String(totalIngresantes), c: [79, 70, 229] as [number, number, number] },
       { l: 'Tasa Global', v: `${tasaGlobal}%`, c: [245, 158, 11] as [number, number, number] }
     ];
     metrics.forEach((m, idx) => {
@@ -2318,26 +2481,30 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       y += 6;
       autoTable(doc, {
         startY: y,
-        head: [['Carrera Profesional', 'Cód.', 'Vacantes', 'Postulantes', 'Ingresantes', 'Ratio', 'Tasa']],
+        head: [['Carrera Profesional', 'Cód.', 'Vacantes', 'Postulantes', 'Ing. Dir.', 'Adjud.', 'Total Ing.', 'Ratio', 'Tasa']],
         body: items.map(item => [
           item.schoolName,
           item.schoolCode,
           String(item.vacancies),
           String(item.applicants),
+          String(item.admittedDirect || 0),
+          String(item.admittedAdj || 0),
           String(item.admitted),
           item.ratio === '—' ? '—' : `${item.ratio} p/v`,
           `${item.admissionRate}%`
         ]),
-        styles: { fontSize: 7, cellPadding: 2 },
+        styles: { fontSize: 6.5, cellPadding: 1.8 },
         headStyles: { fillColor: [16, 44, 87] }, // UNSAAC Navy Blue
         columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 65 },
-          1: { halign: 'center', cellWidth: 12 },
-          2: { halign: 'center', cellWidth: 18 },
-          3: { halign: 'center', cellWidth: 20 },
-          4: { halign: 'center', cellWidth: 20 },
-          5: { halign: 'center', cellWidth: 15 },
-          6: { halign: 'center', cellWidth: 18 }
+          0: { fontStyle: 'bold', cellWidth: 55 },
+          1: { halign: 'center', cellWidth: 10 },
+          2: { halign: 'center', cellWidth: 14 },
+          3: { halign: 'center', cellWidth: 16 },
+          4: { halign: 'center', cellWidth: 14 },
+          5: { halign: 'center', cellWidth: 12 },
+          6: { halign: 'center', cellWidth: 14 },
+          7: { halign: 'center', cellWidth: 14 },
+          8: { halign: 'center', cellWidth: 14 }
         },
         theme: 'grid',
         margin: { left: margin, right: margin }
@@ -3001,62 +3168,79 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
               <div className="space-y-6">
                 
                 {/* Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-4 relative overflow-hidden">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-3 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
-                    <div className="size-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-2xl">group</span>
+                    <div className="size-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-xl">group</span>
                     </div>
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Postulantes</p>
-                      <p className="text-2xl font-black text-slate-800 tracking-tight">{normalizedCsvData.length}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Cargados en archivo</p>
+                      <p className="text-xl font-black text-slate-800 tracking-tight">{normalizedCsvData.length}</p>
+                      <p className="text-[10px] text-slate-400">Cargados en archivo</p>
                     </div>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-4 relative overflow-hidden">
+
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-3 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
-                    <div className="size-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-2xl">how_to_reg</span>
+                    <div className="size-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-xl">how_to_reg</span>
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ingresantes</p>
-                      <p className="text-2xl font-black text-emerald-600 tracking-tight">
-                        {normalizedCsvData.filter(r => r.OBSERVACION?.toUpperCase().includes('INGRESANTE')).length}
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Ing. Directos</p>
+                      <p className="text-xl font-black text-emerald-600 tracking-tight">
+                        {normalizedCsvData.filter(r => isAdmittedRow(r) && !r.isAdjudicado && !(r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length}
                       </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Vacantes cubiertas</p>
+                      <p className="text-[10px] text-slate-400">Regular / Directo</p>
                     </div>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-4 relative overflow-hidden">
+
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-3 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div>
-                    <div className="size-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-2xl">school</span>
+                    <div className="size-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-xl">gavel</span>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Adjudicados</p>
+                      <p className="text-xl font-black text-purple-700 tracking-tight">
+                        {normalizedCsvData.filter(r => r.isAdjudicado || (r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length}
+                      </p>
+                      <p className="text-[10px] text-purple-500 font-bold">Por Adjudicación</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-3 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-indigo-600"></div>
+                    <div className="size-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-xl">school</span>
                     </div>
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Vacantes Oferta</p>
-                      <p className="text-2xl font-black text-slate-800 tracking-tight">
+                      <p className="text-xl font-black text-slate-800 tracking-tight">
                         {(Object.values(vacanciesBySchool) as number[]).reduce((a,b) => a+b, 0)}
                       </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Disponibles en el cuadro</p>
+                      <p className="text-[10px] text-slate-400">En cuadro anual</p>
                     </div>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-4 relative overflow-hidden">
+
+                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/80 flex items-center gap-3 relative overflow-hidden">
                     {(() => {
                       const totalVac = (Object.values(vacanciesBySchool) as number[]).reduce((a,b) => a+b, 0);
-                      const totalAdm = normalizedCsvData.filter(r => r.OBSERVACION?.toUpperCase().includes('INGRESANTE')).length;
+                      const totalAdm = normalizedCsvData.filter(r => isAdmittedRow(r)).length;
                       const diff = totalVac - totalAdm;
                       const isNegative = diff < 0;
                       return (
                         <>
                           <div className={`absolute top-0 left-0 w-1 h-full ${isNegative ? 'bg-rose-500' : 'bg-amber-500'}`}></div>
-                          <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${isNegative ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'}`}>
-                            <span className="material-symbols-outlined text-2xl">event_seat</span>
+                          <div className={`size-10 rounded-xl flex items-center justify-center shrink-0 ${isNegative ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'}`}>
+                            <span className="material-symbols-outlined text-xl">event_seat</span>
                           </div>
                           <div>
                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{isNegative ? 'Sobrecupo' : 'Vacantes Libres'}</p>
-                            <p className={`text-2xl font-black tracking-tight ${isNegative ? 'text-rose-600' : 'text-slate-800'}`}>
+                            <p className={`text-xl font-black tracking-tight ${isNegative ? 'text-rose-600' : 'text-slate-800'}`}>
                               {Math.abs(diff)}
                             </p>
-                            <p className="text-[10px] text-slate-400 mt-0.5">{isNegative ? 'Exceso de ingresantes' : 'Sin adjudicar'}</p>
+                            <p className="text-[10px] text-slate-400">{isNegative ? 'Exceso ingresantes' : 'Sin ocupar'}</p>
                           </div>
                         </>
                       );
@@ -3068,7 +3252,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
                   <div className="p-4 border-b border-slate-100 bg-slate-50/20">
                     <h3 className="font-black text-slate-800 uppercase tracking-tight text-sm">Análisis de Cobertura y Demanda por Escuela</h3>
-                    <p className="text-xs text-slate-400 mt-1">Análisis consolidado de vacantes, postulantes totales, ingresantes y tasa de cobertura.</p>
+                    <p className="text-xs text-slate-400 mt-1">Análisis consolidado de vacantes, postulantes totales, ingresantes directos, adjudicados e ingresantes totales.</p>
                   </div>
                   
                   {/* Filter and Search Bar */}
@@ -3144,7 +3328,9 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                           <th className="p-4 font-black text-center">Área</th>
                           <th className="p-4 font-black text-center">Vacantes</th>
                           <th className="p-4 font-black text-center">Postulantes</th>
-                          <th className="p-4 font-black text-center">Ingresantes</th>
+                          <th className="p-4 font-black text-center">Ing. Directos</th>
+                          <th className="p-4 font-black text-center">Adjudicados</th>
+                          <th className="p-4 font-black text-center">Ingresantes Totales</th>
                           <th className="p-4 font-black text-center">Diferencia</th>
                           <th className="p-4 font-black text-center">Ratio Competencia</th>
                           <th className="p-4 font-black text-center">Tasa de Ingreso</th>
@@ -3153,7 +3339,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                       </thead>
                       <tbody className="text-sm divide-y divide-slate-100">
                         {sortedCoberturaRows.length === 0 ? (
-                           <tr><td colSpan={9} className="text-center p-8 text-slate-400 font-bold text-xs">No hay datos que coincidan con los filtros seleccionados</td></tr>
+                           <tr><td colSpan={11} className="text-center p-8 text-slate-400 font-bold text-xs">No hay datos que coincidan con los filtros seleccionados</td></tr>
                         ) : (() => {
                           let lastArea = '';
                           return sortedCoberturaRows.map((row, idx) => {
@@ -3163,7 +3349,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                               <React.Fragment key={idx}>
                                 {showAreaHeader && (
                                   <tr className="bg-slate-100/40">
-                                    <td colSpan={9} className="p-3 pl-4 font-black text-xs uppercase tracking-wider text-slate-600 bg-slate-100/60">
+                                    <td colSpan={11} className="p-3 pl-4 font-black text-xs uppercase tracking-wider text-slate-600 bg-slate-100/60">
                                       Área {row.area || 'Sin Área'}
                                     </td>
                                   </tr>
@@ -3176,7 +3362,9 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                                   <td className="p-4 text-center font-bold text-slate-600">{row.area}</td>
                                   <td className="p-4 text-center font-black text-slate-700">{row.vacancies}</td>
                                   <td className="p-4 text-center font-black text-blue-600">{row.applicants}</td>
-                                  <td className="p-4 text-center font-black text-emerald-600">{row.admitted}</td>
+                                  <td className="p-4 text-center font-black text-emerald-600">{row.admittedDirect || 0}</td>
+                                  <td className="p-4 text-center font-black text-purple-700">{row.admittedAdj || 0}</td>
+                                  <td className="p-4 text-center font-black text-indigo-700">{row.admitted}</td>
                                   <td className="p-4 text-center font-bold">
                                     <span className={row.difference < 0 ? 'text-rose-500' : 'text-emerald-600'}>
                                       {row.difference > 0 ? '+' : ''}{row.difference}
@@ -3366,20 +3554,31 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                                       </div>
                                     )}
                                     {currentPriority === 3 && (
+                                      <div className="bg-purple-100/90 text-purple-950 font-black text-xs px-4 py-2 flex items-center justify-between border-l-4 border-l-purple-600">
+                                        <span className="flex items-center gap-2 uppercase tracking-wider">
+                                          <span className="material-symbols-outlined text-[18px] text-purple-700">gavel</span>
+                                          3. Ingresantes por Adjudicación a esta Escuela
+                                        </span>
+                                        <span className="bg-purple-200 text-purple-900 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
+                                          {filteredList.filter(r => r._groupPriority === 3).length} ingresantes por adjudicación
+                                        </span>
+                                      </div>
+                                    )}
+                                    {currentPriority === 4 && (
                                       <div className="bg-slate-200/90 text-slate-900 font-black text-xs px-4 py-2 flex items-center justify-between border-l-4 border-l-slate-500">
                                         <span className="flex items-center gap-2 uppercase tracking-wider">
                                           <span className="material-symbols-outlined text-[18px] text-slate-600">person_off</span>
-                                          3. Postulantes No Ingresantes (Postularon en 1ra Opción a esta Escuela)
+                                          4. Postulantes No Ingresantes (Postularon en 1ra Opción a esta Escuela)
                                         </span>
                                         <span className="bg-slate-300 text-slate-800 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
-                                          {filteredList.filter(r => r._groupPriority === 3).length} postulantes
+                                          {filteredList.filter(r => r._groupPriority === 4).length} postulantes
                                         </span>
                                       </div>
                                     )}
                                   </td>
                                 </tr>
                               )}
-                              <tr className={`transition-colors ${isIngresante ? (isSO ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'bg-emerald-50/30 hover:bg-emerald-50') : 'hover:bg-slate-50'}`}>
+                              <tr className={`transition-colors ${isIngresante ? (isSO ? 'bg-amber-50/20 hover:bg-amber-50/40' : (row.isAdjudicado || obs.includes('ADJUDICA')) ? 'bg-purple-50/30 hover:bg-purple-50' : 'bg-emerald-50/30 hover:bg-emerald-50') : 'hover:bg-slate-50'}`}>
                             <td className="p-4 font-mono text-slate-600 font-bold">{dni}</td>
                             
                             {/* Visualización de Nombre + Carreras de Elección */}
@@ -3463,6 +3662,11 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                                 isSO ? (
                                   <span className="bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border border-amber-200 shadow-sm">
                                     Ingresante S.O.
+                                  </span>
+                                ) : (row.isAdjudicado || obs.includes('ADJUDICA')) ? (
+                                  <span className="bg-purple-100 text-purple-800 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-full border border-purple-300 shadow-xs flex items-center gap-1 w-fit">
+                                    <span className="material-symbols-outlined text-[13px]">gavel</span>
+                                    Ingresante Adjudicación
                                   </span>
                                 ) : (
                                   <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border border-emerald-200 shadow-sm">

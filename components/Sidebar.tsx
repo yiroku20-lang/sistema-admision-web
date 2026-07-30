@@ -32,6 +32,7 @@ const navItems: (NavItem & { permission?: string })[] = [
   { label: 'Presupuesto Examen', icon: 'request_quote', path: '/budget', roles: ['Administrador', 'Director'], permission: 'view_presupuesto' },
   { label: 'Auditoría y Logs', icon: 'bar_chart', path: '/logs', roles: ['Administrador'], permission: 'view_auditoria' },
   { label: 'Limpieza de Datos', icon: 'cleaning_services', path: '/data-cleanup', roles: ['Administrador'] },
+  { label: 'Reporte Ingresantes', icon: 'school', path: '/reporte-ingresantes', roles: ['Administrador', 'Director', 'Operador'], permission: 'view_reporte_ingresantes' },
   { label: 'Gestión de Personal', icon: 'badge', path: '/staff', roles: ['Administrador', 'Director'], permission: 'view_personal' },
 ];
 

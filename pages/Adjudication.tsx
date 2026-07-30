@@ -62,49 +62,99 @@ interface GroupedProcesses {
   };
 }
 
-const getGroupedProcesses = (processList: string[], allModalidades: any[]): GroupedProcesses => {
+const getGroupedProcesses = (
+  processList: string[],
+  allModalidades: any[],
+  activeModalidadIds?: Set<string>
+): GroupedProcesses => {
   const groups: GroupedProcesses = {};
-  
-  const normName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
-  
+
+  const normName = (s: string) =>
+    s
+      ? s
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, " ")
+          .trim()
+      : "";
+
   processList.forEach((name) => {
     const targetNorm = normName(name);
-    
-    // Try to find matching modality from the database to get actual year and semester
-    const matched = allModalidades.find((m) => {
-      const mNorm = normName(m.nombre);
-      return mNorm === targetNorm || mNorm.includes(targetNorm) || targetNorm.includes(mNorm);
+
+    // 1. Filter matching modalities from DB
+    let candidates = allModalidades.filter(
+      (m) => normName(m.nombre) === targetNorm
+    );
+
+    if (candidates.length === 0) {
+      candidates = allModalidades.filter((m) => {
+        const mNorm = normName(m.nombre);
+        if (!mNorm) return false;
+        return mNorm.includes(targetNorm) || targetNorm.includes(mNorm);
+      });
+    }
+
+    // Sort candidates:
+    // a. Modalities with pre-revisions in cv_vacantes first
+    // b. Modalities with higher/newer semester string (e.g., "2026-II" before "2026-I")
+    candidates.sort((a, b) => {
+      const aActive = activeModalidadIds?.has(a.id) ? 1 : 0;
+      const bActive = activeModalidadIds?.has(b.id) ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+
+      const semA = a.semestre || "";
+      const semB = b.semestre || "";
+      return semB.localeCompare(semA, undefined, { numeric: true });
     });
-    
-    let year = "Otros Años";
-    let semester = "Otros";
-    
+
+    const matched = candidates[0];
+
+    let year = "";
+    let semester = "";
+
     if (matched) {
-      if (matched.cv_cuadros_anuales) {
+      if (matched.cv_cuadros_anuales?.anio) {
         year = matched.cv_cuadros_anuales.anio.toString();
       }
       if (matched.semestre) {
-        semester = `Proceso ${matched.semestre}`;
-      }
-    } else {
-      // Fallback to regex
-      const yearMatch = name.match(/\b(20\d\d)\b/);
-      if (yearMatch) {
-        year = yearMatch[1];
-      }
-      
-      const semMatch = name.match(/\b(I|II|III|IV)\b/);
-      if (semMatch) {
-        semester = `Proceso ${semMatch[1]}`;
-      } else if (name.toUpperCase().includes("PRIMERA OPCION") || name.toUpperCase().includes("PRIMERA OPCIÓN")) {
-        semester = "Primera Opción";
+        const rawSem = matched.semestre.trim();
+        semester = rawSem.toUpperCase().startsWith("PROCESO")
+          ? rawSem
+          : `Proceso ${rawSem}`;
       }
     }
-    
+
+    // 2. Fallback to regex string parsing ONLY if database record doesn't yield year/semester
+    if (!year) {
+      const yearMatch = name.match(/\b(20\d\d)\b/);
+      year = yearMatch ? yearMatch[1] : "Otros Años";
+    }
+
+    if (!semester) {
+      const semFullMatch = name.match(/\b(20\d\d\s*[-_/\s]?\s*(?:I{1,3}|IV|V))\b/i);
+      if (semFullMatch) {
+        semester = `Proceso ${semFullMatch[1].toUpperCase()}`;
+      } else {
+        const semRomanMatch = name.match(/\b(I{1,3}|IV|V)\b/);
+        if (semRomanMatch) {
+          semester = `Proceso ${semRomanMatch[1].toUpperCase()}`;
+        } else if (
+          name.toUpperCase().includes("PRIMERA OPCION") ||
+          name.toUpperCase().includes("PRIMERA OPCIÓN")
+        ) {
+          semester = "Primera Opción";
+        } else {
+          semester = "Otros";
+        }
+      }
+    }
+
     if (!groups[year]) groups[year] = {};
     if (!groups[year][semester]) groups[year][semester] = [];
     groups[year][semester].push(name);
   });
+
   return groups;
 };
 
@@ -116,14 +166,21 @@ const sortYears = (a: string, b: string) => {
 
 const sortSemesters = (a: string, b: string) => {
   const order: Record<string, number> = {
-    "Proceso I": 1,
-    "Proceso II": 2,
-    "Proceso III": 3,
-    "Proceso IV": 4,
-    "Primera Opción": 5,
+    "Proceso 2026-II": 1,
+    "Proceso 2026-I": 2,
+    "Proceso 2025-II": 3,
+    "Proceso 2025-I": 4,
+    "Proceso II": 5,
+    "Proceso I": 6,
+    "Proceso III": 7,
+    "Proceso IV": 8,
+    "Primera Opción": 9,
     "Otros": 10,
   };
-  return (order[a] || 99) - (order[b] || 99);
+  if (order[a] !== undefined && order[b] !== undefined) {
+    return order[a] - order[b];
+  }
+  return a.localeCompare(b, undefined, { numeric: true });
 };
 
 export default function Adjudication() {
@@ -138,6 +195,7 @@ export default function Adjudication() {
   const [selectedAnioId, setSelectedAnioId] = useState<string>("");
   const [modalidades, setModalidades] = useState<CVModalidad[]>([]);
   const [allModalidadesDb, setAllModalidadesDb] = useState<any[]>([]);
+  const [activeModalidadIds, setActiveModalidadIds] = useState<Set<string>>(new Set());
   const [selectedModalidadId, setSelectedModalidadId] = useState<string>("");
 
   const [activeProcessName, setActiveProcessName] = useState<string>("");
@@ -426,6 +484,29 @@ export default function Adjudication() {
       if (modalitiesData) {
         setAllModalidadesDb(modalitiesData);
       }
+
+      // Fetch modalities that have saved pre-revisions or vacantes
+      const activeSet = new Set<string>();
+      const { data: cvVacData } = await supabase
+        .from("cv_vacantes")
+        .select("modalidad_id");
+      if (cvVacData) {
+        cvVacData.forEach((v) => v.modalidad_id && activeSet.add(v.modalidad_id));
+      }
+
+      try {
+        const resPreStatus = await fetch("/api/get-pre-revisions-status");
+        if (resPreStatus.ok) {
+          const jsonPre = await resPreStatus.json();
+          if (jsonPre.savedModalidadIds) {
+            jsonPre.savedModalidadIds.forEach((id: string) => id && activeSet.add(id));
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching pre-revisions status:", e);
+      }
+
+      setActiveModalidadIds(activeSet);
 
       const { data: vData } = await supabase
         .from("adjudicacion_vacantes")
@@ -764,7 +845,10 @@ export default function Adjudication() {
   };
 
   const getAdjudicatedRanking = async (processName: string) => {
+    if (!processName) return [];
     let finalRanking: any[] = [];
+
+    // 1. Exact match on adjudicacion_ranking
     const resFb = await supabase
       .from("adjudicacion_ranking")
       .select("*")
@@ -775,6 +859,7 @@ export default function Adjudication() {
     if (!resFb.error && resFb.data && resFb.data.length > 0) {
       finalRanking = resFb.data;
     } else {
+      // 2. Flexible pattern match on adjudicacion_ranking with modality
       const cleanPattern = `%${processName.replace(/[^a-zA-Z0-9]+/g, "%")}%`;
       const resFlexible = await supabase
         .from("adjudicacion_ranking")
@@ -786,32 +871,36 @@ export default function Adjudication() {
       if (!resFlexible.error && resFlexible.data && resFlexible.data.length > 0) {
         finalRanking = resFlexible.data;
       } else {
-        const resObs = await supabase
-          .from("adjudicacion_ranking")
-          .select("*")
-          .eq("observacion", "Adjudicado")
-          .not("escuela_adjudicada", "is", null)
-          .order("orden_merito", { ascending: true });
+        // 3. Fallback to clasificacion_de_adjudicacion with exact modality
+        try {
+          const resC = await supabase
+            .from("clasificacion_de_adjudicacion")
+            .select("*")
+            .eq("modalidad", processName)
+            .not("escuela_adjudicada", "is", null)
+            .order("orden_merito", { ascending: true });
 
-        if (!resObs.error && resObs.data && resObs.data.length > 0) {
-          finalRanking = resObs.data;
-        } else {
-          try {
-            const resC = await supabase
+          if (!resC.error && resC.data && resC.data.length > 0) {
+            finalRanking = resC.data;
+          } else {
+            // 4. Flexible pattern match on clasificacion_de_adjudicacion
+            const resCFlex = await supabase
               .from("clasificacion_de_adjudicacion")
               .select("*")
-              .eq("modalidad", processName)
+              .ilike("modalidad", cleanPattern)
               .not("escuela_adjudicada", "is", null)
               .order("orden_merito", { ascending: true });
-            if (!resC.error && resC.data && resC.data.length > 0) {
-              finalRanking = resC.data;
+
+            if (!resCFlex.error && resCFlex.data && resCFlex.data.length > 0) {
+              finalRanking = resCFlex.data;
             }
-          } catch (_) {}
-        }
+          }
+        } catch (_) {}
       }
     }
+
     return finalRanking.filter(
-      (r) => r.escuela_adjudicada && r.escuela_adjudicada.trim() !== ""
+      (r) => r.escuela_adjudicada && String(r.escuela_adjudicada).trim() !== ""
     );
   };
 
@@ -1555,12 +1644,66 @@ export default function Adjudication() {
       
       const normName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
       const targetNorm = normName(activeProcessName);
-      let modality = modalities?.find(m => normName(m.nombre) === targetNorm);
-      if (!modality) {
-        modality = modalities?.find(m => normName(m.nombre).includes(targetNorm) || targetNorm.includes(normName(m.nombre)));
+      let candidates = (modalities || []).filter(m => normName(m.nombre) === targetNorm);
+      if (candidates.length === 0) {
+        candidates = (modalities || []).filter(m => normName(m.nombre).includes(targetNorm) || targetNorm.includes(normName(m.nombre)));
       }
-      if (!modality) {
+      if (candidates.length === 0) {
         throw new Error(`No se encontró la modalidad: ${activeProcessName}`);
+      }
+
+      // Populate activeSet for modality candidates
+      const activeSet = new Set<string>();
+      const { data: cvVacData } = await supabase.from("cv_vacantes").select("modalidad_id");
+      if (cvVacData) cvVacData.forEach(v => v.modalidad_id && activeSet.add(v.modalidad_id));
+      try {
+        const resPreStatus = await fetch("/api/get-pre-revisions-status");
+        if (resPreStatus.ok) {
+          const jsonPre = await resPreStatus.json();
+          if (jsonPre.savedModalidadIds) {
+            jsonPre.savedModalidadIds.forEach((id: string) => id && activeSet.add(id));
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching pre-revisions status:", e);
+      }
+
+      candidates.sort((a, b) => {
+        const aActive = activeSet.has(a.id) ? 1 : 0;
+        const bActive = activeSet.has(b.id) ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+
+        const semA = a.semestre || "";
+        const semB = b.semestre || "";
+        return semB.localeCompare(semA, undefined, { numeric: true });
+      });
+
+      let modality = candidates[0];
+      let fileRecord: any = null;
+
+      // Iterar sobre candidatos para encontrar el que contenga datos de pre-revisión CSV
+      for (const cand of candidates) {
+        try {
+          const apiRes = await fetch(`/api/get-pre-revision/${cand.id}`);
+          if (apiRes.ok) {
+            const resJson = await apiRes.json();
+            if (resJson.data && resJson.data.csv_data) {
+              modality = cand;
+              fileRecord = resJson;
+              break;
+            }
+          }
+        } catch (err) {
+          console.error("Error al verificar pre-revisión:", cand.id, err);
+        }
+      }
+
+      if (!fileRecord) {
+        const apiRes = await fetch(`/api/get-pre-revision/${modality.id}`);
+        if (!apiRes.ok) {
+          throw new Error(`Error al obtener los datos del CSV desde el servidor: ${apiRes.statusText}`);
+        }
+        fileRecord = await apiRes.json();
       }
       // Obtener Cuadro Anual para obtener el año
       const { data: cuadro, error: cuadroErr } = await supabase
@@ -1638,15 +1781,8 @@ export default function Adjudication() {
         }
         return false;
       };
-      // 3. Obtener el archivo CSV cargado en la pre-revisión mediante la API (Bypass RLS)
-      const apiRes = await fetch(`/api/get-pre-revision/${modality.id}`);
-      if (!apiRes.ok) {
-        throw new Error(`Error al obtener los datos del CSV desde el servidor: ${apiRes.statusText}`);
-      }
-      const fileRecord = await apiRes.json();
-      
-      // CORRECCIÓN DEL TYPO AQUÍ (leer del objeto wrapper data)
-      const record = fileRecord.data;
+      // 3. Procesar archivo CSV cargado en la pre-revisión
+      const record = fileRecord ? fileRecord.data : null;
       let csvRows: any[] = [];
       if (record && record.csv_data) {
         csvRows = typeof record.csv_data === "string" 
@@ -1655,7 +1791,8 @@ export default function Adjudication() {
       }
       // Normalizar ingresantes regulares del CSV
       const directIngresantes: any[] = [];
-      const careerCounts: Record<string, number> = {};
+      const careerMaxPos: Record<string, number> = {};
+      const careerDirectCount: Record<string, number> = {};
       csvRows.forEach(row => {
         if (row && checkAdmitted(row)) {
           const dni = getRowValue(row, ['NroDocumento', 'nroDocumento', 'NRODOCUMENTO', 'DNI', 'dni', 'Documento', 'documento', 'alumno', 'ALUMNO', 'CODPOSTULANTE', 'codpostulante']);
@@ -1680,7 +1817,8 @@ export default function Adjudication() {
           const filial = sch ? (sch.filial || "CUSCO") : "CUSCO";
           const orderNum = parseInt(pos) || 0;
           if (schoolName) {
-            careerCounts[schoolName] = Math.max(careerCounts[schoolName] || 0, orderNum);
+            careerMaxPos[schoolName] = Math.max(careerMaxPos[schoolName] || 0, orderNum);
+            careerDirectCount[schoolName] = (careerDirectCount[schoolName] || 0) + 1;
           }
           directIngresantes.push({
             CODPOSTULANTE: dni,
@@ -1702,22 +1840,26 @@ export default function Adjudication() {
       const adjStudentsBySchool: Record<string, any[]> = {};
       if (adjRanking && adjRanking.length > 0) {
         adjRanking.forEach(student => {
-          const schName = student.escuela_adjudicada;
-          if (schName && schName.trim() !== "") {
-            if (!adjStudentsBySchool[schName]) {
-              adjStudentsBySchool[schName] = [];
+          const rawSchName = student.escuela_adjudicada;
+          if (rawSchName && rawSchName.trim() !== "") {
+            const schObj = findSchoolByString(rawSchName);
+            const stdSchName = schObj ? schObj.nombre : rawSchName.trim();
+            if (!adjStudentsBySchool[stdSchName]) {
+              adjStudentsBySchool[stdSchName] = [];
             }
-            adjStudentsBySchool[schName].push(student);
+            adjStudentsBySchool[stdSchName].push({ ...student, _schObj: schObj });
           }
         });
       }
       const adjudicatedIngresantes: any[] = [];
       Object.entries(adjStudentsBySchool).forEach(([schName, students]) => {
-        students.sort((a, b) => (parseFloat(a.nota) || 0) > (parseFloat(b.nota) || 0) ? -1 : 1);
-        const baseMerit = careerCounts[schName] || 0;
+        // Ordenar por nota descendente para los adjudicados
+        students.sort((a, b) => (parseFloat(b.nota) || 0) - (parseFloat(a.nota) || 0));
+        const baseMerit = Math.max(careerMaxPos[schName] || 0, careerDirectCount[schName] || 0);
         students.forEach((student, index) => {
-          const schCode = schoolCodeMap[schName] || null;
-          const filial = schoolFilialMap[schName] || "CUSCO";
+          const schObj = student._schObj || findSchoolByString(schName);
+          const schCode = schoolCodeMap[schName] || (schObj ? schObj.codigo_carrera : null);
+          const filial = schoolFilialMap[schName] || (schObj ? (schObj.filial || "CUSCO") : "CUSCO");
           const newMerit = baseMerit + index + 1;
           adjudicatedIngresantes.push({
             CODPOSTULANTE: student.dni,
@@ -1730,8 +1872,18 @@ export default function Adjudication() {
             ANIO: anio,
             NOTA: String(student.nota),
             OMERITO: String(newMerit),
-            FECHAINGRESO: fechaIngresoValida
+            FECHAINGRESO: fechaIngresoValida,
+            OBSERVACION: "INGRESANTE ADJUDICACIÓN"
           });
+
+          // Actualizar orden de mérito correlativo en la tabla de adjudicación
+          if (student.id) {
+            supabase
+              .from("adjudicacion_ranking")
+              .update({ orden_merito: newMerit })
+              .eq("id", student.id)
+              .then();
+          }
         });
       });
       // 5. Consolidar ambas listas
@@ -1929,7 +2081,7 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
               </div>
             ) : (
               (() => {
-                const grouped = getGroupedProcesses(procesos, allModalidadesDb);
+                const grouped = getGroupedProcesses(procesos, allModalidadesDb, activeModalidadIds);
                 return Object.keys(grouped)
                   .sort(sortYears)
                   .map((year) => (
