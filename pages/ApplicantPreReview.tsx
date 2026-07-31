@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, supabaseAdmin } from '../lib/supabaseClient';
 import { safeStorage } from '../lib/safeStorage';
 import { User, CVCuadroAnual, CVModalidad, CVEscuela, CVVacante } from '../types';
 import Papa from 'papaparse';
@@ -493,7 +493,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
           savedIds = statusRes.savedModalidadIds;
         }
         // Direct Supabase query as fallback for static deploys (Netlify)
-        const { data: dbPreData } = await supabase.from('pre_revision_archivos').select('modalidad_id');
+        const { data: dbPreData } = await supabaseAdmin.from('pre_revision_archivos').select('modalidad_id');
         if (dbPreData && dbPreData.length > 0) {
           const directIds = dbPreData.map(item => item.modalidad_id).filter(Boolean);
           savedIds = Array.from(new Set([...savedIds, ...directIds]));
@@ -690,7 +690,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       }
 
       if (!result || !result.data) {
-        const { data: dbRow, error: dbErr } = await supabase
+        const { data: dbRow, error: dbErr } = await supabaseAdmin
           .from('pre_revision_archivos')
           .select('*')
           .eq('modalidad_id', modId)
@@ -776,8 +776,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
            }
 
            if (!savedOk) {
-             await supabase.from('pre_revision_archivos').delete().eq('modalidad_id', selectedModalidad);
-             const { error: insErr } = await supabase.from('pre_revision_archivos').insert({
+             await supabaseAdmin.from('pre_revision_archivos').delete().eq('modalidad_id', selectedModalidad);
+             const { error: insErr } = await supabaseAdmin.from('pre_revision_archivos').insert({
                modalidad_id: selectedModalidad,
                csv_data: dataToProcess
              });
@@ -2682,7 +2682,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
           for (const item of chunk) {
             const { dni, omerito, codigo_carrera, semestre } = item;
             if (!dni || !omerito || !semestre) continue;
-            const { error: upErr } = await supabase
+            const { error: upErr } = await supabaseAdmin
               .from('participantes')
               .update({
                 OMERITO: omerito,
