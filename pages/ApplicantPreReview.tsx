@@ -461,30 +461,23 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     const fetchData = async () => {
       setIsLoadingConfig(true);
       try {
-        const [cuadrosRes, escuelasRes, modalidadesRes, statusRes] = await Promise.all([
-          supabase.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
-          supabase.from('cv_escuelas').select('*'),
-          supabase.from('cv_modalidades').select('*'),
-          fetch('/api/get-pre-revisions-status').then(r => r.ok ? r.json() : { success: false, savedModalidadIds: [] }).catch(() => ({ success: false, savedModalidadIds: [] }))
+        const [cuadrosRes, escuelasRes, modalidadesRes, statusRes, dbPreRes] = await Promise.all([
+          supabaseAdmin.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
+          supabaseAdmin.from('cv_escuelas').select('*'),
+          supabaseAdmin.from('cv_modalidades').select('*'),
+          fetch('/api/get-pre-revisions-status').then(r => r.ok ? r.json() : { success: false, savedModalidadIds: [] }).catch(() => ({ success: false, savedModalidadIds: [] })),
+          supabaseAdmin.from('pre_revision_archivos').select('modalidad_id')
         ]);
 
-        if (cuadrosRes.error) {
-          console.error("Error fetching cuadros:", cuadrosRes.error);
-          notify?.(`Error al cargar cuadros anuales: ${cuadrosRes.error.message}`, 'error');
-        } else if (cuadrosRes.data) {
+        if (cuadrosRes.data) {
           setCuadros(cuadrosRes.data);
         }
 
-        if (escuelasRes.error) {
-          console.error("Error fetching escuelas:", escuelasRes.error);
-          notify?.(`Error al cargar escuelas: ${escuelasRes.error.message}`, 'error');
-        } else if (escuelasRes.data) {
+        if (escuelasRes.data) {
           setEscuelas(escuelasRes.data);
         }
 
-        if (modalidadesRes.error) {
-          console.error("Error fetching all modalities:", modalidadesRes.error);
-        } else if (modalidadesRes.data) {
+        if (modalidadesRes.data) {
           setAllModalidades(modalidadesRes.data);
         }
 
@@ -492,10 +485,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         if (statusRes && statusRes.success && Array.isArray(statusRes.savedModalidadIds) && statusRes.savedModalidadIds.length > 0) {
           savedIds = statusRes.savedModalidadIds;
         }
-        // Direct Supabase query as fallback for static deploys (Netlify)
-        const { data: dbPreData } = await supabaseAdmin.from('pre_revision_archivos').select('modalidad_id');
-        if (dbPreData && dbPreData.length > 0) {
-          const directIds = dbPreData.map(item => item.modalidad_id).filter(Boolean);
+        if (dbPreRes.data && dbPreRes.data.length > 0) {
+          const directIds = dbPreRes.data.map(item => item.modalidad_id).filter(Boolean);
           savedIds = Array.from(new Set([...savedIds, ...directIds]));
         }
         setSavedModalidadIds(savedIds);
@@ -519,15 +510,20 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         }
       } catch (e) {}
 
-      const { data: dbPreData } = await supabaseAdmin.from('pre_revision_archivos').select('modalidad_id');
-      if (dbPreData && dbPreData.length > 0) {
-        const directIds = dbPreData.map(item => item.modalidad_id).filter(Boolean);
-        savedIds = Array.from(new Set([...savedIds, ...directIds]));
-      }
+      const [cuadrosRes, escuelasRes, modsRes, dbPreRes] = await Promise.all([
+        supabaseAdmin.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
+        supabaseAdmin.from('cv_escuelas').select('*'),
+        supabaseAdmin.from('cv_modalidades').select('*'),
+        supabaseAdmin.from('pre_revision_archivos').select('modalidad_id')
+      ]);
 
-      const { data: modsData } = await supabaseAdmin.from('cv_modalidades').select('*');
-      if (modsData) {
-        setAllModalidades(modsData);
+      if (cuadrosRes.data) setCuadros(cuadrosRes.data);
+      if (escuelasRes.data) setEscuelas(escuelasRes.data);
+      if (modsRes.data) setAllModalidades(modsRes.data);
+
+      if (dbPreRes.data && dbPreRes.data.length > 0) {
+        const directIds = dbPreRes.data.map(item => item.modalidad_id).filter(Boolean);
+        savedIds = Array.from(new Set([...savedIds, ...directIds]));
       }
 
       setSavedModalidadIds(savedIds);
