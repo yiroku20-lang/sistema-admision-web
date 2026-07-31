@@ -508,6 +508,38 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     fetchData();
   }, []);
 
+  const reloadPreRevisions = async () => {
+    setIsLoadingConfig(true);
+    try {
+      let savedIds: string[] = [];
+      try {
+        const statusRes = await fetch('/api/get-pre-revisions-status').then(r => r.ok ? r.json() : null);
+        if (statusRes && statusRes.success && Array.isArray(statusRes.savedModalidadIds)) {
+          savedIds = statusRes.savedModalidadIds;
+        }
+      } catch (e) {}
+
+      const { data: dbPreData } = await supabaseAdmin.from('pre_revision_archivos').select('modalidad_id');
+      if (dbPreData && dbPreData.length > 0) {
+        const directIds = dbPreData.map(item => item.modalidad_id).filter(Boolean);
+        savedIds = Array.from(new Set([...savedIds, ...directIds]));
+      }
+
+      const { data: modsData } = await supabaseAdmin.from('cv_modalidades').select('*');
+      if (modsData) {
+        setAllModalidades(modsData);
+      }
+
+      setSavedModalidadIds(savedIds);
+      notify?.(`Lista de pre-revisiones actualizada (${savedIds.length} pre-revisiones guardadas).`, 'success');
+    } catch (err: any) {
+      console.error("Error al refrescar pre-revisiones:", err);
+      notify?.(`Error al refrescar pre-revisiones: ${err.message}`, 'error');
+    } finally {
+      setIsLoadingConfig(false);
+    }
+  };
+
   useEffect(() => {
     safeStorage.setItem('pre_rev_selectedCuadro', selectedCuadro);
   }, [selectedCuadro]);
@@ -2850,19 +2882,30 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         </div>
         
         {!isLoaded && (
-          <button
-            onClick={() => {
-              setShowUploadModal(true);
-              if (cuadros.length > 0 && !selectedCuadro) {
-                const approved = cuadros.find(c => c.estado === 'Aprobado');
-                if (approved) setSelectedCuadro(approved.id);
-              }
-            }}
-            className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-[1.02] transition-all cursor-pointer w-fit shrink-0 self-start sm:self-center"
-          >
-            <span className="material-symbols-outlined text-sm">add_circle</span>
-            Nueva Pre-Revisión
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            <button
+              onClick={reloadPreRevisions}
+              disabled={isLoadingConfig}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              title="Refrescar pre-revisiones guardadas"
+            >
+              <span className={`material-symbols-outlined text-sm ${isLoadingConfig ? 'animate-spin' : ''}`}>refresh</span>
+              {isLoadingConfig ? 'Cargando...' : 'Actualizar Lista'}
+            </button>
+            <button
+              onClick={() => {
+                setShowUploadModal(true);
+                if (cuadros.length > 0 && !selectedCuadro) {
+                  const approved = cuadros.find(c => c.estado === 'Aprobado');
+                  if (approved) setSelectedCuadro(approved.id);
+                }
+              }}
+              className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-[1.02] transition-all cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-sm">add_circle</span>
+              Nueva Pre-Revisión
+            </button>
+          </div>
         )}
       </div>
 
@@ -2878,21 +2921,31 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                 </span>
                 <h3 className="text-lg font-black text-slate-700 uppercase tracking-tight">Sin Pre-revisiones Activas</h3>
                 <p className="text-slate-500 font-medium text-xs max-w-md mx-auto leading-relaxed">
-                  No hay pre-revisiones de resultados guardadas en el sistema. Comience cargando una nueva pre-revisión de postulantes.
+                  No hay pre-revisiones de resultados guardadas en el sistema. Comience cargando una nueva pre-revisión de postulantes o actualice la lista.
                 </p>
-                <button
-                  onClick={() => {
-                    setShowUploadModal(true);
-                    if (cuadros.length > 0 && !selectedCuadro) {
-                      const approved = cuadros.find(c => c.estado === 'Aprobado');
-                      if (approved) setSelectedCuadro(approved.id);
-                    }
-                  }}
-                  className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-xs uppercase tracking-wider inline-flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-all cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-sm">upload_file</span>
-                  Cargar Nueva Pre-Revisión
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={reloadPreRevisions}
+                    disabled={isLoadingConfig}
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs uppercase tracking-wider inline-flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <span className={`material-symbols-outlined text-sm ${isLoadingConfig ? 'animate-spin' : ''}`}>refresh</span>
+                    {isLoadingConfig ? 'Cargando...' : 'Buscar / Actualizar Lista'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowUploadModal(true);
+                      if (cuadros.length > 0 && !selectedCuadro) {
+                        const approved = cuadros.find(c => c.estado === 'Aprobado');
+                        if (approved) setSelectedCuadro(approved.id);
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl font-black text-xs uppercase tracking-wider inline-flex items-center gap-2 shadow-lg shadow-primary/20 hover:scale-105 transition-all cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-sm">upload_file</span>
+                    Cargar Nueva Pre-Revisión
+                  </button>
+                </div>
               </div>
             ) : (
               (() => {

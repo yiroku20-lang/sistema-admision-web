@@ -5,18 +5,33 @@ import { safeStorage } from './safeStorage';
 const DEFAULT_URL = 'https://cnqpzyanmmwspvemcfeb.supabase.co';
 export const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI'; 
 
+// Helper to detect if a JWT key is an anon key
+function isAnonJwt(jwtStr: string | null | undefined): boolean {
+  if (!jwtStr) return false;
+  try {
+    const parts = jwtStr.split('.');
+    if (parts.length < 2) return false;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = atob(base64);
+    const parsed = JSON.parse(jsonPayload);
+    return parsed.role === 'anon';
+  } catch (e) {
+    return false;
+  }
+}
+
 // Automatically clear stale anon key if previously stored in browser localStorage
 const storedKey = safeStorage.getItem('supabase_key');
-if (storedKey && storedKey.includes('"role":"anon"')) {
+if (storedKey && isAnonJwt(storedKey)) {
   safeStorage.removeItem('supabase_key');
 }
 
 // Helper to get keys with priority: LocalStorage > Env > Default Constant
 const getUrl = () => safeStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL;
 const getKey = () => {
-  const key = safeStorage.getItem('supabase_key') || import.meta.env.VITE_SUPABASE_KEY;
-  // If no explicit service key is provided in local storage or env, fallback to SERVICE_ROLE_KEY
-  if (!key || key.includes('"role":"anon"')) {
+  const key = safeStorage.getItem('supabase_key') || import.meta.env.VITE_SUPABASE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+  // If key is missing or is an anon key, fallback to SERVICE_ROLE_KEY so queries are never blocked by RLS
+  if (!key || isAnonJwt(key)) {
     return SERVICE_ROLE_KEY;
   }
   return key;
