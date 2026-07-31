@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { supabase, supabaseAdmin } from "../lib/supabaseClient";
+import { supabase } from "../lib/supabaseClient";
+import { getPreRevisiones } from "../src/services/preRevisionService";
 import {
   AdjudicationRanking,
   AdjudicationVacancy,
@@ -506,8 +507,8 @@ export default function Adjudication() {
         console.error("Error fetching pre-revisions status:", e);
       }
 
-      // Direct Supabase query fallback for Netlify
-      const { data: dbPreStatusData } = await supabaseAdmin.from("pre_revision_archivos").select("modalidad_id");
+      // Direct Supabase query fallback for Netlify using public getPreRevisiones service
+      const dbPreStatusData = await getPreRevisiones();
       if (dbPreStatusData) {
         dbPreStatusData.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
       }
@@ -1673,7 +1674,7 @@ export default function Adjudication() {
       } catch (e) {
         console.error("Error fetching pre-revisions status:", e);
       }
-      const { data: dbPreStatusData2 } = await supabaseAdmin.from("pre_revision_archivos").select("modalidad_id");
+      const dbPreStatusData2 = await getPreRevisiones();
       if (dbPreStatusData2) {
         dbPreStatusData2.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
       }
@@ -1701,7 +1702,7 @@ export default function Adjudication() {
         } catch (err) {
           console.warn("API fetch pre-revision failed, falling back to direct Supabase query:", err);
         }
-        const { data, error } = await supabaseAdmin
+        const { data, error } = await supabase
           .from('pre_revision_archivos')
           .select('*')
           .eq('modalidad_id', modId)

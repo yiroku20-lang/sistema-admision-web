@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { supabase, supabaseAdmin } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabaseClient';
+import { getPreRevisiones } from '../src/services/preRevisionService';
 import { safeStorage } from '../lib/safeStorage';
 import { User, CVCuadroAnual, CVModalidad, CVEscuela, CVVacante } from '../types';
 import Papa from 'papaparse';
@@ -461,12 +462,12 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     const fetchData = async () => {
       setIsLoadingConfig(true);
       try {
-        const [cuadrosRes, escuelasRes, modalidadesRes, statusRes, dbPreRes] = await Promise.all([
-          supabaseAdmin.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
-          supabaseAdmin.from('cv_escuelas').select('*'),
-          supabaseAdmin.from('cv_modalidades').select('*'),
+        const [cuadrosRes, escuelasRes, modalidadesRes, statusRes, preRevList] = await Promise.all([
+          supabase.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
+          supabase.from('cv_escuelas').select('*'),
+          supabase.from('cv_modalidades').select('*'),
           fetch('/api/get-pre-revisions-status').then(r => r.ok ? r.json() : { success: false, savedModalidadIds: [] }).catch(() => ({ success: false, savedModalidadIds: [] })),
-          supabaseAdmin.from('pre_revision_archivos').select('modalidad_id')
+          getPreRevisiones()
         ]);
 
         if (cuadrosRes.data) {
@@ -485,8 +486,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         if (statusRes && statusRes.success && Array.isArray(statusRes.savedModalidadIds) && statusRes.savedModalidadIds.length > 0) {
           savedIds = statusRes.savedModalidadIds;
         }
-        if (dbPreRes.data && dbPreRes.data.length > 0) {
-          const directIds = dbPreRes.data.map(item => item.modalidad_id).filter(Boolean);
+        if (preRevList && preRevList.length > 0) {
+          const directIds = preRevList.map(item => item.modalidad_id).filter(Boolean);
           savedIds = Array.from(new Set([...savedIds, ...directIds]));
         }
         setSavedModalidadIds(savedIds);
@@ -510,19 +511,19 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
         }
       } catch (e) {}
 
-      const [cuadrosRes, escuelasRes, modsRes, dbPreRes] = await Promise.all([
-        supabaseAdmin.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
-        supabaseAdmin.from('cv_escuelas').select('*'),
-        supabaseAdmin.from('cv_modalidades').select('*'),
-        supabaseAdmin.from('pre_revision_archivos').select('modalidad_id')
+      const [cuadrosRes, escuelasRes, modsRes, preRevList] = await Promise.all([
+        supabase.from('cv_cuadros_anuales').select('*').order('created_at', { ascending: false }),
+        supabase.from('cv_escuelas').select('*'),
+        supabase.from('cv_modalidades').select('*'),
+        getPreRevisiones()
       ]);
 
       if (cuadrosRes.data) setCuadros(cuadrosRes.data);
       if (escuelasRes.data) setEscuelas(escuelasRes.data);
       if (modsRes.data) setAllModalidades(modsRes.data);
 
-      if (dbPreRes.data && dbPreRes.data.length > 0) {
-        const directIds = dbPreRes.data.map(item => item.modalidad_id).filter(Boolean);
+      if (preRevList && preRevList.length > 0) {
+        const directIds = preRevList.map(item => item.modalidad_id).filter(Boolean);
         savedIds = Array.from(new Set([...savedIds, ...directIds]));
       }
 
@@ -718,7 +719,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
       }
 
       if (!result || !result.data) {
-        const { data: dbRow, error: dbErr } = await supabaseAdmin
+        const { data: dbRow, error: dbErr } = await supabase
           .from('pre_revision_archivos')
           .select('*')
           .eq('modalidad_id', modId)
@@ -804,8 +805,8 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
            }
 
            if (!savedOk) {
-             await supabaseAdmin.from('pre_revision_archivos').delete().eq('modalidad_id', selectedModalidad);
-             const { error: insErr } = await supabaseAdmin.from('pre_revision_archivos').insert({
+             await supabase.from('pre_revision_archivos').delete().eq('modalidad_id', selectedModalidad);
+             const { error: insErr } = await supabase.from('pre_revision_archivos').insert({
                modalidad_id: selectedModalidad,
                csv_data: dataToProcess
              });
@@ -2710,7 +2711,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
           for (const item of chunk) {
             const { dni, omerito, codigo_carrera, semestre } = item;
             if (!dni || !omerito || !semestre) continue;
-            const { error: upErr } = await supabaseAdmin
+            const { error: upErr } = await supabase
               .from('participantes')
               .update({
                 OMERITO: omerito,
