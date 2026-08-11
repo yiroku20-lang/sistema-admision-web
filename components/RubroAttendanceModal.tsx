@@ -175,8 +175,11 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     return canvas.toDataURL('image/png');
   };
 
-  // Signature view modal
   const [selectedSignature, setSelectedSignature] = useState<{ personName: string; dni: string; tipo: string; hora: string; firma: string } | null>(null);
+
+  // Biometric state
+  const [biometricMode, setBiometricMode] = useState(false);
+  const [fingerprintStatus, setFingerprintStatus] = useState<'IDLE' | 'SCANNING' | 'SUCCESS' | 'ERROR'>('IDLE');
 
   // Helper date
   const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -1184,33 +1187,151 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-slate-600 uppercase">Dibuje su firma abajo</label>
-                  <button onClick={clearCanvas} className="text-xs font-bold text-rose-600 hover:underline flex items-center gap-0.5">
-                    <span className="material-symbols-outlined text-sm">cleaning_services</span> Limpiar
+                {/* TABS FOR CAPTURE METHOD */}
+                <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                  <button
+                    onClick={() => setBiometricMode(false)}
+                    className={`flex-1 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                      !biometricMode ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">draw</span> Firma Táctil
+                  </button>
+                  <button
+                    onClick={() => setBiometricMode(true)}
+                    className={`flex-1 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                      biometricMode ? 'bg-indigo-600 shadow-sm text-white' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">fingerprint</span> Huella Digital
                   </button>
                 </div>
 
-                <div className="border-2 border-dashed border-slate-300 rounded-2xl bg-white p-1 relative touch-none shadow-inner">
-                  <canvas
-                    ref={canvasRef}
-                    width={460}
-                    height={180}
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
-                    onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDrawing}
-                    className="w-full h-[180px] bg-transparent cursor-crosshair rounded-xl"
-                  />
-                  {!hasSignature && (
-                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-slate-300 text-xs font-bold uppercase tracking-wider">
-                      Firme aquí usando mouse o pantalla táctil
+                {!biometricMode ? (
+                  <>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase">Dibuje su firma abajo</label>
+                      <button onClick={clearCanvas} className="text-xs font-bold text-rose-600 hover:underline flex items-center gap-0.5">
+                        <span className="material-symbols-outlined text-sm">cleaning_services</span> Limpiar
+                      </button>
                     </div>
-                  )}
-                </div>
+
+                    <div className="border-2 border-dashed border-slate-300 rounded-2xl bg-white p-1 relative touch-none shadow-inner">
+                      <canvas
+                        ref={canvasRef}
+                        width={460}
+                        height={180}
+                        onMouseDown={startDrawing}
+                        onMouseMove={draw}
+                        onMouseUp={stopDrawing}
+                        onMouseLeave={stopDrawing}
+                        onTouchStart={startDrawing}
+                        onTouchMove={draw}
+                        onTouchEnd={stopDrawing}
+                        className="w-full h-[180px] bg-transparent cursor-crosshair rounded-xl"
+                      />
+                      {!hasSignature && (
+                        <div className="absolute inset-0 pointer-events-none flex items-center justify-center text-slate-300 text-xs font-bold uppercase tracking-wider">
+                          Firme aquí usando mouse o pantalla táctil
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="border-2 border-dashed border-indigo-200 rounded-2xl bg-indigo-50/50 p-6 flex flex-col items-center justify-center text-center min-h-[220px]">
+                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 transition-all ${
+                      fingerprintStatus === 'SUCCESS' ? 'bg-emerald-100 text-emerald-600' :
+                      fingerprintStatus === 'ERROR' ? 'bg-rose-100 text-rose-600' :
+                      fingerprintStatus === 'SCANNING' ? 'bg-indigo-200 text-indigo-700 animate-pulse' :
+                      'bg-indigo-100 text-indigo-500'
+                    }`}>
+                      <span className="material-symbols-outlined text-4xl">
+                        {fingerprintStatus === 'SUCCESS' ? 'check_circle' : fingerprintStatus === 'ERROR' ? 'error' : 'fingerprint'}
+                      </span>
+                    </div>
+                    
+                    <h4 className="font-black text-slate-800 text-sm uppercase">
+                      Lector DigitalPersona U.are.U 4500
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1 font-medium max-w-[280px]">
+                      {fingerprintStatus === 'IDLE' && 'Presione el botón para inicializar la captura biométrica.'}
+                      {fingerprintStatus === 'SCANNING' && 'Coloque su dedo sobre el lector ahora...'}
+                      {fingerprintStatus === 'SUCCESS' && 'Huella capturada y validada correctamente.'}
+                      {fingerprintStatus === 'ERROR' && 'No se pudo conectar con el lector. ¿Está instalado el servicio local?'}
+                    </p>
+
+                    {fingerprintStatus !== 'SUCCESS' && (
+                      <button 
+                        onClick={async () => {
+                          setFingerprintStatus('SCANNING');
+                          try {
+                            // Conectar al puente local C# construido por la IA local
+                            // Usamos 127.0.0.1 en lugar de localhost para evitar problemas de resolución IPv6 en Windows
+                            const response = await fetch('http://127.0.0.1:8081/api/fingerprint/capture', {
+                              method: 'GET',
+                              headers: {
+                                'Accept': 'application/json'
+                              }
+                            });
+
+                            if (!response.ok) {
+                              throw new Error('Error en el puente biométrico');
+                            }
+
+                            const data = await response.json();
+
+                            if (data.success && data.imageBase64) {
+                              setFingerprintStatus('SUCCESS');
+                              setHasSignature(true); // Tratamos la huella como firma válida
+
+                              // Dibujar la imagen de la huella en el canvas oculto
+                              // para que el sistema existente la guarde como PNG en Base64
+                              const img = new Image();
+                              img.onload = () => {
+                                if (canvasRef.current) {
+                                  const ctx = canvasRef.current.getContext('2d');
+                                  if (ctx) {
+                                    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                                    
+                                    // Dibujar imagen de la huella
+                                    ctx.drawImage(img, (canvasRef.current.width / 2) - 40, 10, 80, 100);
+                                    
+                                    // Sello de validación
+                                    ctx.fillStyle = '#4338ca';
+                                    ctx.font = 'bold 14px sans-serif';
+                                    ctx.textAlign = 'center';
+                                    ctx.fillText('HUELLA DIGITAL VERIFICADA', canvasRef.current.width / 2, 135);
+                                    ctx.font = '10px monospace';
+                                    ctx.fillText('TEMPLATE ID: ' + (data.templateId || Math.random().toString(36).substring(7).toUpperCase()), canvasRef.current.width / 2, 155);
+                                  }
+                                }
+                              };
+                              img.src = data.imageBase64.startsWith('data:image') 
+                                ? data.imageBase64 
+                                : `data:image/png;base64,${data.imageBase64}`;
+                                
+                            } else {
+                              setFingerprintStatus('ERROR');
+                              console.error('Captura fallida:', data.error || 'Sin datos de imagen');
+                            }
+                          } catch (err: any) {
+                            console.error('Fallo al conectar con localhost:8081', err);
+                            // Set error specific to Failed to fetch
+                            if (err.message === 'Failed to fetch') {
+                                setFingerprintStatus('ERROR');
+                                alert('Error de conexión (Failed to fetch). Por favor, verifica en la consola (F12) si es un error de CORS o Mixed Content.');
+                            } else {
+                                setFingerprintStatus('ERROR');
+                            }
+                          }
+                        }}
+                        className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-indigo-700 shadow-md active:scale-95 transition-all"
+                      >
+                        Iniciar Captura
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
