@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import { User, PersonalDirectorio, PersonalProceso, PersonalNecesidad, PersonalSorteo, CVModalidad, PersonalCargo } from '../types';
 import { useReactToPrint } from 'react-to-print';
 import { ScheduleBuilderModal } from '../components/ScheduleBuilderModal';
+import { RubroAttendanceModal } from '../components/RubroAttendanceModal';
 
 interface StaffManagementProps {
   user: User;
@@ -66,6 +67,12 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
   const [scheduleBuilderCargo, setScheduleBuilderCargo] = useState('');
   const [scheduleBuilderProcesoName, setScheduleBuilderProcesoName] = useState('');
   const [scheduleBuilderUsers, setScheduleBuilderUsers] = useState<any[]>([]);
+
+  // Rubro Attendance State
+  const [rubroAttendanceOpen, setRubroAttendanceOpen] = useState(false);
+  const [rubroAttendanceCargo, setRubroAttendanceCargo] = useState('');
+  const [rubroAttendanceProcesoName, setRubroAttendanceProcesoName] = useState('');
+  const [rubroAttendanceSorteos, setRubroAttendanceSorteos] = useState<PersonalSorteo[]>([]);
 
   // -> New states for Edit Necesidades and Sorteo Manual/Filters
   const [isEditingNecesidades, setIsEditingNecesidades] = useState(false);
@@ -1386,20 +1393,56 @@ UNSAAC`);
                                                     {stat.pendientes} notif. pendientes
                                                 </div>
                                                 
-                                                {stat.confirmados > 0 && (
-                                                    <button 
-                                                        onClick={() => {
-                                                            const filtered = sorteos.filter(s => s.cargo === stat.cargo && s.estado_confirmacion === 'Confirmado');
-                                                            setScheduleBuilderUsers(filtered);
-                                                            setScheduleBuilderCargo(stat.cargo);
-                                                            setScheduleBuilderProcesoName(procesos.find(p => p.id === selectedSorteoProceso)?.nombre || 'Proceso Activo');
-                                                            setScheduleBuilderOpen(true);
-                                                        }}
-                                                        className="mt-1 w-full text-[10px] font-black uppercase tracking-wider bg-slate-100 hover:bg-slate-200 text-slate-700 py-1.5 rounded-lg active:scale-95 transition-all flex items-center justify-center gap-1"
-                                                    >
-                                                        <span className="material-symbols-outlined text-[14px]">calendar_add_on</span> Generar Horario
-                                                    </button>
-                                                )}
+                                                {stat.confirmados > 0 && (() => {
+                                                    const hasExistingSchedule = sorteos.some(
+                                                        s => s.cargo === stat.cargo && 
+                                                             s.estado_confirmacion === 'Confirmado' && 
+                                                             s.horario_data && 
+                                                             Array.isArray(s.horario_data) && 
+                                                             s.horario_data.length > 0
+                                                    );
+                                                    return (
+                                                        <div className="mt-2 flex flex-col gap-1.5 w-full">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    const filtered = sorteos.filter(s => s.cargo === stat.cargo && s.estado_confirmacion === 'Confirmado');
+                                                                    setScheduleBuilderUsers(filtered);
+                                                                    setScheduleBuilderCargo(stat.cargo);
+                                                                    setScheduleBuilderProcesoName(procesos.find(p => p.id === selectedSorteoProceso)?.nombre || 'Proceso Activo');
+                                                                    setScheduleBuilderOpen(true);
+                                                                }}
+                                                                className={`w-full text-[10px] font-black uppercase tracking-wider py-1.5 rounded-lg active:scale-95 transition-all flex items-center justify-center gap-1 ${
+                                                                    hasExistingSchedule 
+                                                                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100' 
+                                                                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                                                }`}
+                                                            >
+                                                                <span className="material-symbols-outlined text-[14px]">
+                                                                    {hasExistingSchedule ? 'calendar_month' : 'calendar_add_on'}
+                                                                </span> 
+                                                                {hasExistingSchedule ? 'Ver Horario' : 'Generar Horario'}
+                                                            </button>
+
+                                                            {hasExistingSchedule && (
+                                                                <button 
+                                                                    onClick={() => {
+                                                                        const filtered = sorteos.filter(s => s.cargo === stat.cargo && s.estado_confirmacion === 'Confirmado');
+                                                                        setRubroAttendanceSorteos(filtered);
+                                                                        setRubroAttendanceCargo(stat.cargo);
+                                                                        setRubroAttendanceProcesoName(procesos.find(p => p.id === selectedSorteoProceso)?.nombre || 'Proceso Activo');
+                                                                        setRubroAttendanceOpen(true);
+                                                                    }}
+                                                                    className="w-full text-[10px] font-black uppercase tracking-wider py-1.5 rounded-lg active:scale-95 transition-all flex items-center justify-center gap-1 bg-rose-600 text-white hover:bg-rose-700 shadow-sm"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[14px]">
+                                                                        fingerprint
+                                                                    </span> 
+                                                                    Control de Asistencia
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
 
                                                 <div className="absolute bottom-0 left-0 h-1.5 bg-slate-100 w-full" />
                                                 <div className={`absolute bottom-0 left-0 h-1.5 transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
@@ -2007,11 +2050,27 @@ UNSAAC`);
 
       <ScheduleBuilderModal
           isOpen={scheduleBuilderOpen}
-          onClose={() => setScheduleBuilderOpen(false)}
+          onClose={() => {
+              setScheduleBuilderOpen(false);
+              if (selectedSorteoProceso) {
+                  fetchSorteos(selectedSorteoProceso, true);
+              }
+          }}
           users={scheduleBuilderUsers}
           cargo={scheduleBuilderCargo}
           procesoName={scheduleBuilderProcesoName}
           procesoId={selectedSorteoProceso}
+      />
+
+      <RubroAttendanceModal
+          isOpen={rubroAttendanceOpen}
+          onClose={() => setRubroAttendanceOpen(false)}
+          cargo={rubroAttendanceCargo}
+          procesoName={rubroAttendanceProcesoName}
+          procesoId={selectedSorteoProceso}
+          eligibleSorteos={rubroAttendanceSorteos}
+          user={user}
+          notify={notify}
       />
 
     </div>

@@ -16,6 +16,7 @@ interface TempReservation {
     prevResolution?: string;
     carrera: string;
     startingSemester: string;
+    semestre_ingreso?: string;
     gradeLevel: string;
     admissionModality: string;
     multiIngreso: boolean;
@@ -110,7 +111,18 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
   const fetchGlobal = async () => {
     setLoading(true);
     const { data } = await supabase.from('reserva_vacantes_detalles').select('*, batch:reserva_vacantes_bloques(*)').order('student_name', { ascending: true });
-    if (data) setGlobalDetails(data as any);
+    if (data) {
+        const codes = data.map((d: any) => d.student_code);
+        const { data: partData } = await supabase.from('participantes').select('CODPOSTULANTE, SEMESTRE').in('CODPOSTULANTE', codes);
+        const enhancedData = data.map((d: any) => {
+            const part = partData?.find((p: any) => String(p.CODPOSTULANTE).trim() === String(d.student_code).trim());
+            return {
+                ...d,
+                semestre_ingreso: part ? part.SEMESTRE : ''
+            };
+        });
+        setGlobalDetails(enhancedData as any);
+    }
     setLoading(false);
   };
 
@@ -189,6 +201,7 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
                 admissionModality: match ? match.MODALIDAD : '',
                 gradeLevel: item.grade,
                 startingSemester: calculateStartingSemester(item.grade),
+                semestre_ingreso: match ? match.SEMESTRE : '',
                 multiIngreso: matches.length > 1,
                 allOptions: matches,
                 selectedOptionIndex: matches.length > 0 ? 0 : undefined,
@@ -462,18 +475,24 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
               .order('student_name', { ascending: true });
           
           if (error) throw error;
+
+          const codes = data.map((d: any) => d.student_code);
+          const { data: partData } = await supabase.from('participantes').select('CODPOSTULANTE, SEMESTRE').in('CODPOSTULANTE', codes);
           
-          const exportData = data.map((d: any, index: number) => ({
-              'Nº': index + 1,
-              'CÓDIGO': d.student_code,
-              'NOMBRE COMPLETO': d.student_name,
-              'ESCUELA': d.carrera,
-              'MODALIDAD': d.admission_modality,
-              'COLEGIO': '',
-              'AÑO SECUNDARIA': d.grade_level,
-              'INICIO SEMESTRE': d.starting_semester,
-              'ESTADO': d.is_withdrawn ? 'RENUNCIA' : 'ACTIVO'
-          }));
+          const exportData = data.map((d: any, index: number) => {
+              const part = partData?.find((p: any) => String(p.CODPOSTULANTE).trim() === String(d.student_code).trim());
+              return {
+                  'Nº': index + 1,
+                  'CÓDIGO': d.student_code,
+                  'NOMBRE COMPLETO': d.student_name,
+                  'ESCUELA': d.carrera,
+                  'MODALIDAD': d.admission_modality,
+                  'SEMESTRE INGRESO': part ? part.SEMESTRE : '',
+                  'AÑO SECUNDARIA': d.grade_level,
+                  'INICIO SEMESTRE': d.starting_semester,
+                  'ESTADO': d.is_withdrawn ? 'RENUNCIA' : 'ACTIVO'
+              };
+          });
           
           const worksheet = XLSX.utils.json_to_sheet(exportData);
           const workbook = XLSX.utils.book_new();
@@ -539,7 +558,7 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
           'NOMBRE COMPLETO': d.student_name,
           'ESCUELA': d.carrera,
           'MODALIDAD': d.admission_modality,
-          'COLEGIO': '',
+          'SEMESTRE INGRESO': d.semestre_ingreso || '',
           'AÑO SECUNDARIA': d.grade_level,
           'INICIO SEMESTRE': d.starting_semester,
           'INFORME/OFICIO': d.batch?.report_code || '',

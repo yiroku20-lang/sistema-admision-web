@@ -39,14 +39,20 @@ export const handler = async (event: any) => {
     if (text) mailOptions.text = text;
     if (html) mailOptions.html = html;
 
-    if (attachmentBase64 && filename) {
-        mailOptions.attachments = [
-            {
-              filename: filename || "documento.pdf",
-              content: attachmentBase64.split("base64,")[1] || attachmentBase64,
-              encoding: "base64",
-            },
-        ];
+    if (body.attachments && Array.isArray(body.attachments)) {
+      mailOptions.attachments = body.attachments.map((att: any) => ({
+        filename: att.filename,
+        content: att.content.includes("base64,") ? att.content.split("base64,")[1] : att.content,
+        encoding: "base64",
+      }));
+    } else if (attachmentBase64) {
+      mailOptions.attachments = [
+        {
+          filename: filename || "documento.pdf",
+          content: attachmentBase64.includes("base64,") ? attachmentBase64.split("base64,")[1] : attachmentBase64,
+          encoding: "base64",
+        },
+      ];
     }
 
     // Enviamos el correo

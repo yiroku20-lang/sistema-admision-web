@@ -43,10 +43,12 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
     const [numGroups, setNumGroups] = useState(1);
     const [shifts, setShifts] = useState<Shift[]>([{ id: 'shift-1', startTime: '08:00', endTime: '11:00' }]);
     
-    const [generatedSchedule, setGeneratedSchedule] = useState<{date: string, shifts: {shiftInfo: Shift, group: Group}[]}[] | null>(null);
+    const [generatedSchedule, setGeneratedSchedule] = useState<{date: string, isHoliday?: boolean, shifts: {shiftInfo: Shift, group: Group}[]}[] | null>(null);
     const [groups, setGroups] = useState<Group[]>([]);
     const [shiftOverrides, setShiftOverrides] = useState<Record<string, Shift | null>>({});
     
+    const [isSavedInDB, setIsSavedInDB] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isSendingEmail, setIsSendingEmail] = useState(false);
     const [showEmailModal, setShowEmailModal] = useState(false);
@@ -77,6 +79,8 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
             setDraggedShift(null);
             setDraggedShiftOver(null);
             setExcludeDates([]);
+            setIsSavedInDB(false);
+            setIsEditing(false);
         } else {
             loadFromDB();
         }
@@ -93,11 +97,16 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                 .not('horario_data', 'is', null);
 
             if (error) throw error;
-            if (!usersData || usersData.length === 0) return;
+            if (!usersData || usersData.length === 0) {
+                setIsSavedInDB(false);
+                setIsEditing(true);
+                return;
+            }
 
             const newGroups: Group[] = [];
-            const newSchedule: {date: string, shifts: {shiftInfo: Shift, group: Group}[]}[] = [];
+            const newSchedule: {date: string, isHoliday?: boolean, shifts: {shiftInfo: Shift, group: Group}[]}[] = [];
             const newOverrides: Record<string, Shift | null> = {};
+            const loadedHolidays = new Set<string>();
 
             usersData.forEach(ud => {
                 if (!ud.horario_data || !Array.isArray(ud.horario_data) || ud.horario_data.length === 0) return;
@@ -105,57 +114,131 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                 const userObj = users.find(u => u.id === ud.id);
                 if (!userObj) return;
 
-                // Grab the group name from the first shift (assuming group doesn't change day by day for now)
-                const groupName = ud.horario_data[0].grupo || 'Grupo Desconocido';
-                
+                const firstShiftWithGroup = ud.horario_data.find((s: any) => s && s.grupo) || ud.horario_data[0];
+                const groupName = firstShiftWithGroup?.grupo || 'Grupo 1';
+                const ordenPersona = firstShiftWithGroup?.orden_persona ?? users.findIndex(u => u.id === ud.id);
+
                 let g = newGroups.find(x => x.name === groupName);
                 if (!g) {
-                    g = { id: `grp-${newGroups.length+1}`, name: groupName, users: [] };
+                    g = { id: groupName, name: groupName, users: [] };
                     newGroups.push(g);
                 }
-                
+
                 if (!g.users.find(u => u.id === userObj.id)) {
+                    (userObj as any)._orden = ordenPersona;
                     g.users.push(userObj);
                 }
 
                 ud.horario_data.forEach((shiftData: any) => {
+                    if (shiftData.is_feriado) {
+                        loadedHolidays.add(shiftData.fecha);
+                    }
+
                     let dayObj = newSchedule.find(d => d.date === shiftData.fecha);
                     if (!dayObj) {
-                        dayObj = { date: shiftData.fecha, shifts: [] };
+                        dayObj = { date: shiftData.fecha, isHoliday: !!shiftData.is_feriado, shifts: [] };
                         newSchedule.push(dayObj);
                     }
-                    
-                    const existingShiftForGroup = dayObj.shifts.find(s => s.group.id === g!.id);
-                    if (!existingShiftForGroup) {
-                        dayObj.shifts.push({
-                            shiftInfo: {
-                                id: `s-${Date.now()}-${Math.random()}`,
-                                startTime: shiftData.hora_inicio,
-                                endTime: shiftData.hora_fin
-                            },
-                            group: g!
-                        });
+
+                    if (!shiftData.is_feriado && shiftData.hora_inicio && shiftData.hora_fin) {
+                        newOverrides[`${shiftData.fecha}_${ud.id}`] = {
+                            id: `s-${shiftData.fecha}-${ud.id}`,
+                            startTime: shiftData.hora_inicio,
+                            endTime: shiftData.hora_fin
+                        };
                     }
-                    
-                    newOverrides[`${shiftData.fecha}_${ud.id}`] = {
-                        id: `s-${Date.now()}-${Math.random()}`,
-                        startTime: shiftData.hora_inicio,
-                        endTime: shiftData.hora_fin
-                    };
+                });
+            });
+
+            // Sort groups numerically: "Grupo 1", "Grupo 2", "Grupo 3", etc.
+            newGroups.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+            // Reassign group IDs cleanly and sort users inside each group
+            newGroups.forEach((grp, idx) => {
+                grp.id = `grp-${idx + 1}`;
+                grp.users.sort((u1, u2) => ((u1 as any)._orden ?? 0) - ((u2 as any)._orden ?? 0));
+            });
+
+            // Reconstruct dayObj.shifts for each day in newSchedule
+            usersData.forEach(ud => {
+                if (!ud.horario_data || !Array.isArray(ud.horario_data)) return;
+                const userObj = users.find(u => u.id === ud.id);
+                if (!userObj) return;
+
+                const firstShiftWithGroup = ud.horario_data.find((s: any) => s && s.grupo) || ud.horario_data[0];
+                const groupName = firstShiftWithGroup?.grupo || 'Grupo 1';
+                const g = newGroups.find(x => x.name === groupName);
+                if (!g) return;
+
+                ud.horario_data.forEach((shiftData: any) => {
+                    if (!shiftData.is_feriado && shiftData.hora_inicio && shiftData.hora_fin) {
+                        const dayObj = newSchedule.find(d => d.date === shiftData.fecha);
+                        if (dayObj) {
+                            let existingShift = dayObj.shifts.find(s => s.group.id === g.id);
+                            if (!existingShift) {
+                                dayObj.shifts.push({
+                                    shiftInfo: {
+                                        id: `s-${shiftData.fecha}-${g.id}`,
+                                        startTime: shiftData.hora_inicio,
+                                        endTime: shiftData.hora_fin
+                                    },
+                                    group: g
+                                });
+                            }
+                        }
+                    }
                 });
             });
 
             // Sort schedule by date
-            newSchedule.sort((a,b) => a.date.localeCompare(b.date));
+            newSchedule.sort((a, b) => a.date.localeCompare(b.date));
 
             if (newGroups.length > 0) {
                 setGroups(newGroups);
-                setNumberGroupsStateFromLoad(newGroups.length);
+                setNumGroups(newGroups.length);
                 setGeneratedSchedule(newSchedule);
                 setShiftOverrides(newOverrides);
+                setIsSavedInDB(true);
+                setIsEditing(false);
+
+                // Collect unique shifts from all users' non-holiday data to populate sidebar shift inputs
+                const uniqueShiftsMap = new Map<string, Shift>();
+                usersData.forEach(ud => {
+                    if (Array.isArray(ud.horario_data)) {
+                        ud.horario_data.forEach((sd: any) => {
+                            if (!sd.is_feriado && sd.hora_inicio && sd.hora_fin) {
+                                const key = `${sd.hora_inicio}-${sd.hora_fin}`;
+                                if (!uniqueShiftsMap.has(key)) {
+                                    uniqueShiftsMap.set(key, {
+                                        id: `shift-${uniqueShiftsMap.size + 1}`,
+                                        startTime: sd.hora_inicio,
+                                        endTime: sd.hora_fin
+                                    });
+                                }
+                            }
+                        });
+                    }
+                });
+
+                if (uniqueShiftsMap.size > 0) {
+                    setShifts(Array.from(uniqueShiftsMap.values()));
+                }
+
+                if (loadedHolidays.size > 0) {
+                    setExcludeDates(Array.from(loadedHolidays).sort());
+                }
+                if (newSchedule.length > 0) {
+                    setStartDate(newSchedule[0].date);
+                    setEndDate(newSchedule[newSchedule.length - 1].date);
+                }
+            } else {
+                setIsSavedInDB(false);
+                setIsEditing(true);
             }
         } catch(e) {
             console.error("Error loading schedule from personal_sorteos:", e);
+            setIsSavedInDB(false);
+            setIsEditing(true);
         }
     };
 
@@ -195,6 +278,12 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
         if (numGroups < 1) return alert('El número de grupos debe ser al menos 1.');
         if (shifts.some(s => !s.startTime || !s.endTime)) return alert('Por favor, completa todas las horas de los turnos.');
 
+        if (isSavedInDB && !isEditing) {
+            if (!confirm('Ya existe un horario guardado. ¿Deseas volver a sortear a los integrantes y generar una nueva distribución?')) {
+                return;
+            }
+        }
+
         // Divide users into groups
         const sortedUsers = [...users].sort((a, b) => a.nombres.localeCompare(b.nombres));
         const newGroups: Group[] = Array.from({ length: numGroups }, (_, i) => ({
@@ -210,9 +299,20 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
         // Some groups might have fewer members if it doesn't divide evenly
         setGroups(newGroups);
 
+        let activeExcludeDates = [...excludeDates];
+        if (excludeInput && !activeExcludeDates.includes(excludeInput)) {
+            activeExcludeDates.push(excludeInput);
+            setExcludeDates([...activeExcludeDates].sort());
+            setExcludeInput('');
+        }
+
         // Generate Dates
-        const start = new Date(startDate);
-        const end = new Date(endDate);
+        const [sYear, sMonth, sDay] = startDate.split('-').map(Number);
+        const start = new Date(sYear, sMonth - 1, sDay, 12, 0, 0);
+
+        const [eYear, eMonth, eDay] = endDate.split('-').map(Number);
+        const end = new Date(eYear, eMonth - 1, eDay, 12, 0, 0);
+
         const schedule = [];
         
         let dayIndex = 0;
@@ -228,7 +328,15 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
             const dateStr = `${year}-${month}-${day}`;
 
             if (excludeWeekends && isWeekendLocal) continue;
-            if (excludeDates.includes(dateStr)) continue;
+            
+            if (activeExcludeDates.includes(dateStr)) {
+                schedule.push({
+                    date: dateStr,
+                    isHoliday: true,
+                    shifts: []
+                });
+                continue;
+            }
             
             const dailyShifts = [];
             for (let i = 0; i < shifts.length; i++) {
@@ -239,12 +347,14 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                 });
             }
 
-            schedule.push({ date: dateStr, shifts: dailyShifts });
+            schedule.push({ date: dateStr, isHoliday: false, shifts: dailyShifts });
             dayIndex++;
         }
 
         setGeneratedSchedule(schedule);
         setShiftOverrides({});
+        setIsSavedInDB(false);
+        setIsEditing(true);
     };
 
     const generatePDFDoc = () => {
@@ -297,24 +407,41 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                 row.push({ content: u.nombres });
                 
                 generatedSchedule!.forEach(day => {
-                    const groupShift = day.shifts.find(s => s.group.id === g.id)?.shiftInfo;
-                    
-                    if (isRotative) {
-                        if (uIdx === 0) {
+                    if (day.isHoliday) {
+                        if (isRotative) {
+                            if (uIdx === 0) {
+                                row.push({
+                                    content: 'FERIADO NO\nLABORABLE',
+                                    rowSpan: g.users.length,
+                                    styles: { valign: 'middle', halign: 'center', fontStyle: 'bold', fontSize: 6, textColor: [150, 80, 0] }
+                                });
+                            }
+                        } else {
                             row.push({
-                                content: groupShift ? `${groupShift.startTime} - ${groupShift.endTime}` : '-',
-                                rowSpan: g.users.length,
-                                styles: { valign: 'middle', halign: 'center' }
+                                content: 'FERIADO NO\nLABORABLE',
+                                styles: { valign: 'middle', halign: 'center', fontStyle: 'bold', fontSize: 6, textColor: [150, 80, 0] }
                             });
                         }
                     } else {
-                        const overrideKey = `${day.date}_${u.id}`;
-                        const actualShift = shiftOverrides[overrideKey] !== undefined ? shiftOverrides[overrideKey] : groupShift;
+                        const groupShift = day.shifts.find(s => s.group.id === g.id)?.shiftInfo;
+                        
+                        if (isRotative) {
+                            if (uIdx === 0) {
+                                row.push({
+                                    content: groupShift ? `${groupShift.startTime} - ${groupShift.endTime}` : '-',
+                                    rowSpan: g.users.length,
+                                    styles: { valign: 'middle', halign: 'center' }
+                                });
+                            }
+                        } else {
+                            const overrideKey = `${day.date}_${u.id}`;
+                            const actualShift = shiftOverrides[overrideKey] !== undefined ? shiftOverrides[overrideKey] : groupShift;
 
-                        row.push({
-                            content: actualShift ? `${actualShift.startTime} - ${actualShift.endTime}` : '-',
-                            styles: { valign: 'middle', halign: 'center' }
-                        });
+                            row.push({
+                                content: actualShift ? `${actualShift.startTime} - ${actualShift.endTime}` : '-',
+                                styles: { valign: 'middle', halign: 'center' }
+                            });
+                        }
                     }
                 });
                 bodyRows.push(row);
@@ -513,24 +640,35 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
             const updates: Promise<any>[] = [];
 
             for (const group of groups) {
-                for (const user of group.users) {
+                group.users.forEach((user, uIdx) => {
                     const userScheduleArray: any[] = [];
                     for (const day of generatedSchedule) {
-                        const groupShift = day.shifts.find(s => s.group.id === group.id)?.shiftInfo;
-                        
-                        let actualShift = groupShift;
-                        if (!isRotative) {
-                            const overrideKey = `${day.date}_${user.id}`;
-                            actualShift = shiftOverrides[overrideKey] !== undefined ? shiftOverrides[overrideKey] : groupShift;
-                        }
-
-                        if (actualShift) {
+                        if (day.isHoliday) {
                             userScheduleArray.push({
                                 fecha: day.date,
-                                hora_inicio: actualShift.startTime,
-                                hora_fin: actualShift.endTime,
-                                grupo: group.name
+                                is_feriado: true,
+                                glosa: "FERIADO NO LABORABLE",
+                                grupo: group.name,
+                                orden_persona: uIdx
                             });
+                        } else {
+                            const groupShift = day.shifts.find(s => s.group.id === group.id)?.shiftInfo;
+                            
+                            let actualShift = groupShift;
+                            if (!isRotative) {
+                                const overrideKey = `${day.date}_${user.id}`;
+                                actualShift = shiftOverrides[overrideKey] !== undefined ? shiftOverrides[overrideKey] : groupShift;
+                            }
+
+                            if (actualShift) {
+                                userScheduleArray.push({
+                                    fecha: day.date,
+                                    hora_inicio: actualShift.startTime,
+                                    hora_fin: actualShift.endTime,
+                                    grupo: group.name,
+                                    orden_persona: uIdx
+                                });
+                            }
                         }
                     }
 
@@ -543,7 +681,7 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                             )
                         );
                     }
-                }
+                });
             }
             
             // Also nullify anyone who was removed from groups
@@ -563,6 +701,8 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
             }
 
             await Promise.all(updates);
+            setIsSavedInDB(true);
+            setIsEditing(false);
             
             alert('Horario guardado exitosamente en el registro de cada persona.');
             onClose();
@@ -630,7 +770,14 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                 <input 
                                     type="date"
                                     value={excludeInput}
-                                    onChange={e => setExcludeInput(e.target.value)}
+                                    onChange={e => {
+                                        const val = e.target.value;
+                                        setExcludeInput(val);
+                                        if (val && !excludeDates.includes(val)) {
+                                            setExcludeDates([...excludeDates, val].sort());
+                                            setExcludeInput('');
+                                        }
+                                    }}
                                     onKeyDown={handleAddExcludeDate}
                                     className="flex-1 px-4 py-2 bg-transparent text-sm font-medium outline-none"
                                 />
@@ -642,18 +789,25 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                         }
                                     }}
                                     className="bg-slate-200 hover:bg-slate-300 px-3 flex items-center justify-center text-slate-600 transition-colors"
+                                    title="Añadir feriado"
                                 >
                                     <span className="material-symbols-outlined text-[18px]">add</span>
                                 </button>
                             </div>
                             {excludeDates.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 mt-2">
-                                    {excludeDates.map(d => (
-                                        <div key={d} className="flex items-center gap-1 bg-red-50 text-red-700 border border-red-200 rounded text-[10px] font-bold px-2 py-1">
-                                            {d}
-                                            <button onClick={() => removeExcludeDate(d)} className="hover:text-red-900 ml-1"><span className="material-symbols-outlined text-[12px] block">close</span></button>
-                                        </div>
-                                    ))}
+                                    {excludeDates.map(d => {
+                                        const parts = d.split('-');
+                                        const formatted = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d;
+                                        return (
+                                            <div key={d} className="flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold px-2 py-1 shadow-sm">
+                                                <span>{formatted}</span>
+                                                <button onClick={() => removeExcludeDate(d)} className="hover:text-red-700 ml-1 flex items-center" title="Quitar feriado">
+                                                    <span className="material-symbols-outlined text-[14px]">close</span>
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -713,11 +867,32 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                             <div className="flex flex-col gap-6">
                                 <div className="flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                                     <div>
-                                        <p className="text-sm font-bold text-slate-800">Se han generado horarios para {generatedSchedule.length} días.</p>
-                                        <p className="text-xs text-slate-500 font-medium">Se dividireron las {users.length} personas en {numGroups} grupos.</p>
-                                        {excludeDates.length > 0 && <p className="text-xs text-red-500 font-medium mt-1">Días excluidos manualmente: {excludeDates.length}</p>}
+                                        {(() => {
+                                            const holidayCount = generatedSchedule.filter(d => d.isHoliday).length;
+                                            const workDaysCount = generatedSchedule.length - holidayCount;
+                                            return (
+                                                <p className="text-sm font-bold text-slate-800">
+                                                    Se han generado horarios para {generatedSchedule.length} días {holidayCount > 0 ? `(${workDaysCount} laborables, ${holidayCount} feriado${holidayCount > 1 ? 's' : ''})` : ''}.
+                                                </p>
+                                            );
+                                        })()}
+                                        <p className="text-xs text-slate-500 font-medium">Se dividieron las {users.length} personas en {numGroups} grupos.</p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
+                                        {isSavedInDB && !isEditing ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-1.5 bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-2 rounded-xl text-xs font-black uppercase">
+                                                    <span className="material-symbols-outlined text-[16px]">lock</span> Horario Guardado
+                                                </div>
+                                                <button 
+                                                    onClick={() => setIsEditing(true)} 
+                                                    className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all shadow-lg shadow-amber-200 flex items-center gap-2"
+                                                >
+                                                    <span className="material-symbols-outlined text-[18px]">edit</span> Editar Horario
+                                                </button>
+                                            </div>
+                                        ) : null}
+
                                         <button 
                                             onClick={() => setShowEmailModal(true)} 
                                             disabled={isSendingEmail}
@@ -733,18 +908,20 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                         <button onClick={exportToPDF} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all shadow-lg shadow-red-200 flex items-center gap-2">
                                             <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span> PDF
                                         </button>
-                                        <button 
-                                            onClick={saveSchedule} 
-                                            disabled={isSaving}
-                                            className="bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all shadow-lg shadow-blue-200 flex items-center gap-2 disabled:opacity-50"
-                                        >
-                                            {isSaving ? (
-                                                <span className="material-symbols-outlined text-[18px] animate-spin">refresh</span>
-                                            ) : (
-                                                <span className="material-symbols-outlined text-[18px]">save</span>
-                                            )}
-                                            {isSaving ? 'Guardando...' : 'Guardar'}
-                                        </button>
+                                        {(!isSavedInDB || isEditing) && (
+                                            <button 
+                                                onClick={saveSchedule} 
+                                                disabled={isSaving}
+                                                className="bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-xs active:scale-95 transition-all shadow-lg shadow-blue-200 flex items-center gap-2 disabled:opacity-50"
+                                            >
+                                                {isSaving ? (
+                                                    <span className="material-symbols-outlined text-[18px] animate-spin">refresh</span>
+                                                ) : (
+                                                    <span className="material-symbols-outlined text-[18px]">save</span>
+                                                )}
+                                                {isSaving ? 'Guardando...' : (isSavedInDB ? 'Guardar Cambios' : 'Guardar')}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
@@ -759,9 +936,10 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                                     const days = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
                                                     const dateStr = `${dObj.getUTCDate().toString().padStart(2, '0')}/${(dObj.getUTCMonth()+1).toString().padStart(2, '0')}`;
                                                     return (
-                                                        <th key={day.date} className="p-3 text-center border-r border-slate-200 min-w-[120px]">
+                                                        <th key={day.date} className={`p-3 text-center border-r border-slate-200 min-w-[120px] ${day.isHoliday ? 'bg-amber-100/70 text-amber-900' : ''}`}>
                                                             <div className="font-black text-xs">{days[dObj.getUTCDay()]}</div>
                                                             <div className="font-mono text-[10px] text-slate-500">{dateStr}</div>
+                                                            {day.isHoliday && <div className="text-[9px] font-black text-amber-700 uppercase tracking-tighter mt-0.5">Feriado</div>}
                                                         </th>
                                                     );
                                                 })}
@@ -788,7 +966,7 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                                                 Arrastra a alguien aquí
                                                             </td>
                                                             {generatedSchedule.map(day => (
-                                                                <td key={day.date} className="border-r border-slate-200"></td>
+                                                                <td key={day.date} className={`border-r border-slate-200 ${day.isHoliday ? 'bg-amber-50/50' : ''}`}></td>
                                                             ))}
                                                         </tr>
                                                     ) : g.users.map((u, uIdx) => (
@@ -822,6 +1000,38 @@ export const ScheduleBuilderModal: React.FC<ScheduleBuilderProps> = ({ isOpen, o
                                                             </td>
 
                                                             {generatedSchedule.map(day => {
+                                                                if (day.isHoliday) {
+                                                                    if (isRotative) {
+                                                                        if (uIdx === 0) {
+                                                                            return (
+                                                                                <td 
+                                                                                    key={day.date} 
+                                                                                    rowSpan={g.users.length} 
+                                                                                    className="p-2 border-r border-b border-slate-200 text-center font-black text-[10px] text-amber-800 bg-amber-50/80 align-middle uppercase tracking-tight"
+                                                                                >
+                                                                                    <div className="h-full flex flex-col items-center justify-center py-2 px-1 leading-tight">
+                                                                                        <span>FERIADO NO</span>
+                                                                                        <span>LABORABLE</span>
+                                                                                    </div>
+                                                                                </td>
+                                                                            );
+                                                                        }
+                                                                        return null;
+                                                                    }
+
+                                                                    return (
+                                                                        <td 
+                                                                            key={day.date} 
+                                                                            className="p-2 border-r border-b border-slate-200 text-center font-black text-[10px] text-amber-800 bg-amber-50/80 align-middle uppercase tracking-tight"
+                                                                        >
+                                                                            <div className="flex flex-col items-center justify-center leading-tight">
+                                                                                <span>FERIADO NO</span>
+                                                                                <span>LABORABLE</span>
+                                                                            </div>
+                                                                        </td>
+                                                                    );
+                                                                }
+
                                                                 const groupShift = day.shifts.find(s => s.group.id === g.id)?.shiftInfo;
                                                                 
                                                                 if (isRotative) {
