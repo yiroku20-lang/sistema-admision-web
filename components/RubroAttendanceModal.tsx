@@ -1266,13 +1266,9 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                           setFingerprintStatus('SCANNING');
                           try {
                             // Conectar al puente local C# construido por la IA local
-                            // Usamos 127.0.0.1 en lugar de localhost para evitar problemas de resolución IPv6 en Windows
-                            const response = await fetch('http://127.0.0.1:8081/api/fingerprint/capture', {
-                              method: 'GET',
-                              headers: {
-                                'Accept': 'application/json'
-                              }
-                            });
+                            // Usamos el endpoint exacto que proporciona el puente: /capture
+                            const url = `http://localhost:8081/capture`;
+                            const response = await fetch(url, { method: 'GET' });
 
                             if (!response.ok) {
                               throw new Error('Error en el puente biométrico');
@@ -1280,7 +1276,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
 
                             const data = await response.json();
 
-                            if (data.success && data.imageBase64) {
+                            if (data.success && (data.imageBase64 || data.image)) {
+                              const huellaBase64 = data.imageBase64 || data.image;
                               setFingerprintStatus('SUCCESS');
                               setHasSignature(true); // Tratamos la huella como firma válida
 
@@ -1302,26 +1299,27 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                                     ctx.textAlign = 'center';
                                     ctx.fillText('HUELLA DIGITAL VERIFICADA', canvasRef.current.width / 2, 135);
                                     ctx.font = '10px monospace';
-                                    ctx.fillText('TEMPLATE ID: ' + (data.templateId || Math.random().toString(36).substring(7).toUpperCase()), canvasRef.current.width / 2, 155);
+                                    ctx.fillText('ESTADO: ' + (data.message || 'EXITO').toUpperCase(), canvasRef.current.width / 2, 155);
                                   }
                                 }
                               };
-                              img.src = data.imageBase64.startsWith('data:image') 
-                                ? data.imageBase64 
-                                : `data:image/png;base64,${data.imageBase64}`;
+                              img.src = huellaBase64.startsWith('data:image') 
+                                ? huellaBase64 
+                                : `data:image/png;base64,${huellaBase64}`;
                                 
                             } else {
                               setFingerprintStatus('ERROR');
-                              console.error('Captura fallida:', data.error || 'Sin datos de imagen');
+                              console.error('Captura fallida:', data.error || data.message || 'Sin datos de imagen');
                             }
                           } catch (err: any) {
                             console.error('Fallo al conectar con localhost:8081', err);
                             // Set error specific to Failed to fetch
-                            if (err.message === 'Failed to fetch') {
+                            if (err.message === 'Failed to fetch' || err.message.includes('fetch')) {
                                 setFingerprintStatus('ERROR');
-                                alert('Error de conexión (Failed to fetch). Por favor, verifica en la consola (F12) si es un error de CORS o Mixed Content.');
+                                alert('Error de conexión (Failed to fetch). Verifica que el ejecutable BiometricBridge.exe esté abierto. También asegúrate en Chrome de permitir "Contenido Inseguro" (Mixed Content) dando clic en el ícono del candado arriba.');
                             } else {
                                 setFingerprintStatus('ERROR');
+                                alert('Error biométrico: ' + err.message);
                             }
                           }
                         }}
