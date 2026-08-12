@@ -244,8 +244,10 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
 
     if (newRecordToInsert) {
       try {
-        await supabase.from('asistencia').insert([{
-          proceso_id: newRecordToInsert.proceso_id,
+        const isValidUuid = (id?: string) => !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        const procesoIdClean = isValidUuid(newRecordToInsert.proceso_id) ? newRecordToInsert.proceso_id : null;
+
+        const payload: any = {
           cargo: newRecordToInsert.cargo,
           dni: newRecordToInsert.dni,
           nombre: newRecordToInsert.nombre,
@@ -255,9 +257,27 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
           firma: newRecordToInsert.firma,
           timestamp: newRecordToInsert.timestamp,
           manual: newRecordToInsert.manual || false
-        }]);
-      } catch (err) {
+        };
+
+        if (procesoIdClean) {
+          payload.proceso_id = procesoIdClean;
+        }
+
+        const { data, error } = await supabase.from('asistencia').insert([payload]);
+
+        if (error) {
+          console.error('Error insertando asistencia en Supabase:', error.message, error.details, error.hint);
+          if (notify) {
+            notify(`Guardado localmente. Advertencia de BD: ${error.message}`, 'warning');
+          }
+        } else {
+          console.log('Asistencia guardada exitosamente en Supabase');
+        }
+      } catch (err: any) {
         console.warn('Could not persist to remote database, saved locally.', err);
+        if (notify) {
+          notify(`Guardado localmente. Error: ${err.message}`, 'warning');
+        }
       }
     }
   };
