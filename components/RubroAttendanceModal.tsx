@@ -1316,7 +1316,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                             // Set error specific to Failed to fetch
                             if (err.message === 'Failed to fetch' || err.message.includes('fetch')) {
                                 setFingerprintStatus('ERROR');
-                                alert('Error de conexión (Failed to fetch). Verifica que el ejecutable BiometricBridge.exe esté abierto. También asegúrate en Chrome de permitir "Contenido Inseguro" (Mixed Content) dando clic en el ícono del candado arriba.');
+                                alert('Error de conexión (Failed to fetch).\n\n1. Abre la app en una PESTAÑA NUEVA fuera de la vista previa embebida.\n2. Asegúrate de permitir "Contenido Inseguro" en Chrome haciendo clic en el candado 🔒 de la barra de direcciones.\n3. Verifica que BiometricBridge.exe esté abierto en tu computadora.');
                             } else {
                                 setFingerprintStatus('ERROR');
                                 alert('Error biométrico: ' + err.message);
