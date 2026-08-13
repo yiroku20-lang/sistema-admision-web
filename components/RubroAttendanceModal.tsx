@@ -176,14 +176,88 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     return canvas.toDataURL('image/png');
   };
 
-  const [selectedSignature, setSelectedSignature] = useState<{ personName: string; dni: string; tipo: string; hora: string; firma: string } | null>(null);
+  const [selectedSignature, setSelectedSignature] = useState<{ id: string; personName: string; dni: string; tipo: string; hora: string; firma: string } | null>(null);
 
   // Biometric state
-  const [biometricMode, setBiometricMode] = useState(false);
+  const [modalStep, setModalStep] = useState<'BIOMETRIC' | 'SIGNATURE'>('SIGNATURE');
+  const [biometricMethod, setBiometricMethod] = useState<'HUELLA_Y_FIRMA' | 'SOLO_FIRMA'>('SOLO_FIRMA');
   const [fingerprintStatus, setFingerprintStatus] = useState<'IDLE' | 'SCANNING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const checkBiometricAndProceed = async (person: PersonalSorteo, type: 'INGRESO' | 'SALIDA') => {
+    setPendingPerson(person);
+    setPendingTipo(type);
+    setBiometricMethod('SOLO_FIRMA');
+    setModalStep('SIGNATURE'); // Default fallback
+    setSignatureModalOpen(true);
+
+    try {
+      const { data: templates } = await supabase
+        .from('fingerprint_templates')
+        .select('template_base64')
+        .eq('dni', person.dni);
+      
+      if (templates && templates.length > 0) {
+        const res = await fetch('http://localhost:8081/ping', { method: 'GET', signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+           setModalStep('BIOMETRIC');
+           setFingerprintStatus('SCANNING');
+           
+           if (abortControllerRef.current) abortControllerRef.current.abort();
+           abortControllerRef.current = new AbortController();
+
+           const verifyRes = await fetch('http://localhost:8081/verify', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ template: templates[0].template_base64 }),
+             signal: abortControllerRef.current.signal
+           });
+           
+           const verifyData = await verifyRes.json();
+           if (verifyRes.ok && verifyData.success && verifyData.verified) {
+             setFingerprintStatus('SUCCESS');
+             setBiometricMethod('HUELLA_Y_FIRMA');
+             setTimeout(() => {
+                setModalStep('SIGNATURE');
+             }, 1200);
+           } else {
+             setFingerprintStatus('ERROR');
+             notify('La huella no coincide o lectura falló. Puede intentar nuevamente o cerrar.', 'error');
+           }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+         console.warn("Biometric check failed/skipped:", err);
+      }
+    }
+  };
 
   // Helper date
   const getTodayString = () => new Date().toISOString().split('T')[0];
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!window.confirm("¿Está seguro de eliminar esta marca de asistencia? Esta acción no se puede deshacer.")) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('asistencia').delete().eq('id', id);
+      if (error) throw error;
+      
+      if (notify) notify('Registro de asistencia eliminado exitosamente.', 'success');
+      
+      // Update local state
+      const updatedRecords = records.filter(r => r.id !== id);
+      setRecords(updatedRecords);
+      safeStorage.setItem(storageKey, JSON.stringify(updatedRecords));
+      
+      setSelectedSignature(null);
+    } catch (err: any) {
+      console.error(err);
+      if (notify) notify('Error eliminando registro: ' + err.message, 'error');
+    }
+  };
 
   const storageKey = `asistencia_rubro_${procesoId}_${cargo.replace(/\s+/g, '_')}`;
 
@@ -382,9 +456,15 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
       nextType = 'SALIDA';
     }
 
-    setPendingPerson(personMatch);
-    setPendingTipo(nextType);
-    setSignatureModalOpen(true);
+    checkBiometricAndProceed(personMatch, nextType);
+  };
+
+  const handleCloseSignatureModal = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setSignatureModalOpen(false);
+    setPendingPerson(null);
   };
 
   // Save confirmed mark with transparent signature
@@ -416,7 +496,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
       hora: timeStr,
       firma: signatureBase64,
       timestamp: now.toISOString(),
-      manual: false
+      manual: false,
+      metodo_validacion: biometricMethod
     };
 
     const updatedRecords = [newRecord, ...records];
@@ -427,7 +508,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
       'success'
     );
 
-    setSignatureModalOpen(false);
+    handleCloseSignatureModal();
     setPendingPerson(null);
     setDniInput('');
   };
@@ -961,7 +1042,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                           </span>
                           {r.firma && (
                             <button
-                              onClick={() => setSelectedSignature({ personName: r.nombre, dni: r.dni, tipo: r.tipo, hora: r.hora, firma: r.firma! })}
+                              onClick={() => setSelectedSignature({ id: r.id, personName: r.nombre, dni: r.dni, tipo: r.tipo, hora: r.hora, firma: r.firma! })}
                               className="text-[9px] text-indigo-600 hover:underline font-bold mt-1 flex items-center gap-0.5"
                             >
                               <span className="material-symbols-outlined text-[12px]">draw</span> Ver firma
@@ -1125,7 +1206,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                           <td className="p-3.5 text-center">
                             {row.ingresoRecord?.firma ? (
                               <button
-                                onClick={() => setSelectedSignature({ personName: row.nombre, dni: row.dni, tipo: 'INGRESO', hora: row.ingresoRecord!.hora, firma: row.ingresoRecord!.firma! })}
+                                onClick={() => setSelectedSignature({ id: row.ingresoRecord!.id, personName: row.nombre, dni: row.dni, tipo: 'INGRESO', hora: row.ingresoRecord!.hora, firma: row.ingresoRecord!.firma! })}
                                 className="group relative inline-block p-1 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all shadow-sm"
                                 title="Click para ampliar firma de Ingreso"
                               >
@@ -1140,7 +1221,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                           <td className="p-3.5 text-center">
                             {row.salidaRecord?.firma ? (
                               <button
-                                onClick={() => setSelectedSignature({ personName: row.nombre, dni: row.dni, tipo: 'SALIDA', hora: row.salidaRecord!.hora, firma: row.salidaRecord!.firma! })}
+                                onClick={() => setSelectedSignature({ id: row.salidaRecord!.id, personName: row.nombre, dni: row.dni, tipo: 'SALIDA', hora: row.salidaRecord!.hora, firma: row.salidaRecord!.firma! })}
                                 className="group relative inline-block p-1 bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-xl transition-all shadow-sm"
                                 title="Click para ampliar firma de Salida"
                               >
@@ -1195,7 +1276,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                   <p className="text-xs text-slate-400 font-medium">REGISTRANDO: <span className={`font-black ${pendingTipo === 'INGRESO' ? 'text-emerald-400' : 'text-amber-400'}`}>{pendingTipo}</span></p>
                 </div>
               </div>
-              <button onClick={() => setSignatureModalOpen(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => handleCloseSignatureModal()} className="text-slate-400 hover:text-white">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
@@ -1208,27 +1289,25 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               </div>
 
               <div>
-                {/* TABS FOR CAPTURE METHOD */}
+                {/* TABS FOR CAPTURE METHOD (INDICATORS) */}
                 <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
-                  <button
-                    onClick={() => setBiometricMode(false)}
+                  <div
                     className={`flex-1 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                      !biometricMode ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                      modalStep === 'SIGNATURE' ? 'bg-indigo-600 shadow-sm text-white' : 'text-slate-500'
                     }`}
                   >
                     <span className="material-symbols-outlined text-sm">draw</span> Firma Táctil
-                  </button>
-                  <button
-                    onClick={() => setBiometricMode(true)}
+                  </div>
+                  <div
                     className={`flex-1 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                      biometricMode ? 'bg-indigo-600 shadow-sm text-white' : 'text-slate-500 hover:text-slate-700'
+                      modalStep === 'BIOMETRIC' ? 'bg-indigo-600 shadow-sm text-white' : 'text-slate-500'
                     }`}
                   >
                     <span className="material-symbols-outlined text-sm">fingerprint</span> Huella Digital
-                  </button>
+                  </div>
                 </div>
 
-                {!biometricMode ? (
+                {modalStep === 'SIGNATURE' ? (
                   <>
                     <div className="flex justify-between items-center mb-1">
                       <label className="text-xs font-bold text-slate-600 uppercase">Dibuje su firma abajo</label>
@@ -1278,85 +1357,27 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                       {fingerprintStatus === 'IDLE' && 'Presione el botón para inicializar la captura biométrica.'}
                       {fingerprintStatus === 'SCANNING' && 'Coloque su dedo sobre el lector ahora...'}
                       {fingerprintStatus === 'SUCCESS' && 'Huella capturada y validada correctamente.'}
-                      {fingerprintStatus === 'ERROR' && 'No se pudo conectar con el lector. ¿Está instalado el servicio local?'}
+                      {fingerprintStatus === 'ERROR' && 'La huella no coincide o lectura falló.'}
                     </p>
 
-                    {fingerprintStatus !== 'SUCCESS' && (
+                    {fingerprintStatus === 'ERROR' && (
                       <button 
-                        onClick={async () => {
-                          setFingerprintStatus('SCANNING');
-                          try {
-                            // Conectar al puente local C# construido por la IA local
-                            // Usamos el endpoint exacto que proporciona el puente: /capture
-                            const url = `http://localhost:8081/capture`;
-                            const response = await fetch(url, { method: 'GET' });
-
-                            if (!response.ok) {
-                              throw new Error('Error en el puente biométrico');
-                            }
-
-                            const data = await response.json();
-
-                            if (data.success && (data.imageBase64 || data.image)) {
-                              const huellaBase64 = data.imageBase64 || data.image;
-                              setFingerprintStatus('SUCCESS');
-                              setHasSignature(true); // Tratamos la huella como firma válida
-
-                              // Dibujar la imagen de la huella en el canvas oculto
-                              // para que el sistema existente la guarde como PNG en Base64
-                              const img = new Image();
-                              img.onload = () => {
-                                if (canvasRef.current) {
-                                  const ctx = canvasRef.current.getContext('2d');
-                                  if (ctx) {
-                                    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-                                    
-                                    // Dibujar imagen de la huella
-                                    ctx.drawImage(img, (canvasRef.current.width / 2) - 40, 10, 80, 100);
-                                    
-                                    // Sello de validación
-                                    ctx.fillStyle = '#4338ca';
-                                    ctx.font = 'bold 14px sans-serif';
-                                    ctx.textAlign = 'center';
-                                    ctx.fillText('HUELLA DIGITAL VERIFICADA', canvasRef.current.width / 2, 135);
-                                    ctx.font = '10px monospace';
-                                    ctx.fillText('ESTADO: ' + (data.message || 'EXITO').toUpperCase(), canvasRef.current.width / 2, 155);
-                                  }
-                                }
-                              };
-                              img.src = huellaBase64.startsWith('data:image') 
-                                ? huellaBase64 
-                                : `data:image/png;base64,${huellaBase64}`;
-                                
-                            } else {
-                              setFingerprintStatus('ERROR');
-                              console.error('Captura fallida:', data.error || data.message || 'Sin datos de imagen');
-                            }
-                          } catch (err: any) {
-                            console.error('Fallo al conectar con localhost:8081', err);
-                            // Set error specific to Failed to fetch
-                            if (err.message === 'Failed to fetch' || err.message.includes('fetch')) {
-                                setFingerprintStatus('ERROR');
-                                alert('Error de conexión (Failed to fetch).\n\n1. Abre la app en una PESTAÑA NUEVA fuera de la vista previa embebida.\n2. Asegúrate de permitir "Contenido Inseguro" en Chrome haciendo clic en el candado 🔒 de la barra de direcciones.\n3. Verifica que BiometricBridge.exe esté abierto en tu computadora.');
-                            } else {
-                                setFingerprintStatus('ERROR');
-                                alert('Error biométrico: ' + err.message);
-                            }
-                          }
-                        }}
-                        className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-indigo-700 shadow-md active:scale-95 transition-all"
+                        onClick={() => checkBiometricAndProceed(pendingPerson, pendingTipo)}
+                        className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-xl text-xs flex items-center gap-2"
                       >
-                        Iniciar Captura
+                        <span className="material-symbols-outlined text-[16px]">refresh</span>
+                        Reintentar
                       </button>
                     )}
                   </div>
                 )}
+
               </div>
             </div>
 
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
               <button
-                onClick={() => setSignatureModalOpen(false)}
+                onClick={() => handleCloseSignatureModal()}
                 className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors"
               >
                 Cancelar
@@ -1496,12 +1517,23 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               <img src={selectedSignature.firma} alt="Firma Digital" className="max-h-36 object-contain" />
             </div>
 
-            <button
-              onClick={() => setSelectedSignature(null)}
-              className="w-full py-2.5 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-black"
-            >
-              Cerrar
-            </button>
+            <div className="w-full flex gap-2">
+              <button
+                onClick={() => setSelectedSignature(null)}
+                className="flex-1 py-2.5 bg-slate-900 text-white font-bold text-xs rounded-xl hover:bg-black"
+              >
+                Cerrar
+              </button>
+              {canManageSorteo && (
+                <button
+                  onClick={() => handleDeleteRecord(selectedSignature.id)}
+                  className="px-4 py-2.5 bg-rose-50 text-rose-600 font-bold text-xs rounded-xl hover:bg-rose-100 hover:text-rose-700 flex items-center justify-center gap-1 transition-colors"
+                  title="Eliminar Asistencia"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

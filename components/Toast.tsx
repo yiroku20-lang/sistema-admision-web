@@ -9,7 +9,7 @@ interface Props {
 
 export const ToastContainer: React.FC<Props> = ({ toasts, onClose }) => {
   return (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-3 w-80">
+    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] flex flex-col gap-3 w-80">
       {toasts.map((t) => (
         <div 
           key={t.id} 
