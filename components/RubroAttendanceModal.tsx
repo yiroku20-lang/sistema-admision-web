@@ -43,6 +43,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
   notify
 }) => {
   const isAdmin = user?.role === 'Administrador' || user?.role === 'Director';
+  const canManageSorteo = isAdmin || (user?.role === 'Operador' && user?.permissions?.includes('manage_sorteo_asistencia'));
 
   const [activeTab, setActiveTab] = useState<'kiosk' | 'history'>('kiosk');
   const [dniInput, setDniInput] = useState('');
@@ -811,7 +812,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               MODO MARCADO
             </button>
 
-            {isAdmin && (
+            {canManageSorteo && (
               <button
                 onClick={() => setActiveTab('history')}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -885,7 +886,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                         MARCAR ASISTENCIA
                       </button>
 
-                      {isAdmin && (
+                      {canManageSorteo && (
                         <button
                           type="button"
                           onClick={() => setManualModalOpen(true)}
@@ -977,7 +978,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
           )}
 
           {/* TAB 2: REPORTES / HISTORIAL (ADMIN ONLY) */}
-          {activeTab === 'history' && isAdmin && (
+          {activeTab === 'history' && canManageSorteo && (
             <div className="flex flex-col gap-6">
               
               {/* Summary stat counters */}

@@ -72,6 +72,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
         const { data, error } = await supabase
           .from('asistencia')
           .select('fecha')
+          .is('proceso_id', null)
           .or(`user_id.eq.${selectedUserForReport.id},dni.eq.${selectedUserForReport.dni}`)
           .order('fecha', { ascending: true })
           .limit(1);
@@ -261,6 +262,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
     const { data, error } = await supabase
       .from('asistencia')
       .select('*, usuarios(name)')
+      .is('proceso_id', null)
       .eq('fecha', today)
       .order('timestamp', { ascending: false });
     
@@ -277,6 +279,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       const { data, error } = await supabase
         .from('asistencia')
         .select('*, usuarios(name)')
+        .is('proceso_id', null)
         .gte('fecha', filterDateStart)
         .lte('fecha', filterDateEnd)
         .order('timestamp', { ascending: false });
@@ -302,6 +305,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       const { data, error } = await supabase
         .from('asistencia')
         .select('*')
+        .is('proceso_id', null)
         .or(`user_id.eq.${selectedUserForReport.id},dni.eq.${selectedUserForReport.dni}`)
         .gte('fecha', reportDateStart)
         .lte('fecha', reportDateEnd)
@@ -404,6 +408,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       const { data: lastRecord } = await supabase
         .from('asistencia')
         .select('tipo')
+        .is('proceso_id', null)
         .eq('user_id', userData.id)
         .eq('fecha', today)
         .order('timestamp', { ascending: false })

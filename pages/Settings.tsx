@@ -23,6 +23,7 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
   // Available Permissions
   const availablePermissions = [
     { id: 'view_expedientes', label: 'Expedientes (Entrantes/Salida)' },
+    { id: 'manage_sorteo_asistencia', label: 'Personal Sorteado: Reportes y Regularización' },
     { id: 'view_transferencias', label: 'Transferencias y Devoluciones' },
     { id: 'view_renuncias', label: 'Trámite de Renuncias' },
     { id: 'view_reserva', label: 'Reserva de Vacantes' },
