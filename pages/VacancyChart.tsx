@@ -72,13 +72,19 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
 
   const fetchCuadros = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('cv_cuadros_anuales').select('*').order('anio', { ascending: false });
-    if (error) {
-      notify('Error al cargar cuadros: ' + error.message, 'error');
-    } else {
-      setCuadros(data || []);
+    try {
+      const { data, error } = await supabase.from('cv_cuadros_anuales').select('*').order('anio', { ascending: false });
+      if (error) {
+        notify('Error al cargar cuadros: ' + error.message, 'error');
+      } else {
+        setCuadros(data || []);
+      }
+    } catch (err: any) {
+      console.error('Error fetching cuadros:', err);
+      notify('Error al conectar con la base de datos: ' + (err?.message || 'Error desconocido'), 'error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const fetchAllEscuelas = async () => {

@@ -2,5 +2,5 @@
   "name": "UNSAAC Admision Console",
   "description": "Panel de administración para la oficina de admisiones de la UNSAAC, con gestión de expedientes, resoluciones, registros de auditoría y un asistente de IA.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

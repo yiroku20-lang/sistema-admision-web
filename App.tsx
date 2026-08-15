@@ -36,20 +36,32 @@ import { ToastContainer } from './components/Toast';
 import { User, ToastMessage } from './types';
 
 function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem('unsaac_auth_user');
+      if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return null;
+  });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(() => {
+    try {
+      return !localStorage.getItem('unsaac_auth_user');
+    } catch(e) {
+      return true;
+    }
+  });
 
   useEffect(() => {
     let isMounted = true;
 
-    // Safety timeout: ensure loading spinner never blocks the user for more than 1.5s
+    // Safety timeout: ensure loading spinner never blocks the user for more than 1s
     const safetyTimeout = setTimeout(() => {
       if (isMounted) {
         setIsCheckingAuth(false);
       }
-    }, 1500);
+    }, 1000);
 
     const initAuth = async () => {
       try {
@@ -60,6 +72,7 @@ function App() {
           await supabase.auth.signOut().catch(() => {});
           if (isMounted) {
             setUser(null);
+            try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
             setIsCheckingAuth(false);
           }
           return;
@@ -76,6 +89,7 @@ function App() {
           if (isMounted) {
             if (profile && !profileError) {
               setUser(profile as User);
+              try { localStorage.setItem('unsaac_auth_user', JSON.stringify(profile)); } catch(e){}
             }
             setIsCheckingAuth(false);
           }
@@ -91,7 +105,6 @@ function App() {
           await supabase.auth.signOut().catch(() => {});
         } catch (e) {}
         if (isMounted) {
-          setUser(null);
           setIsCheckingAuth(false);
         }
       } finally {
@@ -105,11 +118,17 @@ function App() {
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        if (isMounted) setUser(null);
+        if (isMounted) {
+          setUser(null);
+          try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
+        }
       } else if (event === 'TOKEN_REFRESHED') {
         if (!session) {
           clearStaleAuthTokens();
-          if (isMounted) setUser(null);
+          if (isMounted) {
+            setUser(null);
+            try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
+          }
         }
       } else if (event === 'SIGNED_IN' && session?.user) {
         const { data: profile } = await supabase
@@ -119,6 +138,7 @@ function App() {
           .maybeSingle();
         if (isMounted && profile) {
           setUser(profile as User);
+          try { localStorage.setItem('unsaac_auth_user', JSON.stringify(profile)); } catch(e){}
         }
       }
     });

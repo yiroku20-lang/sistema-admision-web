@@ -276,7 +276,11 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       if (searchQuery.trim()) {
         query = query.or(`number.ilike.%${searchQuery.trim()}%,subject.ilike.%${searchQuery.trim()}%`);
       }
-      const { data } = await query.order('created_at', { ascending: false });
+      const { data, error } = await query.order('created_at', { ascending: false }).limit(1000);
+      if (error) {
+        console.error("Error fetching files:", error);
+        notify("Error al conectar con expedientes: " + error.message, "error");
+      }
       if (data) {
         const groupedMap = new Map<string, GroupedIncomingFile>();
 

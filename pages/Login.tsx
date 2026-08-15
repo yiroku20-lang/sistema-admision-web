@@ -35,10 +35,16 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         if (response.ok) {
           const result = await response.json();
           if (result.success && result.user) {
-            // Guardar sesión si vino de supabase
+            try {
+              localStorage.setItem('unsaac_auth_user', JSON.stringify(result.user));
+            } catch(e) {}
+
+            // Sincronizar sesión en segundo plano sin bloquear la navegación
             if (result.session) {
-              await supabase.auth.setSession(result.session).catch(() => {});
+              supabase.auth.setSession(result.session).catch(() => {});
             }
+            
+            setIsLoading(false);
             onLogin(result.user);
             navigate('/');
             return;
