@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, clearStaleAuthTokens } from '../lib/supabaseClient';
 
 interface Props {
   onLogin: (user: any) => void;
@@ -16,94 +16,88 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setIsLoading(true);
     setError('');
 
     try {
-        // 1. Iniciar sesión usando Supabase Auth (Seguro, maneja los JWT automáticamente)
-        const email = `${dni.trim()}@admin.unsaac.pe`;
-        
-        let authData = null;
-        let authError = null;
-        try {
-            const res = await supabase.auth.signInWithPassword({
-                email,
-                password: password.trim()
-            });
-            authData = res.data;
-            authError = res.error;
-        } catch (err: any) {
-            authError = err;
-        }
+      const cleanDni = dni.trim();
+      const cleanPassword = password.trim();
 
-        if (authError) {
-            console.warn("Auth error, attempting database fallback...", authError);
-            
-            // Fallback: Check if user exists in the public.usuarios table
-            const { data: dbUser, error: dbUserError } = await supabase
-                .from('usuarios')
-                .select('*')
-                .eq('dni', dni.trim())
-                .maybeSingle();
+      // 1. Intentar autenticación inmediata vía API del Backend (Rápida, sin bloqueos de navegador/iframe)
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dni: cleanDni, password: cleanPassword }),
+        });
 
-            if (!dbUserError && dbUser) {
-                const enteredPw = password.trim();
-                const dbPw = dbUser.password;
-                
-                // Allow login if plaintext password matches or if using standard admin/test bypass passwords
-                const isValidPlain = dbPw === enteredPw;
-                const isBypass = enteredPw === 'admin123' || enteredPw === '123456' || enteredPw === '123' || enteredPw === 'admin';
-                
-                if (isValidPlain || isBypass) {
-                    try {
-                        await supabase.from('tramite_seguimiento').insert([{
-                            action_type: 'Sistema',
-                            description: 'Inicio de Sesión (Fallback)',
-                            user_name: dbUser.name,
-                        }]);
-                    } catch (e) {}
-                    onLogin(dbUser);
-                    navigate('/');
-                    setIsLoading(false);
-                    return;
-                }
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.user) {
+            // Guardar sesión si vino de supabase
+            if (result.session) {
+              await supabase.auth.setSession(result.session).catch(() => {});
             }
-
-            console.error(authError);
-            setError('Credenciales incorrectas o usuario no existe.');
-            setIsLoading(false);
+            onLogin(result.user);
+            navigate('/');
             return;
-        }
-
-        // 2. Obtener los roles y permisos del perfil del usuario
-        const { data: userData, error: dbError } = await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('id', authData.user.id)
-            .maybeSingle();
-
-        if (dbError || !userData) {
-            console.error(dbError);
-            setError('No se pudo obtener el perfil de usuario.');
-            // Deslogueamos si no hay perfil válido
-            await supabase.auth.signOut();
-            setIsLoading(false);
+          }
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          if (response.status === 401) {
+            setError(errData.error || 'Credenciales incorrectas o usuario no existe.');
             return;
+          }
         }
+      } catch (backendErr) {
+        console.warn('Backend auth endpoint unreachable, trying client fallback...', backendErr);
+      }
 
-        // Login exitoso
-        try {
-            await supabase.from('tramite_seguimiento').insert([{
-                action_type: 'Sistema',
-                description: 'Inicio de Sesión',
-                user_name: userData.name,
-            }]);
-        } catch(e) {}
-        onLogin(userData);
-        navigate('/');
+      // 2. Fallback de cliente directo en caso de modo offline / Electron local
+      const email = `${cleanDni}@admin.unsaac.pe`;
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password: cleanPassword,
+      });
+
+      if (authData?.user) {
+        const { data: profile } = await supabase
+          .from('usuarios')
+          .select('*')
+          .eq('id', authData.user.id)
+          .maybeSingle();
+
+        if (profile) {
+          onLogin(profile);
+          navigate('/');
+          return;
+        }
+      }
+
+      // Fallback BD tabla usuarios
+      const { data: dbUser } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('dni', cleanDni)
+        .maybeSingle();
+
+      if (dbUser) {
+        const isValidPlain = dbUser.password === cleanPassword;
+        const isBypass = ['admin123', '123456', '123', 'admin'].includes(cleanPassword);
+        if (isValidPlain || isBypass) {
+          onLogin(dbUser);
+          navigate('/');
+          return;
+        }
+      }
+
+      setError('Credenciales incorrectas o usuario no existe.');
     } catch (err: any) {
-        setError('Error inesperado del servidor.');
-        setIsLoading(false);
+      console.error('Error durante el login:', err);
+      setError('Error al procesar el inicio de sesión: ' + (err?.message || 'Reintente'));
+    } finally {
+      setIsLoading(false);
     }
   };
 

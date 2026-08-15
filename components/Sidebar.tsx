@@ -2,6 +2,7 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, User } from '../types';
+import { UpdateStatusWidget } from './UpdateStatusWidget';
 
 interface SidebarProps {
   user: User;
@@ -127,6 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, onLogout, isOpen, onClos
         </div>
 
         <div className="flex flex-col gap-2 pt-6">
+            <UpdateStatusWidget />
             <button 
                 onClick={() => { navigate('/settings'); onClose?.(); }}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left ${

@@ -371,6 +371,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                           <th style="width: 90px;">Concurso</th>
                           <th style="width: 80px;">DNI</th>
                           <th>Nombre Completo</th>
+                          <th style="width: 90px;">Expediente</th>
                           <th>EXAM A TRANSFERIR</th>
                       </tr>
                   </thead>
@@ -381,6 +382,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                               <td>${i.concurso}</td>
                               <td>${i.dni}</td>
                               <td><b>${i.student_name}</b></td>
+                              <td>${i.incoming_file_number || '-'}</td>
                               <td>${i.target_exam || 'NO ESPECIFICADO'}</td>
                           </tr>
                       `).join('')}
@@ -399,6 +401,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                           <th style="width: 70px;">Concurso</th>
                           <th style="width: 65px;">DNI</th>
                           <th style="width: 140px;">Nombre</th>
+                          <th style="width: 70px;">Expediente</th>
                           <th style="width: 60px;">Telefono</th>
                           <th style="width: 55px;">F. Nac.</th>
                           <th style="width: 30px;">Edad</th>
@@ -416,6 +419,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                               <td>${i.concurso}</td>
                               <td>${i.dni}</td>
                               <td><b>${i.student_name}</b></td>
+                              <td>${i.incoming_file_number || '-'}</td>
                               <td>${i.phone || '-'}</td>
                               <td>${i.birth_date || '-'}</td>
                               <td>${i.age || '-'}</td>
@@ -464,6 +468,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
               'Concurso': i.concurso,
               'DNI': i.dni,
               'Nombre Completo': i.student_name,
+              'Exp. Petición': i.incoming_file_number || '-',
               'EXAM A TRANSFERIR': i.target_exam || 'NO ESPECIFICADO'
           }));
           const wsTransfers = XLSX.utils.json_to_sheet(transferData);
@@ -476,6 +481,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
               'Concurso': i.concurso,
               'DNI': i.dni,
               'Nombre': i.student_name,
+              'Exp. Petición': i.incoming_file_number || '-',
               'Telefono': i.phone || '-',
               'F. Nac.': i.birth_date || '-',
               'Edad': i.age || '-',

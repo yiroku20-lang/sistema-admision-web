@@ -4,6 +4,7 @@ import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import cors from "cors";
 import { GoogleGenAI } from "@google/genai";
+import authRoutes from "./server/authRoutes";
 
 async function startServer() {
   const app = express();
@@ -12,6 +13,9 @@ async function startServer() {
   app.use(cors());
   // Increase limit for base64 PDF attachments
   app.use(express.json({ limit: "50mb" }));
+
+  // --- AUTH ROUTES ---
+  app.use("/api/auth", authRoutes);
 
   // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
   app.use("/api/files", async (req, res) => {

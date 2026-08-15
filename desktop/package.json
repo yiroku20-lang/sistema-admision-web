@@ -1,0 +1,61 @@
+{
+  "name": "unsaac-admin-desktop",
+  "version": "1.0.0",
+  "description": "UNSAAC Consola de Administración - Desktop App con Auto-Updater",
+  "main": "dist-electron/main.js",
+  "author": "UNSAAC",
+  "scripts": {
+    "dev": "electron dist-electron/main.js",
+    "build:electron": "tsc",
+    "build": "npm run build:electron",
+    "dist": "npm run build:electron && electron-builder",
+    "dist:publish": "npm run build:electron && electron-builder --publish always"
+  },
+  "dependencies": {
+    "electron-is-dev": "^3.0.1",
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "~5.8.2"
+  },
+  "build": {
+    "appId": "pe.edu.unsaac.adminconsole",
+    "productName": "UNSAAC Consola de Administración",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "../dist/**/*"
+    ],
+    "extraMetadata": {
+      "main": "dist-electron/main.js"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "TU_USUARIO_O_ORGANIZACION",
+      "repo": "TU_REPOSITORIO",
+      "releaseType": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "UNSAAC Admin Console"
+    }
+  }
+}

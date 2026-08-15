@@ -18,6 +18,7 @@ export interface RubroAttendanceRecord {
   firma?: string; // base64 transparent PNG
   timestamp: string;
   manual?: boolean;
+  metodo_validacion?: string;
   user_id?: string;
 }
 

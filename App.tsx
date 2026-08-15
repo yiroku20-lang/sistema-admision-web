@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { supabase } from './lib/supabaseClient';
+import { supabase, clearStaleAuthTokens } from './lib/supabaseClient';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
 import { IncomingFiles } from './pages/IncomingFiles';
@@ -42,28 +42,91 @@ function App() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   useEffect(() => {
-    // Check active session on load
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        // Fetch the user's profile from the 'usuarios' table
-        supabase.from('usuarios').select('*').eq('id', session.user.id).maybeSingle()
-          .then(({ data }) => {
-            if (data) setUser(data as User);
-            setIsCheckingAuth(false);
-          });
-      } else {
+    let isMounted = true;
+
+    // Safety timeout: ensure loading spinner never blocks the user for more than 1.5s
+    const safetyTimeout = setTimeout(() => {
+      if (isMounted) {
         setIsCheckingAuth(false);
       }
-    });
+    }, 1500);
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+    const initAuth = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn('Session verification failed, resetting auth state:', error.message);
+          clearStaleAuthTokens();
+          await supabase.auth.signOut().catch(() => {});
+          if (isMounted) {
+            setUser(null);
+            setIsCheckingAuth(false);
+          }
+          return;
+        }
+
+        const session = data?.session;
+        if (session?.user) {
+          const { data: profile, error: profileError } = await supabase
+            .from('usuarios')
+            .select('*')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          if (isMounted) {
+            if (profile && !profileError) {
+              setUser(profile as User);
+            }
+            setIsCheckingAuth(false);
+          }
+        } else {
+          if (isMounted) {
+            setIsCheckingAuth(false);
+          }
+        }
+      } catch (err: any) {
+        console.warn('Unexpected error checking session:', err);
+        clearStaleAuthTokens();
+        try {
+          await supabase.auth.signOut().catch(() => {});
+        } catch (e) {}
+        if (isMounted) {
+          setUser(null);
+          setIsCheckingAuth(false);
+        }
+      } finally {
+        if (isMounted) {
+          setIsCheckingAuth(false);
+        }
+      }
+    };
+
+    initAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        setUser(null);
+        if (isMounted) setUser(null);
+      } else if (event === 'TOKEN_REFRESHED') {
+        if (!session) {
+          clearStaleAuthTokens();
+          if (isMounted) setUser(null);
+        }
+      } else if (event === 'SIGNED_IN' && session?.user) {
+        const { data: profile } = await supabase
+          .from('usuarios')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+        if (isMounted && profile) {
+          setUser(profile as User);
+        }
       }
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      isMounted = false;
+      clearTimeout(safetyTimeout);
+      authListener?.subscription?.unsubscribe();
     };
   }, []);
 
