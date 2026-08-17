@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Prueba BiometricBridge v2.0 - Enrolamiento y Verificación</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 {
+      color: #38bdf8;
+      margin-bottom: 4px;
+      font-size: 22px;
+    }
+    .subtitle {
+      color: #64748b;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: bold;
+      font-size: 13px;
+      margin: 10px 0;
+      background: #334155;
+      color: #cbd5e1;
+    }
+    .status-online { background: #065f46; color: #34d399; }
+    .status-offline { background: #991b1b; color: #fca5a5; }
+
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 0;
+      width: 100%;
+      max-width: 560px;
+    }
+    .tab {
+      flex: 1;
+      padding: 12px;
+      text-align: center;
+      background: #1e293b;
+      color: #94a3b8;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+      border: 1px solid #334155;
+      border-bottom: none;
+      transition: all 0.2s;
+    }
+    .tab:first-child { border-radius: 12px 0 0 0; }
+    .tab:last-child { border-radius: 0 12px 0 0; }
+    .tab.active {
+      background: #1e293b;
+      color: #38bdf8;
+      border-bottom: 3px solid #38bdf8;
+    }
+    .tab:hover:not(.active) { color: #e2e8f0; }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0 0 16px 16px;
+      padding: 25px;
+      max-width: 560px;
+      width: 100%;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+
+    .section-title {
+      color: #e2e8f0;
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+    .section-desc {
+      color: #94a3b8;
+      font-size: 13px;
+      margin-bottom: 15px;
+      line-height: 1.5;
+    }
+
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      width: 100%;
+      margin-top: 10px;
+    }
+    button:hover { background: #1d4ed8; transform: translateY(-1px); }
+    button:disabled { background: #475569; cursor: not-allowed; transform: none; }
+    button.btn-green { background: #059669; }
+    button.btn-green:hover { background: #047857; }
+    button.btn-purple { background: #7c3aed; }
+    button.btn-purple:hover { background: #6d28d9; }
+    button.btn-amber { background: #d97706; }
+    button.btn-amber:hover { background: #b45309; }
+
+    .img-container {
+      margin-top: 15px;
+      background: #0f172a;
+      border: 2px dashed #475569;
+      border-radius: 12px;
+      padding: 15px;
+      min-height: 140px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    img {
+      max-width: 120px;
+      max-height: 150px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    .log-box {
+      margin-top: 15px;
+      background: #090d16;
+      border: 1px solid #1e293b;
+      color: #4ade80;
+      font-family: monospace;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      text-align: left;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .template-box {
+      margin-top: 10px;
+      background: #090d16;
+      border: 1px solid #334155;
+      color: #fbbf24;
+      font-family: monospace;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      word-break: break-all;
+      max-height: 60px;
+      overflow-y: auto;
+    }
+
+    .progress-bar {
+      height: 8px;
+      background: #334155;
+      border-radius: 4px;
+      margin: 10px 0;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #7c3aed, #2563eb);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    .hidden { display: none; }
+
+    .info-box {
+      background: #172033;
+      border: 1px solid #1e3a5f;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #93c5fd;
+    }
+
+    textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border-radius: 6px;
+      resize: vertical;
+      min-height: 60px;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔐 BiometricBridge v2.0</h1>
+  <p class="subtitle">Prueba de Captura, Enrolamiento y Verificación</p>
+
+  <div id="statusBadge" class="status-badge status-offline">Comprobando conexión...</div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('capture')">📷 Captura</div>
+    <div class="tab" onclick="switchTab('enroll')">📝 Enrolamiento</div>
+    <div class="tab" onclick="switchTab('verify')">✅ Verificación</div>
+  </div>
+
+  <div class="card">
+    <!-- TAB: CAPTURA -->
+    <div id="tab-capture">
+      <h3 class="section-title">Captura Simple de Huella</h3>
+      <p class="section-desc">Captura solo la imagen de la huella (sin template biométrico).</p>
+      <button onclick="doCapture()">👆 Capturar Huella</button>
+      <div class="img-container" id="captureImgBox">
+        <span style="color: #64748b;">La huella aparecerá aquí</span>
+      </div>
+    </div>
+
+    <!-- TAB: ENROLAMIENTO -->
+    <div id="tab-enroll" class="hidden">
+      <h3 class="section-title">📝 Enrolamiento (Registro de Huella)</h3>
+      <p class="section-desc">
+        Captura <strong>4 muestras</strong> de la misma huella para generar un <strong>template biométrico</strong>.
+        Este template se guarda en la base de datos para futuras verificaciones.
+      </p>
+      <button class="btn-purple" onclick="doEnroll()">🔑 Iniciar Enrolamiento</button>
+
+      <div class="progress-bar" id="enrollProgressBar" style="display:none;">
+        <div class="progress-fill" id="enrollProgressFill" style="width: 0%;"></div>
+      </div>
+      <div id="enrollStatus" style="text-align:center; margin-top:8px; font-size:13px; color:#94a3b8;"></div>
+
+      <div class="img-container" id="enrollImgBox">
+        <span style="color: #64748b;">Coloca tu dedo 4 veces cuando se indique</span>
+      </div>
+
+      <div id="templateResult" class="hidden">
+        <div class="info-box">
+          ✅ <strong>Template generado exitosamente.</strong> Copia este template y guárdalo en tu base de datos asociado al usuario.
+        </div>
+        <div class="template-box" id="templateOutput"></div>
+        <button class="btn-green" onclick="copyTemplate()" style="margin-top:8px; font-size:13px; padding:8px;">
+          📋 Copiar Template al Portapapeles
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB: VERIFICACIÓN -->
+    <div id="tab-verify" class="hidden">
+      <h3 class="section-title">✅ Verificación (1:1)</h3>
+      <p class="section-desc">
+        Pega un template guardado y coloca el dedo para verificar si coincide.
+      </p>
+
+      <label style="font-size:12px; color:#94a3b8;">Template base64 a verificar:</label>
+      <textarea id="verifyTemplateInput" placeholder="Pega aquí el template base64 obtenido del enrolamiento..."></textarea>
+
+      <button class="btn-green" onclick="doVerify()">🔍 Verificar Huella</button>
+
+      <div class="img-container" id="verifyImgBox">
+        <span style="color: #64748b;">Resultado de verificación aparecerá aquí</span>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="log-box" id="logBox">Esperando inicio...</div>
+  </div>
+
+  <script>
+    let BASE_URL = 'http://localhost:8081';
+    let savedTemplate = '';
+
+    function log(msg) {
+      const logBox = document.getElementById('logBox');
+      const time = new Date().toLocaleTimeString();
+      logBox.innerHTML += '<div>[' + time + '] ' + msg + '</div>';
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('tab-capture').classList.add('hidden');
+      document.getElementById('tab-enroll').classList.add('hidden');
+      document.getElementById('tab-verify').classList.add('hidden');
+
+      document.getElementById('tab-' + tab).classList.remove('hidden');
+      event.target.classList.add('active');
+    }
+
+    // ==================== VERIFICAR ESTADO ====================
+
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 2500) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(id);
+        return response;
+      } catch (err) {
+        clearTimeout(id);
+        throw err;
+      }
+    }
+
+    async function checkStatus() {
+      const badge = document.getElementById('statusBadge');
+      try {
+        let res;
+        try {
+          res = await fetchWithTimeout('http://localhost:8081/ping', {}, 2500);
+          BASE_URL = 'http://localhost:8081';
+        } catch (e1) {
+          res = await fetchWithTimeout('http://127.0.0.1:8081/ping', {}, 2500);
+          BASE_URL = 'http://127.0.0.1:8081';
+        }
+        const data = await res.json();
+        if (data) {
+          if (!badge.classList.contains('status-online')) {
+            log('✅ Conectado al BiometricBridge v2.0 (' + BASE_URL + ')');
+          }
+          badge.className = 'status-badge status-online';
+          badge.innerText = '🟢 Puente Conectado (' + BASE_URL + ')';
+        } else {
+          badge.className = 'status-badge status-offline';
+          badge.innerText = '🔴 Respuesta inválida del puerto 8081';
+        }
+      } catch (err) {
+        badge.className = 'status-badge status-offline';
+        badge.innerText = '🔴 No se pudo conectar a localhost:8081 o 127.0.0.1:8081';
+      }
+    }
+
+    // ==================== CAPTURA SIMPLE ====================
+    async function doCapture() {
+      const imgBox = document.getElementById('captureImgBox');
+      log('📷 Enviando /capture — Coloca tu dedo en el lector...');
+      imgBox.innerHTML = '<span style="color:#f59e0b;">⏳ Esperando huella...</span>';
+
+      try {
+        const res = await fetch(BASE_URL + '/capture');
+        const data = await res.json();
+        if (data.success && (data.imageBase64 || data.image)) {
+          const img = data.imageBase64 || data.image;
+          log('✅ Huella capturada exitosamente');
+          imgBox.innerHTML = '<img src="' + img + '" alt="Huella" /><div style="color:#34d399; margin-top:6px; font-weight:bold;">Captura exitosa</div>';
+        } else {
+          log('❌ Error: ' + (data.error || data.message));
+          imgBox.innerHTML = '<span style="color:#ef4444;">❌ ' + (data.error || 'Error') + '</span>';
+        }
+      } catch (err) {
+        log('❌ Error de red: ' + err.message);
+        imgBox.innerHTML = '<span style="color:#ef4444;">❌ Error de conexión</span>';
+      }
+    }
+
+    // ==================== ENROLAMIENTO ====================
+    async function doEnroll() {
+      const imgBox = document.getElementById('enrollImgBox');
+      const progressBar = document.getElementById('enrollProgressBar');
+      const progressFill = document.getElementById('enrollProgressFill');
+      const enrollStatus = document.getElementById('enrollStatus');
+      const templateResult = document.getElementById('templateResult');
+
+      templateResult.classList.add('hidden');
+      progressBar.style.display = 'block';
+      progressFill.style.width = '0%';
+      enrollStatus.innerText = 'Iniciando enrolamiento... Coloca tu dedo cuando se indique.';
+      enrollStatus.style.color = '#fbbf24';
+      imgBox.innerHTML = '<span style="color:#f59e0b;">⏳ Coloca tu dedo 4 veces en el lector...</span>';
+
+      log('📝 Iniciando ENROLAMIENTO — Coloca tu dedo 4 veces');
+
+      try {
+        const res = await fetch(BASE_URL + '/enroll', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+          progressFill.style.width = '100%';
+          enrollStatus.innerText = '¡Enrolamiento exitoso! Template generado.';
+          enrollStatus.style.color = '#34d399';
+          log('✅ ENROLAMIENTO EXITOSO — Template de ' + data.template.length + ' caracteres');
+
+          savedTemplate = data.template;
+          document.getElementById('templateOutput').innerText = data.template;
+          templateResult.classList.remove('hidden');
+
+          // Auto-rellenar el campo de verificación
+          document.getElementById('verifyTemplateInput').value = data.template;
+
+          if (data.imageBase64) {
+            imgBox.innerHTML = '<img src="' + data.imageBase64 + '" alt="Huella" /><div style="color:#34d399; margin-top:6px; font-weight:bold;">✅ Template generado</div>';
+          } else {
+            imgBox.innerHTML = '<div style="color:#34d399; font-weight:bold; font-size:48px;">✅</div><div style="color:#34d399; margin-top:6px;">Template listo</div>';
+          }
+        } else {
+          progressFill.style.width = '0%';
+          enrollStatus.innerText = 'Error: ' + (data.error || 'Fallo el enrolamiento');
+          enrollStatus.style.color = '#ef4444';
+          log('❌ Error en enrolamiento: ' + (data.error || data.message));
+          imgBox.innerHTML = '<span style="color:#ef4444;">❌ ' + (data.error || 'Error') + '</span>';
+        }
+      } catch (err) {
+        log('❌ Error de red: ' + err.message);
+        enrollStatus.innerText = 'Error de conexión';
+        enrollStatus.style.color = '#ef4444';
+        imgBox.innerHTML = '<span style="color:#ef4444;">❌ Error de conexión</span>';
+      }
+    }
+
+    // ==================== VERIFICACIÓN ====================
+    async function doVerify() {
+      const imgBox = document.getElementById('verifyImgBox');
+      const templateInput = document.getElementById('verifyTemplateInput').value.trim();
+
+      if (!templateInput) {
+        log('⚠️ Pega un template base64 primero');
+        imgBox.innerHTML = '<span style="color:#f59e0b;">⚠️ Primero pega un template en el campo de texto</span>';
+        return;
+      }
+
+      log('🔍 Iniciando VERIFICACIÓN — Coloca tu dedo en el lector...');
+      imgBox.innerHTML = '<span style="color:#f59e0b;">⏳ Esperando huella para verificar...</span>';
+
+      try {
+        const res = await fetch(BASE_URL + '/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: templateInput })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          if (data.verified) {
+            log('✅ VERIFICACIÓN EXITOSA — ¡La huella coincide!');
+            let imgHtml = data.imageBase64 ? '<img src="' + data.imageBase64 + '" alt="Huella" />' : '';
+            imgBox.innerHTML = imgHtml + '<div style="color:#34d399; margin-top:8px; font-weight:bold; font-size:18px;">✅ ¡HUELLA VERIFICADA!</div><div style="color:#94a3b8; font-size:12px;">La huella coincide con el template</div>';
+          } else {
+            log('❌ Verificación fallida — La huella NO coincide');
+            let imgHtml = data.imageBase64 ? '<img src="' + data.imageBase64 + '" alt="Huella" />' : '';
+            imgBox.innerHTML = imgHtml + '<div style="color:#ef4444; margin-top:8px; font-weight:bold; font-size:18px;">❌ NO COINCIDE</div><div style="color:#94a3b8; font-size:12px;">La huella no pertenece al template registrado</div>';
+          }
+        } else {
+          log('❌ Error: ' + (data.error || data.message));
+          imgBox.innerHTML = '<span style="color:#ef4444;">❌ ' + (data.error || 'Error') + '</span>';
+        }
+      } catch (err) {
+        log('❌ Error de red: ' + err.message);
+        imgBox.innerHTML = '<span style="color:#ef4444;">❌ Error de conexión</span>';
+      }
+    }
+
+    // ==================== UTILIDADES ====================
+    function copyTemplate() {
+      if (savedTemplate) {
+        navigator.clipboard.writeText(savedTemplate).then(() => {
+          log('📋 Template copiado al portapapeles');
+          alert('Template copiado!');
+        }).catch(() => {
+          // Fallback para archivos locales
+          const ta = document.createElement('textarea');
+          ta.value = savedTemplate;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          log('📋 Template copiado al portapapeles');
+        });
+      }
+    }
+
+    // Iniciar
+    checkStatus();
+    setInterval(checkStatus, 4000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{
+  "name": "backup-app-admision-desktop",
+  "version": "1.0.1",
+  "description": "Carcasa Electron para Backup App Admision",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "electron": "^29.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.admision.backupapp",
+    "productName": "SistemaAdmision",
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      {
+        "from": "../backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "../backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "../backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      },
+      {
+        "from": "biometric",
+        "to": "biometric"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "biometric",
+        "to": "biometric",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "verifyUpdateCodeSignature": false,
+      "sign": null
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "yiroku20-lang",
+        "repo": "yiroku20-lang-s-Org"
+      }
+    ]
+  }
+}
