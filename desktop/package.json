@@ -37,8 +37,6 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "TU_USUARIO_O_ORGANIZACION",
-      "repo": "TU_REPOSITORIO",
       "releaseType": "release"
     },
     "win": {

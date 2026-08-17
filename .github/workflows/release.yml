@@ -1,4 +1,4 @@
-name: Deploy Web App
+name: Deploy Web App and Release Electron
 
 on:
   push:
@@ -7,9 +7,12 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Checkout Repository
@@ -20,8 +23,20 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Install Dependencies
+      - name: Install Web App Dependencies
         run: npm install --legacy-peer-deps
 
       - name: Build Web App
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Auto-bump Version and Publish Electron Release
+        run: |
+          cd desktop
+          npm version patch --no-git-tag-version
+          npm install --legacy-peer-deps
+          npm run dist:publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
