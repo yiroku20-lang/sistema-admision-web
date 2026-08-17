@@ -28,12 +28,12 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Install Desktop Dependencies
-        working-directory: ./desktop
-        run: npm ci
-
-      - name: Build & Publish Electron Release (.exe & latest.yml)
-        working-directory: ./desktop
-        run: npm run dist:publish
+      # 4. Instalar, Auto-incrementar Versión y Compilar Desktop (Electron)
+      - name: Auto-bump Version and Build Electron App
+        run: |
+          cd desktop
+          npm version patch --no-git-tag-version
+          npm install
+          npm run dist:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

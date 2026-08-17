@@ -1,6 +1,6 @@
 {
   "name": "unsaac-admin-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "UNSAAC Consola de Administración - Desktop App con Auto-Updater",
   "main": "dist-electron/main.js",
   "author": "UNSAAC",
