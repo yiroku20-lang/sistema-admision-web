@@ -1,16 +1,21 @@
-name: Build & Release Desktop App
+name: Release Electron App
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -28,7 +33,6 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      # 4. Instalar, Auto-incrementar Versión y Compilar Desktop (Electron)
       - name: Auto-bump Version and Build Electron App
         run: |
           cd desktop
