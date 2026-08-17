@@ -717,6 +717,42 @@ async function startServer() {
     }
   });
 
+  // --- 7. Sincronización de puestos correlativos en participantes ---
+  app.post("/api/sync-participantes-omerito", async (req, res) => {
+    try {
+      const { updates } = req.body;
+      if (!updates || !Array.isArray(updates)) {
+        return res.status(400).json({ error: "Falta la lista de actualizaciones ('updates')." });
+      }
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      let successCount = 0;
+      for (const item of updates) {
+        const { dni, omerito, codigo_carrera, semestre } = item;
+        if (!dni || !omerito || !semestre) continue;
+        // Actualizar OMERITO y codigo_carrera
+        const { error } = await supabase
+          .from('participantes')
+          .update({
+            OMERITO: omerito,
+            codigo_carrera: codigo_carrera || null
+          })
+          .eq('CODPOSTULANTE', dni)
+          .eq('SEMESTRE', semestre);
+        if (!error) {
+          successCount++;
+        } else {
+          console.error(`Error al actualizar DNI ${dni} en participantes:`, error.message);
+        }
+      }
+      res.json({ success: true, updatedCount: successCount });
+    } catch (error: any) {
+      console.error("Sync Participantes Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { getPreRevisiones } from "../src/services/preRevisionService";
 import {
   AdjudicationRanking,
   AdjudicationVacancy,
@@ -56,6 +57,133 @@ const ESCUELAS_POR_AREA = {
   ],
 };
 
+interface GroupedProcesses {
+  [year: string]: {
+    [semester: string]: string[];
+  };
+}
+
+const getGroupedProcesses = (
+  processList: string[],
+  allModalidades: any[],
+  activeModalidadIds?: Set<string>
+): GroupedProcesses => {
+  const groups: GroupedProcesses = {};
+
+  const normName = (s: string) =>
+    s
+      ? s
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[\s_-]+/g, " ")
+          .trim()
+      : "";
+
+  processList.forEach((name) => {
+    const targetNorm = normName(name);
+
+    // 1. Filter matching modalities from DB
+    let candidates = allModalidades.filter(
+      (m) => normName(m.nombre) === targetNorm
+    );
+
+    if (candidates.length === 0) {
+      candidates = allModalidades.filter((m) => {
+        const mNorm = normName(m.nombre);
+        if (!mNorm) return false;
+        return mNorm.includes(targetNorm) || targetNorm.includes(mNorm);
+      });
+    }
+
+    // Sort candidates:
+    // a. Modalities with pre-revisions in cv_vacantes first
+    // b. Modalities with higher/newer semester string (e.g., "2026-II" before "2026-I")
+    candidates.sort((a, b) => {
+      const aActive = activeModalidadIds?.has(a.id) ? 1 : 0;
+      const bActive = activeModalidadIds?.has(b.id) ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+
+      const semA = a.semestre || "";
+      const semB = b.semestre || "";
+      return semB.localeCompare(semA, undefined, { numeric: true });
+    });
+
+    const matched = candidates[0];
+
+    let year = "";
+    let semester = "";
+
+    if (matched) {
+      if (matched.cv_cuadros_anuales?.anio) {
+        year = matched.cv_cuadros_anuales.anio.toString();
+      }
+      if (matched.semestre) {
+        const rawSem = matched.semestre.trim();
+        semester = rawSem.toUpperCase().startsWith("PROCESO")
+          ? rawSem
+          : `Proceso ${rawSem}`;
+      }
+    }
+
+    // 2. Fallback to regex string parsing ONLY if database record doesn't yield year/semester
+    if (!year) {
+      const yearMatch = name.match(/\b(20\d\d)\b/);
+      year = yearMatch ? yearMatch[1] : "Otros Años";
+    }
+
+    if (!semester) {
+      const semFullMatch = name.match(/\b(20\d\d\s*[-_/\s]?\s*(?:I{1,3}|IV|V))\b/i);
+      if (semFullMatch) {
+        semester = `Proceso ${semFullMatch[1].toUpperCase()}`;
+      } else {
+        const semRomanMatch = name.match(/\b(I{1,3}|IV|V)\b/);
+        if (semRomanMatch) {
+          semester = `Proceso ${semRomanMatch[1].toUpperCase()}`;
+        } else if (
+          name.toUpperCase().includes("PRIMERA OPCION") ||
+          name.toUpperCase().includes("PRIMERA OPCIÓN")
+        ) {
+          semester = "Primera Opción";
+        } else {
+          semester = "Otros";
+        }
+      }
+    }
+
+    if (!groups[year]) groups[year] = {};
+    if (!groups[year][semester]) groups[year][semester] = [];
+    groups[year][semester].push(name);
+  });
+
+  return groups;
+};
+
+const sortYears = (a: string, b: string) => {
+  if (a === "Otros Años") return 1;
+  if (b === "Otros Años") return -1;
+  return b.localeCompare(a);
+};
+
+const sortSemesters = (a: string, b: string) => {
+  const order: Record<string, number> = {
+    "Proceso 2026-II": 1,
+    "Proceso 2026-I": 2,
+    "Proceso 2025-II": 3,
+    "Proceso 2025-I": 4,
+    "Proceso II": 5,
+    "Proceso I": 6,
+    "Proceso III": 7,
+    "Proceso IV": 8,
+    "Primera Opción": 9,
+    "Otros": 10,
+  };
+  if (order[a] !== undefined && order[b] !== undefined) {
+    return order[a] - order[b];
+  }
+  return a.localeCompare(b, undefined, { numeric: true });
+};
+
 export default function Adjudication() {
   const [currentView, setCurrentView] = useState<"list" | "detail">("list");
   const [activeTab, setActiveTab] = useState<"adjudication" | "attendance">(
@@ -67,6 +195,8 @@ export default function Adjudication() {
   const [anios, setAnios] = useState<CVCuadroAnual[]>([]);
   const [selectedAnioId, setSelectedAnioId] = useState<string>("");
   const [modalidades, setModalidades] = useState<CVModalidad[]>([]);
+  const [allModalidadesDb, setAllModalidadesDb] = useState<any[]>([]);
+  const [activeModalidadIds, setActiveModalidadIds] = useState<Set<string>>(new Set());
   const [selectedModalidadId, setSelectedModalidadId] = useState<string>("");
 
   const [activeProcessName, setActiveProcessName] = useState<string>("");
@@ -348,20 +478,62 @@ export default function Adjudication() {
 
   const fetchProcesos = async () => {
     try {
+      // Fetch all modalities with their related cuadros
+      const { data: modalitiesData } = await supabase
+        .from("cv_modalidades")
+        .select("id, nombre, cuadro_id, semestre, cv_cuadros_anuales(anio, estado)");
+      if (modalitiesData) {
+        setAllModalidadesDb(modalitiesData);
+      }
+
+      // Fetch modalities that have saved pre-revisions or vacantes
+      const activeSet = new Set<string>();
+      const { data: cvVacData } = await supabase
+        .from("cv_vacantes")
+        .select("modalidad_id");
+      if (cvVacData) {
+        cvVacData.forEach((v) => v.modalidad_id && activeSet.add(v.modalidad_id));
+      }
+
+      try {
+        const resPreStatus = await fetch("/api/get-pre-revisions-status");
+        if (resPreStatus.ok) {
+          const jsonPre = await resPreStatus.json();
+          if (jsonPre.savedModalidadIds) {
+            jsonPre.savedModalidadIds.forEach((id: string) => id && activeSet.add(id));
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching pre-revisions status:", e);
+      }
+
+      // Direct Supabase query fallback for Netlify using public getPreRevisiones service
+      const dbPreStatusData = await getPreRevisiones();
+      if (dbPreStatusData) {
+        dbPreStatusData.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
+      }
+
+      setActiveModalidadIds(activeSet);
+
       const { data: vData } = await supabase
         .from("adjudicacion_vacantes")
         .select("modalidad");
       const { data: rData } = await supabase
         .from("adjudicacion_ranking")
         .select("modalidad");
-      const { data: cData } = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("modalidad");
 
       const mods = new Set<string>();
       if (vData) vData.forEach((d) => mods.add(d.modalidad));
       if (rData) rData.forEach((d) => mods.add(d.modalidad));
-      if (cData) cData.forEach((d) => mods.add(d.modalidad));
+
+      try {
+        const { data: cData } = await supabase
+          .from("clasificacion_de_adjudicacion")
+          .select("modalidad");
+        if (cData) cData.forEach((d) => mods.add(d.modalidad));
+      } catch (_) {
+        // Ignorar si la vista no existe
+      }
 
       setProcesos(Array.from(mods));
     } catch (e) {
@@ -679,6 +851,66 @@ export default function Adjudication() {
     }
   };
 
+  const getAdjudicatedRanking = async (processName: string) => {
+    if (!processName) return [];
+    let finalRanking: any[] = [];
+
+    // 1. Exact match on adjudicacion_ranking
+    const resFb = await supabase
+      .from("adjudicacion_ranking")
+      .select("*")
+      .eq("modalidad", processName)
+      .not("escuela_adjudicada", "is", null)
+      .order("orden_merito", { ascending: true });
+
+    if (!resFb.error && resFb.data && resFb.data.length > 0) {
+      finalRanking = resFb.data;
+    } else {
+      // 2. Flexible pattern match on adjudicacion_ranking with modality
+      const cleanPattern = `%${processName.replace(/[^a-zA-Z0-9]+/g, "%")}%`;
+      const resFlexible = await supabase
+        .from("adjudicacion_ranking")
+        .select("*")
+        .ilike("modalidad", cleanPattern)
+        .not("escuela_adjudicada", "is", null)
+        .order("orden_merito", { ascending: true });
+
+      if (!resFlexible.error && resFlexible.data && resFlexible.data.length > 0) {
+        finalRanking = resFlexible.data;
+      } else {
+        // 3. Fallback to clasificacion_de_adjudicacion with exact modality
+        try {
+          const resC = await supabase
+            .from("clasificacion_de_adjudicacion")
+            .select("*")
+            .eq("modalidad", processName)
+            .not("escuela_adjudicada", "is", null)
+            .order("orden_merito", { ascending: true });
+
+          if (!resC.error && resC.data && resC.data.length > 0) {
+            finalRanking = resC.data;
+          } else {
+            // 4. Flexible pattern match on clasificacion_de_adjudicacion
+            const resCFlex = await supabase
+              .from("clasificacion_de_adjudicacion")
+              .select("*")
+              .ilike("modalidad", cleanPattern)
+              .not("escuela_adjudicada", "is", null)
+              .order("orden_merito", { ascending: true });
+
+            if (!resCFlex.error && resCFlex.data && resCFlex.data.length > 0) {
+              finalRanking = resCFlex.data;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    return finalRanking.filter(
+      (r) => r.escuela_adjudicada && String(r.escuela_adjudicada).trim() !== ""
+    );
+  };
+
   const exportOfficialExcelReport = async () => {
     if (!activeProcessName) return;
     setExportingExcel(true);
@@ -692,25 +924,7 @@ export default function Adjudication() {
       if (vErr) throw vErr;
 
       // 2. Fetch all adjudicated applicants
-      let finalRanking: any[] = [];
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .not("escuela_adjudicada", "is", null)
-        .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
-          .from("adjudicacion_ranking")
-          .select("*")
-          .eq("modalidad", activeProcessName)
-          .not("escuela_adjudicada", "is", null)
-          .order("orden_merito", { ascending: true });
-        finalRanking = resFb.data || [];
-      } else {
-        finalRanking = res.data || [];
-      }
+      const finalRanking = await getAdjudicatedRanking(activeProcessName);
 
       // Filter area "_" vacancies if any
       const vacanciesList = (allVacancies || []).filter((v) => v.area !== "_");
@@ -824,25 +1038,7 @@ export default function Adjudication() {
         .eq("modalidad", activeProcessName);
       if (vErr) throw vErr;
       // 2. Fetch all adjudicated applicants
-      let finalRanking: any[] = [];
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .not("escuela_adjudicada", "is", null)
-        .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
-          .from("adjudicacion_ranking")
-          .select("*")
-          .eq("modalidad", activeProcessName)
-          .not("escuela_adjudicada", "is", null)
-          .order("orden_merito", { ascending: true });
-        finalRanking = resFb.data || [];
-      } else {
-        finalRanking = res.data || [];
-      }
+      const finalRanking = await getAdjudicatedRanking(activeProcessName);
       // Filter area "_" vacancies if any
       const vacanciesList = (allVacancies || []).filter((v) => v.area !== "_");
       // Sort vacancies by Area then by Escuela name
@@ -1205,29 +1401,50 @@ export default function Adjudication() {
         }
       }
 
-      // Intentamos cargar ranking
-      let qRanking = null;
-      let eRanking = null;
+      // Intentamos cargar ranking desde adjudicacion_ranking
+      let qRanking: any[] | null = null;
+      let eRanking: any = null;
 
-      const res = await supabase
-        .from("clasificacion_de_adjudicacion")
+      const resFb = await supabase
+        .from("adjudicacion_ranking")
         .select("*")
         .eq("modalidad", activeProcessName)
         .eq("area", selectedArea)
         .order("orden_merito", { ascending: true });
-        
-      if (res.error && res.error.code === 'PGRST205') {
-        const resFb = await supabase
+
+      if (!resFb.error && resFb.data && resFb.data.length > 0) {
+        qRanking = resFb.data;
+      } else {
+        const normModalidad = activeProcessName.replace(/[\s_-]+/g, '%');
+        const resFlexible = await supabase
           .from("adjudicacion_ranking")
           .select("*")
-          .eq("modalidad", activeProcessName)
+          .ilike("modalidad", `%${normModalidad}%`)
           .eq("area", selectedArea)
           .order("orden_merito", { ascending: true });
-        qRanking = resFb.data;
-        eRanking = resFb.error;
-      } else {
-        qRanking = res.data;
-        eRanking = res.error;
+
+        if (!resFlexible.error && resFlexible.data && resFlexible.data.length > 0) {
+          qRanking = resFlexible.data;
+        } else {
+          try {
+            const resC = await supabase
+              .from("clasificacion_de_adjudicacion")
+              .select("*")
+              .eq("modalidad", activeProcessName)
+              .eq("area", selectedArea)
+              .order("orden_merito", { ascending: true });
+            if (!resC.error && resC.data && resC.data.length > 0) {
+              qRanking = resC.data;
+            }
+          } catch (_) {}
+
+          if (!qRanking) {
+            qRanking = resFlexible.data || resFb.data || [];
+            if (resFb.error && resFb.error.code !== "PGRST116" && resFb.error.code !== "PGRST205") {
+              eRanking = resFb.error;
+            }
+          }
+        }
       }
 
       if (eRanking) {
@@ -1434,12 +1651,89 @@ export default function Adjudication() {
       
       const normName = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[\s_-]+/g, " ").trim();
       const targetNorm = normName(activeProcessName);
-      let modality = modalities?.find(m => normName(m.nombre) === targetNorm);
-      if (!modality) {
-        modality = modalities?.find(m => normName(m.nombre).includes(targetNorm) || targetNorm.includes(normName(m.nombre)));
+      let candidates = (modalities || []).filter(m => normName(m.nombre) === targetNorm);
+      if (candidates.length === 0) {
+        candidates = (modalities || []).filter(m => normName(m.nombre).includes(targetNorm) || targetNorm.includes(normName(m.nombre)));
       }
-      if (!modality) {
+      if (candidates.length === 0) {
         throw new Error(`No se encontró la modalidad: ${activeProcessName}`);
+      }
+
+      // Populate activeSet for modality candidates
+      const activeSet = new Set<string>();
+      const { data: cvVacData } = await supabase.from("cv_vacantes").select("modalidad_id");
+      if (cvVacData) cvVacData.forEach(v => v.modalidad_id && activeSet.add(v.modalidad_id));
+      try {
+        const resPreStatus = await fetch("/api/get-pre-revisions-status");
+        if (resPreStatus.ok) {
+          const jsonPre = await resPreStatus.json();
+          if (jsonPre.savedModalidadIds) {
+            jsonPre.savedModalidadIds.forEach((id: string) => id && activeSet.add(id));
+          }
+        }
+      } catch (e) {
+        console.error("Error fetching pre-revisions status:", e);
+      }
+      const dbPreStatusData2 = await getPreRevisiones();
+      if (dbPreStatusData2) {
+        dbPreStatusData2.forEach((row) => row.modalidad_id && activeSet.add(row.modalidad_id));
+      }
+
+      candidates.sort((a, b) => {
+        const aActive = activeSet.has(a.id) ? 1 : 0;
+        const bActive = activeSet.has(b.id) ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+
+        const semA = a.semestre || "";
+        const semB = b.semestre || "";
+        return semB.localeCompare(semA, undefined, { numeric: true });
+      });
+
+      let modality = candidates[0];
+      let fileRecord: any = null;
+
+      const fetchPreRevisionHelper = async (modId: string) => {
+        try {
+          const apiRes = await fetch(`/api/get-pre-revision/${modId}`);
+          if (apiRes.ok) {
+            const resJson = await apiRes.json();
+            if (resJson && resJson.data && resJson.data.csv_data) return resJson;
+          }
+        } catch (err) {
+          console.warn("API fetch pre-revision failed, falling back to direct Supabase query:", err);
+        }
+        const { data, error } = await supabase
+          .from('pre_revision_archivos')
+          .select('*')
+          .eq('modalidad_id', modId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data && data.csv_data) {
+          let csvData = data.csv_data;
+          if (typeof csvData === 'string') {
+            try { csvData = JSON.parse(csvData); } catch (e) {}
+          }
+          return { success: true, data: { ...data, csv_data: csvData } };
+        }
+        return null;
+      };
+
+      // Iterar sobre candidatos para encontrar el que contenga datos de pre-revisión CSV
+      for (const cand of candidates) {
+        const rec = await fetchPreRevisionHelper(cand.id);
+        if (rec && rec.data && rec.data.csv_data) {
+          modality = cand;
+          fileRecord = rec;
+          break;
+        }
+      }
+
+      if (!fileRecord) {
+        fileRecord = await fetchPreRevisionHelper(modality.id);
+      }
+      if (!fileRecord || !fileRecord.data) {
+        throw new Error("No se encontraron datos de pre-revisión para esta modalidad.");
       }
       // Obtener Cuadro Anual para obtener el año
       const { data: cuadro, error: cuadroErr } = await supabase
@@ -1517,15 +1811,8 @@ export default function Adjudication() {
         }
         return false;
       };
-      // 3. Obtener el archivo CSV cargado en la pre-revisión mediante la API (Bypass RLS)
-      const apiRes = await fetch(`/api/get-pre-revision/${modality.id}`);
-      if (!apiRes.ok) {
-        throw new Error(`Error al obtener los datos del CSV desde el servidor: ${apiRes.statusText}`);
-      }
-      const fileRecord = await apiRes.json();
-      
-      // CORRECCIÓN DEL TYPO AQUÍ (leer del objeto wrapper data)
-      const record = fileRecord.data;
+      // 3. Procesar archivo CSV cargado en la pre-revisión
+      const record = fileRecord ? fileRecord.data : null;
       let csvRows: any[] = [];
       if (record && record.csv_data) {
         csvRows = typeof record.csv_data === "string" 
@@ -1534,7 +1821,8 @@ export default function Adjudication() {
       }
       // Normalizar ingresantes regulares del CSV
       const directIngresantes: any[] = [];
-      const careerCounts: Record<string, number> = {};
+      const careerMaxPos: Record<string, number> = {};
+      const careerDirectCount: Record<string, number> = {};
       csvRows.forEach(row => {
         if (row && checkAdmitted(row)) {
           const dni = getRowValue(row, ['NroDocumento', 'nroDocumento', 'NRODOCUMENTO', 'DNI', 'dni', 'Documento', 'documento', 'alumno', 'ALUMNO', 'CODPOSTULANTE', 'codpostulante']);
@@ -1559,7 +1847,8 @@ export default function Adjudication() {
           const filial = sch ? (sch.filial || "CUSCO") : "CUSCO";
           const orderNum = parseInt(pos) || 0;
           if (schoolName) {
-            careerCounts[schoolName] = Math.max(careerCounts[schoolName] || 0, orderNum);
+            careerMaxPos[schoolName] = Math.max(careerMaxPos[schoolName] || 0, orderNum);
+            careerDirectCount[schoolName] = (careerDirectCount[schoolName] || 0) + 1;
           }
           directIngresantes.push({
             CODPOSTULANTE: dni,
@@ -1576,32 +1865,31 @@ export default function Adjudication() {
           });
         }
       });
-      // 4. Obtener estudiantes adjudicados
-      const { data: adjRanking, error: adjErr } = await supabase
-        .from("adjudicacion_ranking")
-        .select("*")
-        .eq("modalidad", activeProcessName)
-        .eq("observacion", "Adjudicado");
-      if (adjErr) throw adjErr;
-      const adjStudentsBySchool: Record<string, typeof adjRanking> = {};
-      if (adjRanking) {
+      // 4. Obtener estudiantes adjudicados usando la búsqueda robusta
+      const adjRanking = await getAdjudicatedRanking(activeProcessName);
+      const adjStudentsBySchool: Record<string, any[]> = {};
+      if (adjRanking && adjRanking.length > 0) {
         adjRanking.forEach(student => {
-          const schName = student.escuela_adjudicada;
-          if (schName) {
-            if (!adjStudentsBySchool[schName]) {
-              adjStudentsBySchool[schName] = [];
+          const rawSchName = student.escuela_adjudicada;
+          if (rawSchName && rawSchName.trim() !== "") {
+            const schObj = findSchoolByString(rawSchName);
+            const stdSchName = schObj ? schObj.nombre : rawSchName.trim();
+            if (!adjStudentsBySchool[stdSchName]) {
+              adjStudentsBySchool[stdSchName] = [];
             }
-            adjStudentsBySchool[schName].push(student);
+            adjStudentsBySchool[stdSchName].push({ ...student, _schObj: schObj });
           }
         });
       }
       const adjudicatedIngresantes: any[] = [];
       Object.entries(adjStudentsBySchool).forEach(([schName, students]) => {
-        students.sort((a, b) => (parseFloat(a.nota) || 0) > (parseFloat(b.nota) || 0) ? -1 : 1);
-        const baseMerit = careerCounts[schName] || 0;
+        // Ordenar por nota descendente para los adjudicados
+        students.sort((a, b) => (parseFloat(b.nota) || 0) - (parseFloat(a.nota) || 0));
+        const baseMerit = Math.max(careerMaxPos[schName] || 0, careerDirectCount[schName] || 0);
         students.forEach((student, index) => {
-          const schCode = schoolCodeMap[schName] || null;
-          const filial = schoolFilialMap[schName] || "CUSCO";
+          const schObj = student._schObj || findSchoolByString(schName);
+          const schCode = schoolCodeMap[schName] || (schObj ? schObj.codigo_carrera : null);
+          const filial = schoolFilialMap[schName] || (schObj ? (schObj.filial || "CUSCO") : "CUSCO");
           const newMerit = baseMerit + index + 1;
           adjudicatedIngresantes.push({
             CODPOSTULANTE: student.dni,
@@ -1614,13 +1902,29 @@ export default function Adjudication() {
             ANIO: anio,
             NOTA: String(student.nota),
             OMERITO: String(newMerit),
-            FECHAINGRESO: fechaIngresoValida
+            FECHAINGRESO: fechaIngresoValida,
+            OBSERVACION: "INGRESANTE ADJUDICACIÓN"
           });
+
+          // Actualizar orden de mérito correlativo en la tabla de adjudicación
+          if (student.id) {
+            supabase
+              .from("adjudicacion_ranking")
+              .update({ orden_merito: newMerit })
+              .eq("id", student.id)
+              .then();
+          }
         });
       });
       // 5. Consolidar ambas listas
       const finalIngresantes = [...directIngresantes, ...adjudicatedIngresantes];
-      // 6. Limpiar participantes antiguos de esta modalidad
+
+      // 6. PROTECCIÓN Y VALIDACIÓN: Prohibido borrar si la lista está vacía
+      if (finalIngresantes.length === 0) {
+        throw new Error("No se encontraron ingresantes válidos (regulares o adjudicados) para migrar. Operación abortada para proteger la tabla de participantes.");
+      }
+
+      // 7. Limpiar participantes antiguos de esta modalidad solo tras confirmar que hay datos válidos a insertar
       const { error: delErr } = await supabase
         .from("participantes")
         .delete()
@@ -1628,14 +1932,13 @@ export default function Adjudication() {
         .eq("SEMESTRE", semestre)
         .eq("ANIO", anio);
       if (delErr) throw delErr;
-      // 7. Insertar todos los ingresantes consolidados en bloques
-      if (finalIngresantes.length > 0) {
-        const chunkSize = 100;
-        for (let i = 0; i < finalIngresantes.length; i += chunkSize) {
-          const chunk = finalIngresantes.slice(i, i + chunkSize);
-          const { error: insErr } = await supabase.from("participantes").insert(chunk);
-          if (insErr) throw insErr;
-        }
+
+      // 8. Insertar todos los ingresantes consolidados en bloques
+      const chunkSize = 100;
+      for (let i = 0; i < finalIngresantes.length; i += chunkSize) {
+        const chunk = finalIngresantes.slice(i, i + chunkSize);
+        const { error: insErr } = await supabase.from("participantes").insert(chunk);
+        if (insErr) throw insErr;
       }
       setMigrateStatus("success");
       setMigrateMessage(`¡Proceso finalizado! Se migraron exitosamente ${finalIngresantes.length} ingresantes oficiales a participantes (${directIngresantes.length} regulares y ${adjudicatedIngresantes.length} adjudicados) con filiales y orden de mérito consecutivo resueltos.`);
@@ -1796,34 +2099,9 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
             Cargando procesos...
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {procesos.map((p, idx) => (
-              <div
-                key={idx}
-                onClick={() => {
-                  setActiveProcessName(p);
-                  setCurrentView("detail");
-                }}
-                className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md cursor-pointer transition-all hover:-translate-y-1 group"
-              >
-                <div className="flex flex-col h-full">
-                  <span className="bg-blue-50 text-blue-700 text-[10px] font-black tracking-widest uppercase px-3 py-1 rounded-lg w-fit mb-4">
-                    Adjudicación
-                  </span>
-                  <h3 className="font-black text-slate-900 text-lg mb-2 group-hover:text-primary transition-colors">
-                    {p}
-                  </h3>
-                  <p className="text-sm font-bold text-slate-400 mt-auto flex items-center justify-between pt-4">
-                    Tocar para gestionar
-                    <span className="material-symbols-outlined text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                      arrow_forward
-                    </span>
-                  </p>
-                </div>
-              </div>
-            ))}
-            {procesos.length === 0 && (
-              <div className="col-span-full text-center py-20 bg-white border border-slate-200 border-dashed rounded-3xl">
+          <div className="space-y-10">
+            {procesos.length === 0 ? (
+              <div className="text-center py-20 bg-white border border-slate-200 border-dashed rounded-3xl">
                 <span className="material-symbols-outlined text-4xl text-slate-300 mb-2">
                   inbox
                 </span>
@@ -1831,6 +2109,65 @@ ALTER TABLE adjudicacion_ranking DISABLE ROW LEVEL SECURITY;
                   No hay procesos de adjudicación creados aún.
                 </p>
               </div>
+            ) : (
+              (() => {
+                const grouped = getGroupedProcesses(procesos, allModalidadesDb, activeModalidadIds);
+                return Object.keys(grouped)
+                  .sort(sortYears)
+                  .map((year) => (
+                    <div key={year} className="bg-white p-8 rounded-3xl border border-slate-200/85 shadow-sm space-y-6">
+                      <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+                        <span className="material-symbols-outlined text-primary text-2xl">
+                          calendar_today
+                        </span>
+                        <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                          Año Académico: {year}
+                        </h2>
+                      </div>
+                      
+                      <div className="space-y-6">
+                        {Object.keys(grouped[year])
+                          .sort(sortSemesters)
+                          .map((semester) => (
+                            <div key={semester} className="space-y-3">
+                              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                                {semester}
+                              </h3>
+                              
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {grouped[year][semester].map((p, idx) => (
+                                  <div
+                                    key={idx}
+                                    onClick={() => {
+                                      setActiveProcessName(p);
+                                      setCurrentView("detail");
+                                    }}
+                                    className="bg-slate-50/50 hover:bg-white p-5 rounded-2xl border border-slate-200 hover:border-primary/40 shadow-sm hover:shadow-md cursor-pointer transition-all hover:-translate-y-0.5 group"
+                                  >
+                                    <div className="flex flex-col h-full">
+                                      <span className="bg-blue-50 text-blue-700 text-[9px] font-black tracking-widest uppercase px-2.5 py-1 rounded-md w-fit mb-3">
+                                        Adjudicación
+                                      </span>
+                                      <h4 className="font-extrabold text-slate-800 text-base mb-1 group-hover:text-primary transition-colors leading-snug">
+                                        {p}
+                                      </h4>
+                                      <p className="text-xs font-bold text-slate-400 mt-auto flex items-center justify-between pt-3">
+                                        Gestionar
+                                        <span className="material-symbols-outlined text-primary text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                                          arrow_forward
+                                        </span>
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ));
+              })()
             )}
           </div>
         )}

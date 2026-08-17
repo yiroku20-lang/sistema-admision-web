@@ -291,6 +291,7 @@ export interface VacancyReservationDetail {
     starting_semester: string;
     grade_level?: string;
     admission_modality?: string;
+    semestre_ingreso?: string;
     is_withdrawn?: boolean;
     withdrawal_resolution_number?: string;
     withdrawal_resolution_date?: string;
@@ -432,6 +433,7 @@ export interface PersonalSorteo {
   notificado?: boolean;
   motivo_rechazo?: string;
   fecha_limite_confirmacion?: string;
+  horario_data?: any[];
   created_at: string;
 }
 

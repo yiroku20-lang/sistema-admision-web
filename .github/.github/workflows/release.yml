@@ -1,0 +1,51 @@
+name: Release Electron App
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Install Root Dependencies
+        run: npm install --legacy-peer-deps
+
+      # 1. Instalar y Compilar Backend
+      - name: Install and Build Backend
+        run: |
+          npm install --prefix backend --legacy-peer-deps
+          npm run build --prefix backend
+
+      # 2. Instalar y Compilar Frontend (React Web App)
+      - name: Install and Build Frontend
+        run: |
+          npm install --prefix frontend --legacy-peer-deps
+          npm run build --prefix frontend
+        env:
+          VITE_API_URL: http://localhost:5000 # La app de escritorio llamará a Express local
+
+      # 3. Auto-incrementar Versión y Publicar Release en GitHub
+      - name: Auto-bump Version and Publish Electron Release
+        run: |
+          cd desktop
+          npm version patch --no-git-tag-version
+          npm install --legacy-peer-deps
+          npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

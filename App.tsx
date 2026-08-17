@@ -28,6 +28,7 @@ import ApplicantPreReview from './pages/ApplicantPreReview';
 import Adjudication from './pages/Adjudication';
 import { VacancyEvolution } from './pages/VacancyEvolution';
 import { ExamBudget } from './pages/ExamBudget';
+import { IngresantesReport } from './pages/IngresantesReport';
 import { Login } from './pages/Login';
 import { Unsubscribe } from './pages/Unsubscribe';
 import { ChatBot } from './components/ChatBot';
@@ -187,6 +188,10 @@ function App() {
               
               {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_personal'))) && (
                 <Route path="/staff" element={<StaffManagement user={user} notify={addToast} />} />
+              )}
+              
+              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_reporte_ingresantes'))) && (
+                <Route path="/reporte-ingresantes" element={<IngresantesReport user={user} notify={addToast} />} />
               )}
               
               <Route path="/staff-confirm" element={<StaffConfirmation />} />

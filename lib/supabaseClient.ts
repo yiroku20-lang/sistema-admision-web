@@ -1,33 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
 import { safeStorage } from './safeStorage';
 
-// Default credentials provided by user
-// NOTE: Ideally these should be environment variables.
-const DEFAULT_URL = 'https://cnqpzyanmmwspvemcfeb.supabase.co';
+export const DEFAULT_URL = 'https://cnqpzyanmmwspvemcfeb.supabase.co';
 
-// UPDATE: Using the provided 'anon' / 'public' key.
-const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4MTU3NDMsImV4cCI6MjA4NTM5MTc0M30.A-aFJv-V4JJvlvWxf4OAYo5xZ-RIkha3O7Umqh4yETs'; 
-
-// Helper to get keys with priority: LocalStorage > Env > Default Constant
-const getUrl = () => safeStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL;
-const getKey = () => safeStorage.getItem('supabase_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_KEY;
-
-const supabaseUrl = getUrl();
-const supabaseAnonKey = getKey();
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase credentials missing. Please configure them in the Settings page.');
+// Clean up stale local storage overrides if present
+try {
+  safeStorage.removeItem('supabase_key');
+  safeStorage.removeItem('supabase_url');
+} catch (e) {
+  // ignore
 }
 
-// Initialize with a placeholder if missing to prevent crash, but requests will fail until configured
-export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder'
-);
+// 1. Initialize Supabase client using strictly public anon key or env variables
+const VALID_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4MTU3NDMsImV4cCI6MjA4NTM5MTc0M30.A-aFJv-V4JJvlvWxf4OAYo5xZ-RIkha3O7Umqh4yETs';
 
-// Helper to check if we have valid-looking keys
-export const isConfigured = () => {
-    const url = getUrl();
-    const key = getKey();
-    return url.length > 0 && key.length > 0 && url !== 'https://placeholder.supabase.co' && key !== 'placeholder';
-};
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL;
+const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY;
+
+// Si envKey existe pero es la clave alterada antigua (407B6...), usar VALID_ANON_KEY
+const supabaseAnonKey = (envKey && !envKey.includes('407B6-8OaE4eS3nL')) ? envKey : VALID_ANON_KEY;
+
+// Main public client initialized with anon credentials
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Public alias for components to ensure service_role key is never exposed in browser bundles
+export const supabaseAdmin = supabase;
+
+export const isConfigured = () => true;

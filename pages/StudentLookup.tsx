@@ -20,14 +20,19 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
-  // Local API configuration (Cloudflare URL / Localhost fallback)
+  // Local API configuration (Cloudflare URL / Localhost / Electron fallback)
   const [localApiUrl] = useState(() => {
     const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    if (isLocalhost) {
+    const isElectronOrFile = typeof window !== 'undefined' && (
+      window.navigator.userAgent.toLowerCase().includes('electron') ||
+      window.location.protocol === 'file:'
+    );
+    const customUrl = localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL;
+    if (customUrl) return customUrl;
+    if (isLocalhost || isElectronOrFile) {
       return 'http://127.0.0.1:5000';
     }
-    // Si estamos en producción (Netlify), usamos la ruta relativa (vacía) para ir a través del proxy de Netlify Functions
-    return localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL || '';
+    return '';
   });
   
   const isLocalApp = typeof window !== 'undefined' && (
@@ -101,17 +106,20 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           if (!resDocs.ok) {
               if (resDocs.status === 404) {
                  setLocalDocuments([]);
-                 setDocsError('No se encontraron documentos en el disco local.');
+                 setDocsError('No se encontraron expedientes locales para este código.');
               } else {
-                 throw new Error('Servidor local apagado o desconectado.');
+                 throw new Error('Servidor local de archivos desconectado.');
               }
           } else {
               const data = await resDocs.json();
-              // Array could be data or data.documents depending on how the other AI returned it
               setLocalDocuments(data.documents || data || []);
           }
       } catch (err: any) {
-          setDocsError(err.message);
+          if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
+              setDocsError('Servidor local de expedientes no disponible en este entorno web.');
+          } else {
+              setDocsError(err.message || 'Servidor local no disponible.');
+          }
           setLocalDocuments([]);
       } finally {
           setLoadingDocs(false);
@@ -1138,12 +1146,15 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                             </div>
                                         ) : docsError ? (
                                             <div className="flex flex-col gap-1">
-                                                <div className="bg-red-50 text-red-600 text-[10px] p-2 rounded border border-red-100 font-bold">
-                                                    {docsError}
+                                                <div className="bg-amber-50 text-amber-800 text-[10px] p-2.5 rounded-lg border border-amber-200 font-bold flex items-start gap-2">
+                                                    <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
+                                                    <div>
+                                                        <p className="font-extrabold">{docsError}</p>
+                                                        <p className="text-[9px] font-normal text-amber-700 mt-1 leading-tight">
+                                                            Los expedientes físicos (400 GB en disco H:) requieren abrir la <b>App de Escritorio (.exe)</b> en la PC local de Admisión o configurar la URL del Servidor en Ajustes.
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <p className="text-[9px] text-slate-400">
-                                                    Asegúrate de que el servidor local (H:) esté activo y conectado adecuadamente.
-                                                </p>
                                             </div>
                                         ) : localDocuments.length > 0 ? (
                                             <div className="flex flex-col gap-3">

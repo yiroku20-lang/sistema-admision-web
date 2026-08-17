@@ -41,7 +41,8 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     { id: 'view_pre_review', label: 'Pre-revisión de Postulantes' },
     { id: 'view_presupuesto', label: 'Presupuesto de Examen' },
     { id: 'upload_csv', label: 'Cargar Archivos CSV / Padrones' },
-    { id: 'view_personal', label: 'Gestión de Personal' }
+    { id: 'view_personal', label: 'Gestión de Personal' },
+    { id: 'view_reporte_ingresantes', label: 'Reporte Oficial de Ingresantes' }
   ];
 
   // Own Password State
