@@ -5,6 +5,24 @@
       // Saneamiento inmediato de localStorage e interceptor de JSON.parse para evitar bloqueos por iframe/preview
       (function() {
         try {
+          // Prevenir error 'Cannot set property fetch of #<Window> which has only a getter'
+          var nativeFetch = window.fetch;
+          var activeFetch = nativeFetch ? nativeFetch.bind(window) : undefined;
+          try {
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return activeFetch;
+              },
+              set: function(newFetch) {
+                activeFetch = newFetch;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          } catch(err) {
+            console.warn("Could not define custom fetch descriptor:", err);
+          }
+
           // Limpiar claves corruptas existentes
           for (var i = 0; i < localStorage.length; i++) {
             var key = localStorage.key(i);
@@ -169,20 +187,6 @@
             }
         }
     </style>
-    <script>
-      (function() {
-        try {
-          var o = window.fetch;
-          Object.defineProperty(window, "fetch", {
-            get: function() { return o; },
-            set: function(v) { console.warn("Blocked overwrite of fetch", v); },
-            configurable: true
-          });
-        } catch (e) {
-          console.warn("Could not override fetch property:", e);
-        }
-      })();
-    </script>
     <link rel="stylesheet" href="/index.css">
   </head>
   <body class="bg-background-light text-slate-900 antialiased overflow-hidden">

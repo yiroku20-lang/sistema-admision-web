@@ -28,12 +28,22 @@ jobs:
 
       - name: Build Web App
         run: npm run build
+<<<<<<< HEAD
+=======
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+>>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
 
       - name: Auto-bump Version and Publish Electron Release
         run: |
           cd desktop
           npm version patch --no-git-tag-version
           npm install --legacy-peer-deps
+<<<<<<< HEAD
           npx electron-builder --publish always
+=======
+          npm run dist:publish
+>>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

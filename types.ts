@@ -131,6 +131,7 @@ export interface CVEscuela {
   id: string;
   nombre: string;
   codigo_carrera: string;
+  siglas?: string;
   area: string;
   filial: string;
   is_hidden?: boolean;

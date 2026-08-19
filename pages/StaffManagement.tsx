@@ -1,3 +1,4 @@
+import { BiometricEnrollModal } from "../components/BiometricEnrollModal";
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -31,6 +32,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
 
   // Directorio State
   const [directorio, setDirectorio] = useState<PersonalDirectorio[]>([]);
+  const [enrollModalOpen, setEnrollModalOpen] = useState(false);
+  const [enrollPerson, setEnrollPerson] = useState<PersonalDirectorio | null>(null);
   const [dirSearch, setDirSearch] = useState('');
   const [dirPage, setDirPage] = useState(0);
   const [dirTotalItems, setDirTotalItems] = useState(0);
@@ -782,8 +785,10 @@ UNSAAC`);
                 <div style="display: flex; justify-content: center; gap: 16px;">
                   <a href="${confirmLinkBase}&action=confirm" style="display:inline-block;padding:12px 24px;background-color:#10b981;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;min-width:120px;">SÍ, CONFIRMO</a>
                   <a href="${confirmLinkBase}&action=decline" style="display:inline-block;padding:12px 24px;background-color:#ef4444;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;font-size:14px;min-width:120px;">NO PODRÉ</a>
-                </div>
-              </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
             `;
 
             const htmlBody = emailTemplate
@@ -983,7 +988,8 @@ UNSAAC`);
             Gestión de Personal y Procesos
          </h1>
          <p className="text-slate-500 text-sm">Directorio, cuadros de necesidades y confirmación de personal para admisiones.</p>
-      </div>
+        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
       <div className="flex bg-slate-100 p-1.5 justify-start rounded-2xl w-fit">
         <button 
@@ -1004,7 +1010,8 @@ UNSAAC`);
         >
           Sorteos y Confirmación
         </button>
-      </div>
+        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
       {loading && <div className="text-slate-500 text-xs text-center py-4">Cargando...</div>}
 
@@ -1026,12 +1033,15 @@ UNSAAC`);
                                 onKeyDown={e => e.key === 'Enter' && handleSearchDirectorio()}
                                 className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-primary outline-none bg-slate-50"
                             />
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <button onClick={handleSearchDirectorio} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm">
                             Buscar
                         </button>
-                      </div>
-                  </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                   <div className="flex flex-col sm:flex-row gap-3">
                       <div>
@@ -1041,22 +1051,27 @@ UNSAAC`);
                              <span className="material-symbols-outlined text-[18px]">upload</span>
                              Importar CSV
                           </label>
-                      </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                       
                       <div className="flex items-end">
                          <button onClick={() => setShowAddDirModal(true)} className="bg-primary hover:bg-primary/90 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm w-full sm:w-auto">
                              <span className="material-symbols-outlined text-[18px]">person_add</span>
                              Agregar
                          </button>
-                      </div>
-                  </div>
-              </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                      <h3 className="font-bold text-slate-900">Directorio Actual (Muestra)</h3>
                      <span className="text-xs font-black bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{directorio.length} registros</span>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   <div className="overflow-x-auto max-h-[500px]">
                       <table className="w-full text-left border-collapse">
                           <thead className="bg-slate-50 uppercase text-[10px] font-black text-slate-500 tracking-wider sticky top-0">
@@ -1083,7 +1098,10 @@ UNSAAC`);
                                          {p.telefono && <p className="text-slate-500">{p.telefono}</p>}
                                          {(!p.correo && !p.telefono) && <span className="text-slate-400 italic">Sin datos</span>}
                                       </td>
-                                      <td className="p-4 text-center">
+                                      <td className="p-4 text-center flex items-center justify-center gap-1">
+                                         <button onClick={() => { setEnrollPerson(p); setEnrollModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Enrolar Huella">
+                                            <span className="material-symbols-outlined text-[18px]">fingerprint</span>
+                                         </button>
                                          <button onClick={() => handleEditDirPerson(p)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar Personal">
                                             <span className="material-symbols-outlined text-[18px]">edit</span>
                                          </button>
@@ -1097,13 +1115,15 @@ UNSAAC`);
                               )}
                           </tbody>
                       </table>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   
                   {dirTotalItems > 0 && (
                       <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs font-medium text-slate-500 bg-slate-50">
                           <div>
                               Mostrando {dirPage * 100 + 1} a {Math.min((dirPage + 1) * 100, dirTotalItems)} de {dirTotalItems} resultados
-                          </div>
+                            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                           <div className="flex items-center gap-2">
                               <button 
                                   disabled={dirPage === 0} 
@@ -1120,11 +1140,15 @@ UNSAAC`);
                               >
                                   <span className="material-symbols-outlined text-[18px]">chevron_right</span>
                               </button>
-                          </div>
-                      </div>
+                            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   )}
-              </div>
-          </div>
+                <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* PROCESOS TAB */}
@@ -1136,7 +1160,8 @@ UNSAAC`);
                    <span className="material-symbols-outlined text-[18px]">{showNewProceso ? 'close' : 'add'}</span>
                    {showNewProceso ? 'Cancelar' : 'Nuevo Proceso'}
                 </button>
-             </div>
+               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
              {showNewProceso && (
                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-6 animate-in slide-in-from-top-4">
@@ -1145,7 +1170,8 @@ UNSAAC`);
                         <div className="flex flex-col gap-2">
                            <label className="text-xs font-bold text-slate-700">Nombre del Proceso</label>
                            <input type="text" value={newProcesoName} onChange={e => setNewProcesoName(e.target.value.toUpperCase())} className="border border-slate-200 rounded-xl p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none" placeholder="Ej. EXAMEN ORDINARIO 2026-I" />
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div className="flex flex-col gap-2">
                            <label className="text-xs font-bold text-slate-700">Modalidad Asociada</label>
                            <select value={newProcesoModalidad} onChange={e => setNewProcesoModalidad(e.target.value)} className="border border-slate-200 rounded-xl p-3 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none">
@@ -1154,8 +1180,10 @@ UNSAAC`);
                                    <option key={m.id} value={m.id}>{m.nombre} ({m.cv_cuadros_anuales?.anio})</option>
                                ))}
                            </select>
-                        </div>
-                    </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div className="flex flex-col gap-4 mt-2">
                         <div className="flex items-center justify-between">
@@ -1163,7 +1191,8 @@ UNSAAC`);
                            <button onClick={handleAddNecesidadRow} className="text-xs font-bold text-primary hover:text-primary/80 flex items-center gap-1">
                                <span className="material-symbols-outlined text-[16px]">add_circle</span> Añadir Cargo
                            </button>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         
                         {newNecesidades.map((n, idx) => (
                             <div key={idx} className="flex gap-4 items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -1172,22 +1201,28 @@ UNSAAC`);
                                        <option value="">-- SELECCIONAR CARGO --</option>
                                        {dbCargos.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
                                    </select>
-                                </div>
+                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                 <div className="w-32 flex items-center gap-2">
                                     <span className="text-xs text-slate-500 font-bold">Cant:</span>
                                     <input type="number" min="0" value={n.cantidad} onChange={e => handleUpdateNecesidad(idx, 'cantidad', parseInt(e.target.value)||0)} className="w-20 text-xs p-2 border border-slate-200 rounded-lg outline-none text-right font-mono" />
-                                </div>
+                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                 <button onClick={() => handleDeleteNecesidad(idx)} className="text-red-400 hover:text-red-600 p-1">
                                     <span className="material-symbols-outlined">delete</span>
                                 </button>
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         ))}
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div className="flex justify-end mt-4">
                         <button onClick={handleSaveProceso} className="bg-slate-900 hover:bg-black text-white px-6 py-3 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95">Guardar Proceso</button>
-                    </div>
-                 </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                   <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
              )}
 
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1196,20 +1231,26 @@ UNSAAC`);
                         <div className="flex justify-between items-start">
                             <span className="material-symbols-outlined text-slate-300 group-hover:text-primary transition-colors text-3xl">assignment</span>
                             <span className={`px-2 py-1 text-[10px] font-black rounded uppercase tracking-widest ${proc.estado === 'Borrador' ? 'bg-slate-100 text-slate-500' : 'bg-green-100 text-green-700'}`}>{proc.estado}</span>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div>
                            <h4 className="font-black text-slate-800 text-sm leading-tight">{proc.nombre}</h4>
                            <p className="text-xs text-slate-500 font-medium mt-1 truncate">{(proc as any).modalidad?.nombre || 'General'}</p>
-                        </div>
-                     </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                       <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                  ))}
                  {procesos.length === 0 && !showNewProceso && (
                      <div className="col-span-full text-center text-slate-500 py-10 bg-white rounded-2xl border border-dashed border-slate-300">
                          No hay procesos creados. Crea el primero.
-                     </div>
+                       <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                  )}
-             </div>
-          </div>
+               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* DETALLE DEL PROCESO */}
@@ -1223,8 +1264,10 @@ UNSAAC`);
                     <div>
                       <h3 className="font-black text-slate-900 text-lg">{selectedProceso.nombre}</h3>
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Requerimientos de Personal</p>
-                    </div>
-                </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 {!isEditingNecesidades ? (
                     <button onClick={handleEditNecesidades} className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1">
                         <span className="material-symbols-outlined text-[16px]">edit</span> Editar Cuadro
@@ -1237,9 +1280,11 @@ UNSAAC`);
                         <button onClick={handleSaveEditedNecesidades} className="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1">
                            <span className="material-symbols-outlined text-[16px]">save</span> Guardar
                         </button>
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 )}
-             </div>
+               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 {!isEditingNecesidades ? (
@@ -1277,7 +1322,8 @@ UNSAAC`);
                                        <option value="">-- SELECCIONAR CARGO --</option>
                                        {dbCargos.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
                                    </select>
-                                </div>
+                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                 <div className="w-32 flex items-center gap-2">
                                     <span className="text-xs text-slate-500 font-bold">Cant:</span>
                                     <input type="number" min="0" value={n.cantidad} onChange={e => {
@@ -1285,22 +1331,27 @@ UNSAAC`);
                                         updated[idx].cantidad = parseInt(e.target.value) || 0;
                                         setEditNecesidadesRows(updated);
                                     }} className="w-20 text-xs p-2 border border-slate-200 rounded-lg outline-none text-right font-mono" />
-                                </div>
+                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                 <button onClick={() => {
                                     const updated = editNecesidadesRows.filter((_, i) => i !== idx);
                                     setEditNecesidadesRows(updated);
                                 }} className="text-red-400 hover:text-red-600 p-1">
                                     <span className="material-symbols-outlined">delete</span>
                                 </button>
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         ))}
                         <button onClick={() => setEditNecesidadesRows([...editNecesidadesRows, { cargo: '', cantidad: 0 }])} className="text-xs font-bold text-primary hover:text-primary/80 flex items-center gap-1 w-fit mt-2">
                             <span className="material-symbols-outlined text-[16px]">add_circle</span> Añadir Fila de Cargo
                         </button>
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 )}
-             </div>
-          </div>
+               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* SORTEOS TAB */}
@@ -1316,7 +1367,8 @@ UNSAAC`);
                       <button onClick={() => setIsFullScreen(false)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 font-bold transition-colors text-sm flex items-center gap-2">
                           <span className="material-symbols-outlined text-[18px]">close_fullscreen</span> Salir
                       </button>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
               )}
 
               {/* COMPACT TOOLBAR */}
@@ -1325,14 +1377,16 @@ UNSAAC`);
                   <div className="flex items-center gap-3 w-full sm:w-auto bg-slate-50 rounded-lg p-1 pr-3 border border-slate-100 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all">
                       <div className="bg-white p-2 rounded-md shadow-sm text-slate-400 flex items-center justify-center">
                          <span className="material-symbols-outlined text-[18px]">event_list</span>
-                      </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                       <select value={selectedSorteoProceso} onChange={e => setSelectedSorteoProceso(e.target.value)} className="border-none bg-transparent font-black text-slate-800 text-xs sm:text-sm focus:ring-0 outline-none cursor-pointer p-1 w-full sm:max-w-md truncate appearance-none">
                            <option value="">-- Seleccionar Proceso --</option>
                            {procesos.map(p => (
                                <option key={p.id} value={p.id}>{p.nombre}</option>
                            ))}
                       </select>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                   {/* Actions (Only show if process selected) */}
                   {selectedSorteoProceso && (
@@ -1362,9 +1416,11 @@ UNSAAC`);
                           <button onClick={handleOpenCommModal} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors border border-blue-600">
                              <span className="material-symbols-outlined text-[16px]">campaign</span> Comunicado <span className="hidden lg:inline">a Visibles</span>
                           </button>
-                      </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   )}
-              </div>
+                <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
               {selectedSorteoProceso && (
                   <div className={`flex gap-4 animate-in fade-in flex-1 overflow-hidden ${isFullScreen ? 'flex-row' : 'flex-col'}`}>
@@ -1387,11 +1443,13 @@ UNSAAC`);
                                                 <div className="flex items-end gap-1.5">
                                                     <span className={`text-2xl font-black leading-none ${pct >= 100 ? 'text-emerald-600' : 'text-slate-900'}`}>{stat.confirmados}</span>
                                                     <span className="text-xs font-medium text-slate-500 mb-0.5 whitespace-nowrap">/ {stat.requerida} requeridos</span>
-                                                </div>
+                                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                                 <div className="mt-2 text-[10px] font-bold text-indigo-600 flex items-center gap-1 bg-indigo-50 w-fit px-1.5 py-0.5 rounded mb-2">
                                                     <span className="material-symbols-outlined text-[14px]">hourglass_top</span>
                                                     {stat.pendientes} notif. pendientes
-                                                </div>
+                                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                                 
                                                 {stat.confirmados > 0 && (() => {
                                                     const hasExistingSchedule = sorteos.some(
@@ -1440,17 +1498,25 @@ UNSAAC`);
                                                                     Control de Asistencia
                                                                 </button>
                                                             )}
+<<<<<<< HEAD
                                                         </div>
+=======
+                                                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+>>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
                                                     );
                                                 })()}
 
                                                 <div className="absolute bottom-0 left-0 h-1.5 bg-slate-100 w-full" />
                                                 <div className={`absolute bottom-0 left-0 h-1.5 transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                                            </div>
+                                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                          )
                                      })}
-                                 </div>
-                             </div>
+                                   <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                          )}
 
                          {showAddSorteo && (
@@ -1470,9 +1536,11 @@ UNSAAC`);
                                                 </button>
                                             ))}
                                             <button onClick={() => setShowDirSearch(false)} className="w-full text-center text-[10px] font-bold text-slate-400 p-2 bg-slate-50 hover:text-slate-600">Cerrar</button>
-                                         </div>
+                                           <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                      )}
-                                 </div>
+                                   <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                  
                                  <select value={newSorteo.cargo} onChange={e=>setNewSorteo({...newSorteo, cargo: e.target.value})} className="border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-primary outline-none uppercase font-bold text-slate-700">
                                        <option value="">-- SELECCIONAR CARGO --</option>
@@ -1485,11 +1553,14 @@ UNSAAC`);
                                  </select>
                                  <input type="email" placeholder="CORREO ELECTRÓNICO (Opcional)" value={newSorteo.email_personal} onChange={e=>setNewSorteo({...newSorteo, email_personal: e.target.value})} className="border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-primary outline-none" />
                                  <input type="text" placeholder="TELÉFONO (Opcional)" value={newSorteo.telefono} onChange={e=>setNewSorteo({...newSorteo, telefono: e.target.value})} className="border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-1 focus:ring-primary outline-none" />
-                             </div>
+                               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                              <div className="flex justify-end pt-2 border-t border-slate-100">
                                  <button onClick={handleSaveNewSorteo} className="bg-slate-900 hover:bg-black text-white px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-md">Guardar</button>
-                             </div>
-                         </div>
+                               <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                           <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                      )}
 
                      {/* Table Container */}
@@ -1499,7 +1570,8 @@ UNSAAC`);
                             <div className="flex bg-white border border-slate-200 rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-primary">
                                 <span className="material-symbols-outlined text-slate-400 p-2 text-[18px]">search</span>
                                 <input type="text" placeholder="Buscar DNI o Nombre..." value={sorteoFilters.search} onChange={e => setSorteoFilters({...sorteoFilters, search: e.target.value})} className="p-2 text-xs outline-none w-48 text-slate-700 font-medium" />
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                             <select value={sorteoFilters.cargo} onChange={e => setSorteoFilters({...sorteoFilters, cargo: e.target.value})} className="p-2 text-xs border border-slate-200 rounded-lg outline-none cursor-pointer bg-white">
                                 <option value="">Todos los Cargos</option>
                                 {uniqueCargosSorteos.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1512,7 +1584,8 @@ UNSAAC`);
                                 <option value="">Todos los Estados</option>
                                 {uniqueEstadosSorteos.map(e => <option key={e} value={e}>{e}</option>)}
                             </select>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div className="overflow-x-auto max-h-[600px]">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-50 uppercase text-[10px] font-black text-slate-500 tracking-wider sticky top-0">
@@ -1569,7 +1642,8 @@ UNSAAC`);
                                                     <button onClick={() => confirmParticipant(s.id, 'Rechazado')} title="Marcar Rechazo" className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
                                                        <span className="material-symbols-outlined text-[16px]">person_off</span>
                                                     </button>
-                                                </div>
+                                                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                            </td>
                                        </tr>
                                    ))}
@@ -1578,9 +1652,12 @@ UNSAAC`);
                                    )}
                                 </tbody>
                             </table>
-                        </div>
-                     </div>
-                  </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                       <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                   {/* Dashboard (Right Side when fullscreen) */}
                   {isFullScreen && sorteoDashboardStats.length > 0 && (
@@ -1590,7 +1667,8 @@ UNSAAC`);
                                  <span className="material-symbols-outlined text-primary">monitoring</span>
                                  Progreso
                               </h4>
-                          </div>
+                            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                           {sorteoDashboardStats.map(stat => {
                               const pct = stat.requerida > 0 ? Math.round((stat.confirmados / stat.requerida) * 100) : 0;
                               return (
@@ -1599,21 +1677,27 @@ UNSAAC`);
                                      <div className="flex items-end gap-1.5 mb-2">
                                          <span className={`text-3xl font-black leading-none tracking-tighter ${pct >= 100 ? 'text-emerald-600' : 'text-slate-900'}`}>{stat.confirmados}</span>
                                          <span className="text-xs font-medium text-slate-500 mb-0.5 whitespace-nowrap">/ {stat.requerida}</span>
-                                     </div>
+                                       <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                      <div className="text-[10px] font-bold text-blue-600 flex items-center gap-1 bg-blue-50 w-fit px-1.5 py-0.5 rounded border border-blue-100">
                                          <span className="material-symbols-outlined text-[14px]">hourglass_top</span>
                                          {stat.pendientes} pendientes
-                                     </div>
+                                       <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                      <div className="absolute bottom-0 left-0 h-1.5 bg-slate-100 w-full" />
                                      <div className={`absolute bottom-0 left-0 h-1.5 transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                                 </div>
+                                   <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                               )
                           })}
-                      </div>
+                        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   )}
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
               )}
-          </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Add Directorio Person Modal */}
@@ -1628,49 +1712,63 @@ UNSAAC`);
                     <button onClick={() => { setShowAddDirModal(false); setEditingDirPersonId(null); setNewDirPerson({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' }); }} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-5 overflow-y-auto max-h-[70vh] flex flex-col gap-4 text-sm">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">DNI *</label>
                             <input type="text" value={newDirPerson.dni} onChange={e=>setNewDirPerson({...newDirPerson, dni: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary font-mono" />
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">Condición</label>
                             <input type="text" value={newDirPerson.condicion} onChange={e=>setNewDirPerson({...newDirPerson, condicion: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary uppercase" placeholder="Ej. NOMBRADO" />
-                        </div>
-                    </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">Nombres y Apellidos *</label>
                         <input type="text" value={newDirPerson.nombre} onChange={e=>setNewDirPerson({...newDirPerson, nombre: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary" placeholder="Ej. LOPEZ PEREZ JUAN" />
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">Cargo / Departamento</label>
                         <input type="text" value={newDirPerson.departamento_cargo} onChange={e=>setNewDirPerson({...newDirPerson, departamento_cargo: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">Escuela Profesional</label>
                         <input type="text" value={newDirPerson.escuela_profesional} onChange={e=>setNewDirPerson({...newDirPerson, escuela_profesional: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">Correo Electrónico</label>
                             <input type="email" value={newDirPerson.correo} onChange={e=>setNewDirPerson({...newDirPerson, correo: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono</label>
                             <input type="tel" value={newDirPerson.telefono} onChange={e=>setNewDirPerson({...newDirPerson, telefono: e.target.value})} className="w-full border border-slate-200 rounded-lg p-2 outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
-                        </div>
-                    </div>
-                </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
                     <button onClick={() => { setShowAddDirModal(false); setEditingDirPersonId(null); setNewDirPerson({ dni: '', nombre: '', condicion: '', departamento_cargo: '', escuela_profesional: '', correo: '', telefono: '' }); }} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button onClick={handleSaveAddDirPerson} disabled={loading} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-primary hover:bg-primary/90 transition-colors flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">save</span> Guardar
                     </button>
-                </div>
-            </div>
-        </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Email Notification Modal */}
@@ -1685,17 +1783,20 @@ UNSAAC`);
                     <button onClick={() => setShowEmailModal(false)} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-4">
                     <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm flex gap-2">
                         <span className="material-symbols-outlined text-[20px]">info</span>
                         <p>Se enviará este correo a <strong>{filteredSorteos.filter(s => s.estado_confirmacion === 'Pendiente' && s.email_personal && !s.notificado).length}</strong> persona(s) filtrada(s) que tienen estado PENDIENTE, tienen correo registrado y NO han sido notificadas.</p>
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div>
                         <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">ASUNTO DEL CORREO</label>
                         <input type="text" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary font-bold text-slate-800" />
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
@@ -1709,7 +1810,8 @@ UNSAAC`);
                                 placeholder="Escribe la fecha aquí..."
                                 className="w-full border border-blue-200 rounded-lg p-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" 
                             />
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100">
                             <label className="block text-xs font-bold tracking-wider text-amber-800 mb-1">
                                 FECHA LÍMITE DE RESPUESTA
@@ -1720,8 +1822,10 @@ UNSAAC`);
                                 onChange={e => setEmailFechaLimite(e.target.value)} 
                                 className="w-full border border-amber-200 rounded-lg p-2 text-sm outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500" 
                             />
-                        </div>
-                    </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div>
                         <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">CUERPO DEL CORREO (Puedes editarlo)</label>
@@ -1733,24 +1837,31 @@ UNSAAC`);
                                 <span><code>{'{enlace_confirmacion}'}</code> = Botón de enlace</span>
                                 <span><code>{'{fecha_examen}'}</code> = Fecha descrita arriba</span>
                                 <span><code>{'{fecha_limite}'}</code> = Fecha límite (formateada)</span>
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                             <div className="mt-2"><strong>Formato:</strong> Usa <code>**texto**</code> para poner palabras en <strong>negrilla</strong>.</div>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <textarea 
                             value={emailTemplate} 
                             onChange={e => setEmailTemplate(e.target.value)} 
                             className="w-full border border-slate-200 rounded-lg p-3 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary font-mono bg-slate-50 min-h-[350px]"
                         ></textarea>
-                    </div>
-                </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
                     <button onClick={() => setShowEmailModal(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button onClick={sendEmailNotifications} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-primary hover:bg-primary/90 transition-colors flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">send</span> Enviar Correos
                     </button>
-                </div>
-            </div>
-        </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Communication Modal */}
@@ -1765,17 +1876,20 @@ UNSAAC`);
                     <button onClick={() => setShowCommModal(false)} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-4">
                     <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm flex gap-2">
                         <span className="material-symbols-outlined text-[20px]">info</span>
                         <p>Se enviará este comunicado a <strong>{filteredSorteos.filter(s => s.email_personal).length}</strong> persona(s) visible(s) en la tabla que tienen correo registrado.</p>
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div>
                         <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">ASUNTO DEL COMUNICADO</label>
                         <input type="text" value={commSubject} onChange={e => setCommSubject(e.target.value)} className="w-full border border-slate-200 rounded-lg p-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-bold text-slate-800" placeholder="Ej. Cambio de horario..." />
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div>
                         <label className="block text-xs font-bold tracking-wider text-slate-500 mb-1">CUERPO DEL COMUNICADO</label>
@@ -1784,15 +1898,18 @@ UNSAAC`);
                             <div className="grid grid-cols-2 gap-1 mt-1">
                                 <span><code>{'{nombre}'}</code> = Nombre de la persona</span>
                                 <span><code>{'{cargo}'}</code> = Cargo asignado</span>
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                             <div className="mt-2"><strong>Formato:</strong> Usa <code>**texto**</code> para poner palabras en <strong>negrilla</strong> y la tecla enter para saltos de línea.</div>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <textarea 
                             value={commMessage} 
                             onChange={e => setCommMessage(e.target.value)} 
                             className="w-full border border-slate-200 rounded-lg p-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-sans bg-slate-50 min-h-[200px]"
                         ></textarea>
-                    </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
                     <div>
                         <label className="block text-xs font-bold tracking-wider text-slate-500 mb-2">ARCHIVOS ADJUNTOS (Max 5MB cada uno)</label>
@@ -1801,7 +1918,8 @@ UNSAAC`);
                                 <span className="material-symbols-outlined text-[18px]">attach_file</span> Adjuntar Archivo
                                 <input type="file" multiple className="hidden" onChange={handleCommFileChange} />
                             </label>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         {commAttachments.length > 0 && (
                             <div className="mt-3 flex flex-col gap-2">
                                 {commAttachments.map((att, idx) => (
@@ -1809,24 +1927,32 @@ UNSAAC`);
                                         <div className="flex items-center gap-2 text-blue-700 truncate">
                                             <span className="material-symbols-outlined text-[18px]">insert_drive_file</span>
                                             <span className="truncate max-w-[400px]">{att.filename}</span>
-                                        </div>
+                                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                         <button onClick={() => removeCommAttachment(idx)} className="text-red-500 hover:bg-red-100 p-1 rounded-full transition-colors">
                                             <span className="material-symbols-outlined text-[18px] block">delete</span>
                                         </button>
-                                    </div>
+                                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                                 ))}
-                            </div>
+                              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         )}
-                    </div>
-                </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
                     <button onClick={() => setShowCommModal(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button onClick={sendCommEmails} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">send</span> Enviar Comunicado
                     </button>
-                </div>
-            </div>
-        </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Import Sorteos Modal */}
@@ -1841,7 +1967,8 @@ UNSAAC`);
                     <button onClick={() => setIsImportSorteosModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
                     <div>
                         <p className="text-sm text-slate-600 mb-4">
@@ -1854,12 +1981,15 @@ UNSAAC`);
                             <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">SORTEADO</div>
                             <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">EMAILPERSONAL</div>
                             <div className="bg-slate-50 p-2 rounded border border-slate-200 text-xs font-mono font-bold text-slate-700">TELEFONO</div>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <p className="text-xs text-slate-500 bg-blue-50 text-blue-800 p-3 rounded-lg border border-blue-100">
                             <strong>Nota:</strong> Puedes descargar una plantilla de ejemplo para llenarla con tus datos. El campo <span className="font-mono">SORTEADO</span> debe contener el valor "Titular" o "Suplente".
                         </p>
-                    </div>
-                </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-between gap-3 bg-slate-50">
                     <button onClick={handleDownloadSorteosTemplate} className="px-5 py-2 rounded-xl text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors flex items-center gap-2">
                         <span className="material-symbols-outlined text-[18px]">download</span> Descargar Plantilla
@@ -1869,10 +1999,14 @@ UNSAAC`);
                         <button onClick={() => { setIsImportSorteosModalOpen(false); document.getElementById('sorteo-csv')?.click(); }} className="px-5 py-2 rounded-xl text-sm font-bold text-white bg-slate-900 hover:bg-black transition-colors flex items-center gap-2">
                             <span className="material-symbols-outlined text-[18px]">upload</span> Subir CSV
                         </button>
-                    </div>
-                </div>
-            </div>
-        </div>
+                      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Reject Modal */}
@@ -1887,7 +2021,8 @@ UNSAAC`);
                     <button onClick={() => setShowRejectModal({ isOpen: false, sorteoId: null })} className="text-red-400 hover:text-red-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-4">
                     <p className="text-sm text-slate-600">Por favor, indique el motivo por el cual la persona rechaza su participación (opcional).</p>
                     <textarea 
@@ -1896,7 +2031,8 @@ UNSAAC`);
                         placeholder="Ejemplo: Problemas de salud, viaje programado..."
                         className="w-full border border-slate-200 rounded-lg p-3 text-sm outline-none focus:border-red-400 focus:ring-1 focus:ring-red-400 min-h-[120px]"
                     ></textarea>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
                     <button onClick={() => setShowRejectModal({ isOpen: false, sorteoId: null })} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
                     <button 
@@ -1909,9 +2045,12 @@ UNSAAC`);
                     >
                         Confirmar Rechazo
                     </button>
-                </div>
-            </div>
-        </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* Report Modal */}
@@ -1926,7 +2065,8 @@ UNSAAC`);
                     <button onClick={() => setIsReportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                         <span className="material-symbols-outlined">close</span>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-6 flex flex-col gap-4">
                     <button 
                         onClick={() => {
@@ -1937,11 +2077,13 @@ UNSAAC`);
                     >
                         <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
                             <span className="material-symbols-outlined">picture_as_pdf</span>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div>
                             <div className="font-bold text-slate-800">Reporte en PDF</div>
                             <div className="text-xs text-slate-500">Documento listo para imprimir</div>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     </button>
                     <button 
                         onClick={handleGenerateExcel} 
@@ -1949,18 +2091,24 @@ UNSAAC`);
                     >
                         <div className="w-10 h-10 rounded-lg bg-green-100 text-green-600 flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors">
                             <span className="material-symbols-outlined">table</span>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                         <div>
                             <div className="font-bold text-slate-800">Reporte en Excel</div>
                             <div className="text-xs text-slate-500">Hoja de cálculo para exportar</div>
-                        </div>
+                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                     </button>
-                </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                 <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
                     <button onClick={() => setIsReportModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
-                </div>
-            </div>
-        </div>
+                  <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+              <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       {/* COMPONENTE OCULTO PARA IMPRESIÓN */}
@@ -1984,7 +2132,8 @@ UNSAAC`);
             <p style={{ fontSize: '12px', color: '#666', margin: '5px 0 0 0' }}>
                Total Listados: {filteredSorteos.length} personas
             </p>
-          </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
           <table>
             <thead>
@@ -2020,8 +2169,10 @@ UNSAAC`);
               )}
             </tbody>
           </table>
-        </div>
-      </div>
+          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+        <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
 
       {/* Progress Overlay for Email Sending */}
       {emailProgress && (
@@ -2029,7 +2180,8 @@ UNSAAC`);
               <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 flex flex-col items-center gap-4 text-center">
                   <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-2">
                       <span className="material-symbols-outlined text-3xl animate-pulse">mail</span>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   <h3 className="text-lg font-bold text-slate-900">Enviando Notificaciones</h3>
                   <p className="text-sm text-slate-600">{emailProgress.message}</p>
                   
@@ -2038,14 +2190,18 @@ UNSAAC`);
                           className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out" 
                           style={{ width: `${(emailProgress.current / emailProgress.total) * 100}%` }}
                       ></div>
-                  </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
                   
                   <div className="flex justify-between w-full text-xs font-bold text-slate-500">
                       <span>{emailProgress.current} enviados</span>
                       <span>{emailProgress.total} total</span>
-                  </div>
-              </div>
-          </div>
+                    <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+                <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
+            <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+    </div>
       )}
 
       <ScheduleBuilderModal
@@ -2073,6 +2229,10 @@ UNSAAC`);
           notify={notify}
       />
 
+<<<<<<< HEAD
+=======
+      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
+>>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
     </div>
   );
 };

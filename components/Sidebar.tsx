@@ -2,7 +2,11 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, User } from '../types';
+<<<<<<< HEAD
 import logoImg from '../logo_admision.png';
+=======
+import { UpdateStatusWidget } from './UpdateStatusWidget';
+>>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
 
 interface SidebarProps {
   user: User;
@@ -128,6 +132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, onLogout, isOpen, onClos
         </div>
 
         <div className="flex flex-col gap-2 pt-6">
+            <UpdateStatusWidget />
             <button 
                 onClick={() => { navigate('/settings'); onClose?.(); }}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-left ${
