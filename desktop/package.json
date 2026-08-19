@@ -1,6 +1,6 @@
 {
   "name": "backup-app-admision-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Carcasa Electron para Backup App Admision",
   "main": "main.js",
   "type": "commonjs",
@@ -71,7 +71,8 @@
       {
         "provider": "github",
         "owner": "yiroku20-lang",
-        "repo": "yiroku20-lang-s-Org"
+        "repo": "yiroku20-lang-s-Org",
+        "releaseType": "release"
       }
     ]
   }
