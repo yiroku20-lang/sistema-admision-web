@@ -1498,12 +1498,7 @@ UNSAAC`);
                                                                     Control de Asistencia
                                                                 </button>
                                                             )}
-<<<<<<< HEAD
                                                         </div>
-=======
-                                                          <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
-    </div>
->>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
                                                     );
                                                 })()}
 
@@ -2229,10 +2224,6 @@ UNSAAC`);
           notify={notify}
       />
 
-<<<<<<< HEAD
-=======
-      <BiometricEnrollModal isOpen={enrollModalOpen} onClose={() => { setEnrollModalOpen(false); setEnrollPerson(null); }} person={enrollPerson} notify={notify} />
->>>>>>> 82f7697f44d4d29a9d90b9d865ad528ec718f2fc
     </div>
   );
 };
