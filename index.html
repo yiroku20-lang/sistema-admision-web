@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <script>
+      // Saneamiento inmediato de localStorage e interceptor de JSON.parse para evitar bloqueos por iframe/preview
+      (function() {
+        try {
+          // Prevenir error 'Cannot set property fetch of #<Window> which has only a getter'
+          var nativeFetch = window.fetch;
+          var activeFetch = nativeFetch ? nativeFetch.bind(window) : undefined;
+          try {
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return activeFetch;
+              },
+              set: function(newFetch) {
+                activeFetch = newFetch;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          } catch(err) {
+            console.warn("Could not define custom fetch descriptor:", err);
+          }
+
+          // Limpiar claves corruptas existentes
+          for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            if (key) {
+              var val = localStorage.getItem(key);
+              if (val === 'undefined' || val === 'null' || val === '[object Object]') {
+                localStorage.removeItem(key);
+                i--;
+              }
+            }
+          }
+          
+          // Interceptador de localStorage.getItem
+          var originalGetItem = localStorage.getItem;
+          localStorage.getItem = function(key) {
+            var val = originalGetItem.call(localStorage, key);
+            if (val === 'undefined' || val === 'null') {
+              try { localStorage.removeItem(key); } catch(e){}
+              return null;
+            }
+            return val;
+          };
+
+          // Interceptador de JSON.parse ultra-seguro
+          var originalParse = JSON.parse;
+          JSON.parse = function(text, reviver) {
+            if (text === undefined || text === 'undefined') {
+              console.warn("JSON.parse interceptado para evitar error con 'undefined'");
+              return undefined;
+            }
+            if (text === null || text === 'null') {
+              return null;
+            }
+            try {
+              return originalParse.call(JSON, text, reviver);
+            } catch (err) {
+              // Si falla y el texto contiene "undefined", intentar sanearlo o retornar un objeto vacío/fallback
+              if (typeof text === 'string' && text.indexOf('undefined') !== -1) {
+                console.warn("Error de parseo debido a 'undefined' incrustado, retornando fallback:", err);
+                return {};
+              }
+              throw err;
+            }
+          };
+        } catch (e) {
+          console.warn("No se pudo inicializar saneamiento preventivo:", e);
+        }
+      })();
+    </script>
+    
+
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UNSAAC Admin Console</title>
+    <!-- Google Fonts: Cinzel & Poppins (Identidad Gráfica UNSAAC) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Material Symbols -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <!-- HTML2PDF Library -->
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: "#9b192d", // UNSAAC Old Brick
+              merlot: "#7b1523",  // UNSAAC Merlot
+              firebush: "#e8a134", // UNSAAC Fire Bush
+              "background-light": "#f6f7f8",
+              "background-dark": "#101822",
+              "surface-light": "#ffffff",
+              "surface-dark": "#1a2430",
+            },
+            fontFamily: {
+              sans: ["Poppins", "sans-serif"], // Tipografía Principal (Manual de Identidad)
+              serif: ["Cinzel", "serif"],      // Tipografía Institucional (Manual de Identidad)
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+        }
+        .font-cinzel {
+            font-family: 'Cinzel', serif;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        @media print {
+            @page {
+                size: auto;
+                margin: 1.5cm 1.2cm;
+            }
+            html, body, #root, #root > div, main, main > div, .overflow-y-auto, .overflow-x-auto {
+                height: auto !important;
+                min-height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+                overflow-y: visible !important;
+                overflow-x: visible !important;
+                position: static !important;
+            }
+            [class*="h-screen"], [class*="h-full"] {
+                height: auto !important;
+                max-height: none !important;
+            }
+            [class*="overflow-hidden"], [class*="overflow-y-auto"], [class*="overflow-x-auto"] {
+                overflow: visible !important;
+            }
+            body {
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            aside, nav, header, footer, .print\:hidden, [class*="print:hidden"] {
+                display: none !important;
+            }
+            .print\:break-inside-avoid {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                page-break-inside: auto !important;
+            }
+            tr {
+                page-break-inside: avoid !important;
+                page-break-after: auto !important;
+            }
+            thead {
+                display: table-header-group !important;
+            }
+            tfoot {
+                display: table-footer-group !important;
+            }
+            th, td {
+                color: #000000 !important;
+                border-color: #cbd5e1 !important;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="/index.css">
+  </head>
+  <body class="bg-background-light text-slate-900 antialiased overflow-hidden">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

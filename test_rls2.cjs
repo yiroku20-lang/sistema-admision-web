@@ -1,0 +1,10 @@
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient('https://cnqpzyanmmwspvemcfeb.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4MTU3NDMsImV4cCI6MjA4NTM5MTc0M30.A-aFJv-V4JJvlvWxf4OAYo5xZ-RIkha3O7Umqh4yETs');
+async function test() {
+  const uuid = '00000000-0000-0000-0000-000000000000';
+  const { error: insErr } = await supabase.from('pre_revision_archivos').insert({ modalidad_id: uuid, csv_data: [] });
+  console.log('insert error:', insErr);
+  const { error: delErr } = await supabase.from('pre_revision_archivos').delete().eq('modalidad_id', uuid);
+  console.log('delete error:', delErr);
+}
+test();
