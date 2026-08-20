@@ -6,6 +6,11 @@
   directory = "netlify/functions"
 
 [[redirects]]
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
   from = "/api/cron/*"
   to = "/.netlify/functions/cron-reminders"
   status = 200
