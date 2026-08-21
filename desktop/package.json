@@ -1,59 +1,83 @@
 {
-  "name": "unsaac-admin-desktop",
-  "version": "1.0.1",
-  "description": "UNSAAC Consola de Administración - Desktop App con Auto-Updater",
-  "main": "dist-electron/main.js",
-  "author": "UNSAAC",
+  "name": "sistema-admision-desktop",
+  "version": "1.0.21",
+  "description": "Sistema de Admision UNSAAC - Escritorio con Sincronizacion Oficial al Repositorio sistema-admision-web",
+  "main": "main.js",
+  "type": "commonjs",
   "scripts": {
-    "dev": "electron dist-electron/main.js",
-    "build:electron": "tsc",
-    "build": "npm run build:electron",
-    "dist": "npm run build:electron && electron-builder",
-    "dist:publish": "npm run build:electron && electron-builder --publish always"
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --publish always"
   },
   "dependencies": {
-    "electron-is-dev": "^3.0.1",
-    "electron-log": "^5.2.0",
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.1.7"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "typescript": "~5.8.2"
+    "electron": "^29.3.0",
+    "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "pe.edu.unsaac.adminconsole",
-    "productName": "UNSAAC Consola de Administración",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
+    "appId": "com.admision.backupapp",
+    "productName": "SistemaAdmision",
     "files": [
-      "dist-electron/**/*",
-      "../dist/**/*"
+      "main.js",
+      "preload.js",
+      "package.json",
+      {
+        "from": "../dist",
+        "to": "frontend/dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../backend/dist",
+        "to": "backend/dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "../../backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
-    "extraMetadata": {
-      "main": "dist-electron/main.js"
-    },
-    "publish": {
-      "provider": "github",
-      "releaseType": "release"
+    "extraResources": [
+      {
+        "from": "biometric",
+        "to": "biometric",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "dist"
     },
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64"]
-        }
-      ],
-      "icon": "build/icon.ico"
+      "target": "nsis",
+      "verifyUpdateCodeSignature": false,
+      "sign": null
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "UNSAAC Admin Console"
-    }
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "yiroku20-lang",
+        "repo": "sistema-admision-web"
+      }
+    ]
   }
 }
