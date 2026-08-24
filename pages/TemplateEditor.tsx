@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { Participant } from '../types';
+import { DEFAULT_OFFICIAL_TEMPLATES } from '../lib/defaultTemplates';
 
 // PLANTILLA HTML PREDEFINIDA (Optimizada para espacio)
 const DEFAULT_CONSTANCIA_HTML = `
@@ -297,21 +298,45 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
     const fetchTemplate = async () => {
         if (!isNew && id) {
             setIsLoading(true);
-            const { data, error } = await supabase
-                .from('templates')
-                .select('*')
-                .eq('id', id)
-                .single();
-            
-            if (data) {
-                setDocumentTitle(data.name);
-                setCategory(data.category || 'Admisión');
-                // Guardamos en estado, NO en el ref todavía
-                setFetchedContent(data.content || '');
-            } else {
-                console.error("Error loading template", error);
+            try {
+              const { data } = await supabase
+                  .from('templates')
+                  .select('*')
+                  .eq('id', id)
+                  .single();
+              
+              if (data) {
+                  setDocumentTitle(data.name || data.nombre || 'Plantilla');
+                  setCategory(data.category || data.categoria || 'Admisión');
+                  setFetchedContent(data.content || data.contenido || data.html || '');
+              } else {
+                  // Check if id matches any official base template
+                  const defaultFound = DEFAULT_OFFICIAL_TEMPLATES.find(
+                    t => t.id === id || t.name.toLowerCase() === id.toLowerCase()
+                  );
+                  if (defaultFound) {
+                    setDocumentTitle(defaultFound.name);
+                    setCategory(defaultFound.category);
+                    setFetchedContent(defaultFound.content);
+                  } else {
+                    setFetchedContent(DEFAULT_CONSTANCIA_HTML);
+                  }
+              }
+            } catch (err) {
+              console.warn("Fallback to default template:", err);
+              const defaultFound = DEFAULT_OFFICIAL_TEMPLATES.find(
+                t => t.id === id || t.name.toLowerCase() === id?.toLowerCase()
+              );
+              if (defaultFound) {
+                setDocumentTitle(defaultFound.name);
+                setCategory(defaultFound.category);
+                setFetchedContent(defaultFound.content);
+              } else {
+                setFetchedContent(DEFAULT_CONSTANCIA_HTML);
+              }
+            } finally {
+              setIsLoading(false);
             }
-            setIsLoading(false);
         } else {
             // Nueva plantilla
             setFetchedContent(DEFAULT_CONSTANCIA_HTML);
@@ -819,8 +844,16 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
             try { await supabase.from('tramite_seguimiento').insert([{ action_type: 'Registro', description: `Creó una nueva plantilla: "${documentTitle}"`, user_name: user?.name || 'Operador / Sistema' }]); } catch(e) {}
             setTimeout(() => navigate('/templates'), 1000);
         } else {
-            const { error } = await supabase.from('templates').update(payload).eq('id', id);
-            if (error) throw error;
+            // Check if id is a UUID (standard 36 chars) or a default template slug
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id || '');
+            if (isUuid) {
+              const { error } = await supabase.from('templates').update(payload).eq('id', id);
+              if (error) throw error;
+            } else {
+              // It's a default model being saved as a custom record in DB
+              const { error } = await supabase.from('templates').insert([payload]);
+              if (error) throw error;
+            }
             showToast('Cambios guardados');
             try { await supabase.from('tramite_seguimiento').insert([{ action_type: 'Estado', description: `Modificó la plantilla: "${documentTitle}"`, user_name: user?.name || 'Operador / Sistema' }]); } catch(e) {}
         }

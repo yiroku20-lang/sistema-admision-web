@@ -212,10 +212,14 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     try {
       const { data: templates } = await supabase
         .from('fingerprint_templates')
-        .select('template_base64')
-        .eq('dni', person.dni);
+        .select('template_base64, finger_name, created_at')
+        .eq('dni', person.dni)
+        .order('created_at', { ascending: false })
+        .limit(1);
       
-      if (templates && templates.length > 0) {
+      if (templates && templates.length > 0 && templates[0].template_base64) {
+        const activeTemplate = templates[0].template_base64;
+        const fingerName = templates[0].finger_name || 'Índice';
         const serverUrl = getBiometricServerUrl();
         const res = await fetch(`${serverUrl}/ping`, { method: 'GET', signal: AbortSignal.timeout(2000) });
         if (res.ok) {
@@ -228,12 +232,36 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
            const verifyRes = await fetch(`${serverUrl}/verify`, {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ template: templates[0].template_base64 }),
+             body: JSON.stringify({ 
+               template: activeTemplate,
+               template_base64: activeTemplate,
+               templateBase64: activeTemplate,
+               expectedTemplate: activeTemplate
+             }),
              signal: abortControllerRef.current.signal
            });
            
            const verifyData = await verifyRes.json();
-           if (verifyRes.ok && verifyData.success && verifyData.verified) {
+           console.log('[Attendance Biometric Verify]:', verifyData);
+
+           const isVerified = Boolean(
+             verifyRes.ok && 
+             verifyData &&
+             verifyData.success !== false &&
+             (
+               verifyData.verified === true ||
+               verifyData.matched === true ||
+               (typeof verifyData.score === 'number' && verifyData.score >= 50) ||
+               verifyData.status === 'MATCH' ||
+               verifyData.status === 'matched' ||
+               verifyData.match === true
+             ) &&
+             verifyData.verified !== false &&
+             verifyData.matched !== false &&
+             verifyData.status !== 'NO_MATCH'
+           );
+
+           if (isVerified) {
              setFingerprintStatus('SUCCESS');
              setBiometricMethod('HUELLA_Y_FIRMA');
              setTimeout(() => {
@@ -241,7 +269,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
              }, 1200);
            } else {
              setFingerprintStatus('ERROR');
-             notify('La huella no coincide o lectura falló. Puede reintentar o continuar solo con firma.', 'warning');
+             const reason = verifyData?.error || `La huella colocada no coincide con el registro (${fingerName}).`;
+             notify(`${reason} Puede reintentar o continuar solo con firma.`, 'warning');
            }
         }
       }

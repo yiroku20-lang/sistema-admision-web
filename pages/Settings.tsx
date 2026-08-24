@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { User } from '../types';
 import { DataImport } from '../components/DataImport';
+import { DEFAULT_OFFICIAL_TEMPLATES } from '../lib/defaultTemplates';
 import {
   getAllUsers,
   createAdminUser,
@@ -200,162 +201,14 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
         throw new Error("La tabla 'templates' no existe. Por favor, ejecute primero el script SQL en el panel de Supabase para crear la tabla.");
       }
 
-      const baseTemplates = [
-        {
-          name: 'CONSTANCIA DE INGRESO',
-          description: 'Plantilla oficial con barra lateral roja y marca de agua.',
-          category: 'Certificados',
-          thumbnail: 'https://placehold.co/400x500/7b1523/ffffff?text=CONSTANCIA',
-          content: `
-<div style="width: 100%; height: 100%; border: 1px solid #ccc; display: flex; font-family: 'Poppins', sans-serif; background: white; position: relative; box-sizing: border-box; overflow: hidden;">
-    <div style="width: 45px; background: #7b1523; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-        <div style="transform: rotate(-90deg); white-space: nowrap; font-weight: 900; font-size: 16px; letter-spacing: 4px; text-transform: uppercase; color: #ffffff;">CONSTANCIA OFICIAL</div>
-    </div>
-    <div style="flex: 1; padding: 30px 35px; position: relative; display: flex; flex-direction: column;">
-        <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; opacity: 0.08;">
-             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="width: 70%; height: auto; filter: grayscale(100%);" />
-        </div>
-        <div style="position: relative; z-index: 1; text-align: center; margin-bottom: 20px;">
-            <h2 style="font-family: 'Cinzel', serif; font-size: 22px; font-weight: 700; margin: 0; color: #7b1523;">UNIVERSIDAD NACIONAL DE SAN ANTONIO<br>ABAD DEL CUSCO</h2>
-            <div style="width: 50px; height: 3px; background: #e8a134; margin: 8px auto;"></div>
-            <h3 style="font-size: 14px; font-weight: 600; color: #333; letter-spacing: 2px;">DIRECCIÓN DE ADMISIÓN</h3>
-        </div>
-        <div style="position: relative; z-index: 1; flex: 1; font-size: 12px; line-height: 1.5; color: #333;">
-             <p>El Director de la Dirección de Admisión, que suscribe hace constar:</p>
-             <div style="border-top: 2px solid #7b1523; border-bottom: 2px solid #7b1523; padding: 15px 0; margin: 20px 0;">
-                <p>Que, Don(ña): <b>{{nombres}}</b>, INGRESÓ a la UNSAAC, a la Escuela de: <b>{{escuela}}</b> el {{fecha_ingreso}}, modalidad {{modalidad}}.</p>
-                <table style="width: 100%; margin-top: 10px;">
-                    <tr><td>● Código</td><td>: {{codigo}}</td></tr>
-                    <tr><td>● Puntaje</td><td>: {{nota}}</td></tr>
-                    <tr><td>● Orden</td><td>: {{omerito}}</td></tr>
-                </table>
-             </div>
-             <p>Cusco, {{fecha_actual}}</p>
-        </div>
-        <div style="display: flex; justify-content: space-between; border-top: 2px solid #7b1523; padding-top: 10px; font-size: 8px;">
-            <span>Recibo: {{BOUCHER}}</span>
-            <span>Exp: {{EXP}}</span>
-        </div>
-    </div>
-</div>`
-        },
-        {
-          name: 'INFORME DE RECTIFICACIÓN',
-          description: 'Informe técnico para corrección de datos en el sistema.',
-          category: 'Admisión',
-          thumbnail: 'https://placehold.co/400x500/1e293b/ffffff?text=INFORME',
-          content: `
-<div style="width: 100%; height: 100%; position: relative; font-family: 'Arial', sans-serif; color: #333; font-size: 14px; line-height: 1.5; box-sizing: border-box; overflow: hidden;">
-    <!-- Background shapes -->
-    <div style="position: absolute; top: -25mm; right: -25mm; width: 250px; height: 250px; background: #7b1523; border-bottom-left-radius: 100%; z-index: 0;"></div>
-    <div style="position: absolute; bottom: -25mm; left: -25mm; width: 0; height: 0; border-bottom: 300px solid #7b1523; border-right: 200px solid transparent; z-index: 0;"></div>
-
-    <!-- Content -->
-    <div style="position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;">
-        <!-- Header -->
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="height: 60px;" />
-                <div>
-                    <h2 style="margin: 0; font-size: 18px; color: #7b1523; font-family: 'Times New Roman', serif;">UNSAAC</h2>
-                    <p style="margin: 0; font-size: 10px; color: #555;">Universidad Nacional de<br>San Antonio Abad del Cusco</p>
-                </div>
-            </div>
-            <!-- DA Logo placeholder -->
-            <div style="color: white; text-align: center; margin-top: 10px; margin-right: 20px;">
-                <div style="font-size: 24px; font-weight: bold; font-family: 'Times New Roman', serif;">DA</div>
-                <div style="font-size: 8px; letter-spacing: 1px;">DIRECCIÓN<br>DE ADMISIÓN</div>
-            </div>
-        </div>
-
-        <!-- Title -->
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h3 style="margin: 0; font-size: 16px; text-decoration: underline;">{{INFORME}}-DA-UNSAAC</h3>
-        </div>
-
-        <!-- Metadata -->
-        <table style="width: 100%; margin-bottom: 30px; font-size: 14px; border: none;">
-            <tr>
-                <td style="width: 80px; vertical-align: top; font-weight: bold;">DE</td>
-                <td style="width: 20px; vertical-align: top;">:</td>
-                <td style="vertical-align: top;">
-                    <b>DR. DOMINGO GONZALES GALLEGOS.</b><br>
-                    <span style="font-size: 12px; color: #555;">Director de la Dirección de Admisión.</span>
-                </td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="vertical-align: top; font-weight: bold;">A</td>
-                <td style="vertical-align: top;">:</td>
-                <td style="vertical-align: top;">
-                    <b>ING. AGUEDO HUAMANI HUAYHUA</b><br>
-                    <span style="font-size: 12px; color: #555;">Jefe de la unidad de Centro de Cómputo de la UNSAAC</span>
-                </td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">REF</td>
-                <td>:</td>
-                <td>Exp {{EXP}}</td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">ASUNTO</td>
-                <td>:</td>
-                <td>SOLICITA RECTIFICACIÓN DE DATOS</td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">FECHA</td>
-                <td>:</td>
-                <td>Cusco, {{fecha_actual}}</td>
-            </tr>
-        </table>
-
-        <!-- Body -->
-        <div style="text-align: justify; margin-bottom: 20px;">
-            <p style="margin-bottom: 15px;">Por medio del presente, la Dirección de Admisión tiene a bien presentar a su consideración el informe de rectificación de datos personales del estudiante <b>{{nombres}} {{apellidos}}</b>, identificado con código N° <b>{{codigo}}</b>.</p>
-            <p style="margin-bottom: 15px;">El estudiante antes mencionado solicita la rectificación de: <b>{{MOTIVO}}</b> en la base de datos de Centro de Computo.</p>
-            <p style="margin-bottom: 20px;">Según los registros de la Dirección de Admisión, el(la) estudiante ingresó a la Escuela Profesional de <b>{{escuela}}</b> en la modalidad <b>{{modalidad}}</b> bajo el nombre de <b>{{nombres}} {{apellidos}}</b>. Tal como consta en los documentos que obran en esta Dependencia, por lo que se solicita la actualización de los registros académicos con los siguientes datos:</p>
-        </div>
-
-        <!-- Table -->
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-            <tr>
-                <td style="border: 1px solid #000; padding: 8px 15px; width: 30%; font-weight: bold;">Dice</td>
-                <td style="border: 1px solid #000; padding: 8px 15px;">{{nombres}} {{apellidos}}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000; padding: 8px 15px; font-weight: bold;">Debe decir</td>
-                <td style="border: 1px solid #000; padding: 8px 15px;">{{NOMBRECORRE}}</td>
-            </tr>
-        </table>
-
-        <!-- Closing -->
-        <div style="margin-bottom: 40px;">
-            <p style="margin-bottom: 15px;">Se adjunta recibo de pago N° {{BOUCHER}} y una copia del DNI del estudiante.</p>
-            <p>Es cuanto informo a usted, para su conocimiento y fines consiguientes</p>
-            <p style="text-align: center; margin-top: 20px;">Atentamente,</p>
-        </div>
-
-        <!-- Footer -->
-        <div style="margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end;">
-            <div style="font-size: 10px; color: #555;">
-                <p style="margin: 0;">DA/JACC</p>
-                <p style="margin: 0;">c.c.</p>
-                <p style="margin: 0;">Archivo.</p>
-            </div>
-            <div style="text-align: center; width: 250px;">
-                <div style="border-top: 1px dashed #000; padding-top: 5px;">
-                    <p style="margin: 0; font-weight: bold; font-size: 12px;">Dr. Domingo Gonzales Gallegos</p>
-                    <p style="margin: 0; font-size: 10px;">DIRECTOR DE LA DIRECCIÓN DE ADMISIÓN</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>`
-        }
-      ];
+      const baseTemplates = DEFAULT_OFFICIAL_TEMPLATES.map(t => ({
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        thumbnail: t.thumbnail,
+        content: t.content,
+        last_modified: new Date().toLocaleDateString()
+      }));
 
       const { error } = await supabase.from('templates').insert(baseTemplates);
       if (error) throw error;
@@ -497,7 +350,7 @@ CREATE TABLE IF NOT EXISTS public.templates (
 -- Habilitar RLS
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acceso total plantillas" ON public.templates;
-CREATE POLICY "Acceso total plantillas" ON public.templates FOR ALL USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Acceso total plantillas" ON public.templates FOR ALL USING (true) WITH CHECK (true);
 
 -- TABLA DE PROSPECTOS VOCACIONALES
 CREATE TABLE IF NOT EXISTS public.prospectos_vocacionales (

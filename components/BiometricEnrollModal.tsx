@@ -39,7 +39,6 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
     if (isDesktop) {
       return 'http://localhost:8081';
     }
-    // In web mode, check if a custom host was configured in local_api_url
     const gatewayUrl = getGatewayBaseUrl();
     try {
       if (gatewayUrl && !gatewayUrl.includes('localhost') && !gatewayUrl.includes('127.0.0.1')) {
@@ -47,7 +46,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
         return `${parsed.protocol}//${parsed.hostname}:8081`;
       }
     } catch {
-      // fallback to localhost
+      // fallback
     }
     return 'http://localhost:8081';
   }, [isDesktop]);
@@ -75,18 +74,20 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
         checkServiceHealth(),
         supabase
           .from('fingerprint_templates')
-          .select('template_base64')
+          .select('id, template_base64, created_at')
           .eq('dni', person.dni)
-          .maybeSingle()
+          .order('created_at', { ascending: false })
+          .limit(1)
       ]);
 
       if (error) throw error;
 
-      if (data && data.template_base64) {
-        setExistingTemplate(data.template_base64);
+      if (data && data.length > 0 && data[0].template_base64) {
+        setExistingTemplate(data[0].template_base64);
         setStep('HAS_FINGERPRINT');
       } else {
-        setStep(serviceOk ? 'NO_FINGERPRINT' : 'NO_FINGERPRINT');
+        setExistingTemplate(null);
+        setStep('NO_FINGERPRINT');
       }
     } catch (err: any) {
       console.error('Biometric fetch error:', err);
@@ -151,7 +152,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
     setLoading(true);
     setStep('ENROLLING');
     setSamplesCollected(0);
-    setEnrollMessage('Por favor, coloque su dedo en el lector biométrico...');
+    setEnrollMessage('Por favor, coloque su dedo en el lector biométrico (Toque 1/4)...');
     
     abortController.current = new AbortController();
     const serverUrl = getBiometricServerUrl();
@@ -187,43 +188,50 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
         throw new Error(enrollData.error || 'Error en la captura de huella.');
       }
 
-      const templateBase64 = enrollData.template;
-      setSamplesCollected(4);
-      setEnrollMessage('Guardando plantilla biométrica en base de datos...');
-
-      // Step 4: Upsert into Supabase fingerprint_templates
-      const { error } = await supabase.from('fingerprint_templates').upsert({
-        personal_id: person.id,
-        dni: person.dni,
-        finger_name: 'Índice Derecho',
-        finger_index: 1,
-        template_base64: templateBase64
-      }, { onConflict: 'dni' });
-
-      if (error) {
-        // Retry with personal_id, finger_index constraint
-        const { error: err2 } = await supabase.from('fingerprint_templates').upsert({
-          personal_id: person.id,
-          dni: person.dni,
-          finger_name: 'Índice Derecho',
-          finger_index: 1,
-          template_base64: templateBase64
-        });
-        if (err2) {
-          throw new Error(`Error guardando en BD: ${err2.message}`);
-        }
+      const templateBase64 = enrollData.template || enrollData.template_base64 || enrollData.templateBase64;
+      if (!templateBase64) {
+        throw new Error('El lector no retornó una plantilla biométrica válida.');
       }
 
-      // Update person object locally
+      setSamplesCollected(4);
+      setEnrollMessage('Actualizando plantilla única en base de datos...');
+
+      // Step 4: Delete ANY previous templates for this DNI to ensure strictly ONE finger exists
+      const { error: delError } = await supabase
+        .from('fingerprint_templates')
+        .delete()
+        .eq('dni', person.dni);
+
+      if (delError) {
+        console.warn('Advertencia al limpiar registros anteriores:', delError);
+      }
+
+      // Step 5: Insert the fresh single template
+      const { error: insertError } = await supabase
+        .from('fingerprint_templates')
+        .insert([{
+          personal_id: person.id || null,
+          dni: person.dni,
+          finger_name: 'Huella Principal',
+          finger_index: 1,
+          template_base64: templateBase64,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (insertError) {
+        throw new Error(`Error guardando en base de datos: ${insertError.message}`);
+      }
+
+      // Update state locally
       person.has_fingerprint = true;
       setExistingTemplate(templateBase64);
       
       setStep('ENROLL_SUCCESS');
-      notify('Huella registrada exitosamente en la base de datos.', 'success');
+      notify('Huella registrada y sobrescrita exitosamente.', 'success');
       
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        console.error(err);
+        console.error('Error en enrolamiento:', err);
         notify(err.message, 'error');
         if (step !== 'NO_READER') {
           setStep(existingTemplate ? 'HAS_FINGERPRINT' : 'NO_FINGERPRINT');
@@ -255,27 +263,52 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
         throw new Error('Sensor biométrico no detectado en este dispositivo. Asegúrese de tener conectado el lector DigitalPersona o utilice la Aplicación de Escritorio.');
       }
 
-      notify('Coloque el dedo 1 vez en el lector para verificar...', 'info');
+      notify('Coloque el dedo enrolado 1 vez en el lector para verificar...', 'info');
 
       const verifyRes = await fetch(`${serverUrl}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template: existingTemplate }),
+        body: JSON.stringify({ 
+          template: existingTemplate,
+          template_base64: existingTemplate,
+          templateBase64: existingTemplate,
+          expectedTemplate: existingTemplate
+        }),
         signal: abortController.current.signal
       });
       
       const verifyData = await verifyRes.json();
+      console.log('[Biometric Verify Response]:', verifyData);
       
-      if (verifyRes.ok && verifyData.success && verifyData.verified) {
+      // Strict 1-to-1 comparison check from the biometric bridge
+      const isVerified = Boolean(
+        verifyRes.ok && 
+        verifyData &&
+        verifyData.success !== false &&
+        (
+          verifyData.verified === true ||
+          verifyData.matched === true ||
+          (typeof verifyData.score === 'number' && verifyData.score >= 50) ||
+          verifyData.status === 'MATCH' ||
+          verifyData.status === 'matched' ||
+          verifyData.match === true
+        ) &&
+        verifyData.verified !== false &&
+        verifyData.matched !== false &&
+        verifyData.status !== 'NO_MATCH'
+      );
+      
+      if (isVerified) {
          setStep('VERIFY_SUCCESS');
-         notify('¡Comprobación exitosa! La huella coincide 100%.', 'success');
+         notify('¡Comprobación exitosa! La huella coincide con el registro activo.', 'success');
       } else {
          setStep('VERIFY_FAILED');
-         notify('La huella no coincide. Intente de nuevo o re-enrole.', 'warning');
+         const reason = verifyData?.error || verifyData?.message || 'La huella colocada no coincide con la huella registrada.';
+         notify(reason, 'warning');
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        console.error(err);
+        console.error('Error en verificación:', err);
         notify(err.message, 'error');
         if (step !== 'NO_READER') {
           setStep('HAS_FINGERPRINT');
@@ -321,13 +354,15 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
         </div>
 
         {/* Status Message Display */}
-        <div className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl flex items-center gap-3">
-          <span className="material-symbols-outlined text-primary animate-spin text-[20px] shrink-0">
+        <div className="w-full bg-slate-50 border border-slate-200 p-3.5 rounded-xl flex items-center gap-3">
+          <span className="material-symbols-outlined text-primary animate-spin text-[22px] shrink-0">
             sync
           </span>
-          <p className="text-xs font-bold text-slate-700 text-left leading-relaxed">
-            {enrollMessage}
-          </p>
+          <div className="text-left flex-1 min-w-0">
+            <p className="text-xs font-bold text-slate-800 leading-relaxed">
+              {enrollMessage}
+            </p>
+          </div>
         </div>
 
         <button
@@ -337,7 +372,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
             stopPolling();
             setStep(existingTemplate ? 'HAS_FINGERPRINT' : 'NO_FINGERPRINT');
           }}
-          className="text-xs text-slate-400 hover:text-slate-600 font-bold uppercase tracking-wider"
+          className="text-xs text-slate-400 hover:text-slate-600 font-bold uppercase tracking-wider transition-colors"
         >
           Cancelar Captura
         </button>
@@ -469,12 +504,13 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
           {/* STEP 3: HAS FINGERPRINT ALREADY */}
           {step === 'HAS_FINGERPRINT' && (
             <div className="w-full flex flex-col gap-4 animate-in fade-in py-1">
-              <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-5 flex flex-col items-center gap-1 text-emerald-900">
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 flex flex-col items-center gap-1 text-emerald-900">
                 <div className="size-12 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-1">
                   <span className="material-symbols-outlined text-3xl">check</span>
                 </div>
-                <h3 className="font-black text-base">Huella Registrada en Sistema</h3>
-                <p className="text-xs font-medium text-emerald-700">Dedo: Índice Derecho (100% Calidad)</p>
+                <h3 className="font-black text-base">Huella Digital Registrada</h3>
+                <p className="text-xs font-bold text-emerald-700">Plantilla activa en el sistema</p>
+                <span className="text-[10px] text-emerald-600 mt-0.5">Permite verificación 1 a 1 para asistencia</span>
               </div>
 
               <div className="flex flex-col gap-2.5 mt-1">
@@ -492,7 +528,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
                   className="w-full h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 text-xs"
                 >
                   <span className="material-symbols-outlined text-[18px]">published_with_changes</span> 
-                  Re-enrolar / Sobrescribir
+                  Re-enrolar / Sobrescribir Huella
                 </button>
               </div>
             </div>
@@ -500,20 +536,21 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
 
           {/* STEP 4: NO FINGERPRINT */}
           {step === 'NO_FINGERPRINT' && (
-            <div className="w-full flex flex-col items-center gap-3 animate-in fade-in py-3">
+            <div className="w-full flex flex-col items-center gap-3.5 animate-in fade-in py-2">
               <div className="size-16 rounded-3xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400">
                 <span className="material-symbols-outlined text-[36px]">fingerprint</span>
               </div>
               <div className="text-center px-4">
                 <h3 className="font-black text-base text-slate-900">Sin Huella Registrada</h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  El personal debe enrolar su dedo índice derecho con 4 toques en el lector.
+                  El personal debe realizar 4 toques en el lector para generar la plantilla única de su huella.
                 </p>
               </div>
+
               <button 
                 onClick={handleEnroll} 
                 disabled={loading} 
-                className="w-full h-12 mt-2 bg-primary hover:bg-merlot text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-primary/25 flex items-center justify-center gap-2 text-xs"
+                className="w-full h-12 mt-1 bg-primary hover:bg-merlot text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-primary/25 flex items-center justify-center gap-2 text-xs"
               >
                 <span className="material-symbols-outlined text-[20px]">play_arrow</span> 
                 Iniciar Enrolamiento (4 Toques)
@@ -532,7 +569,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
               </div>
               <div>
                 <p className="text-emerald-800 font-black text-lg">¡Enrolamiento Exitoso!</p>
-                <p className="text-xs text-emerald-600 mt-0.5">La plantilla compuesta de 4 toques fue guardada correctamente.</p>
+                <p className="text-[11px] text-emerald-600 mt-0.5">La plantilla compuesta de 4 toques fue guardada y sobrescrita en el sistema.</p>
               </div>
               <button 
                 onClick={() => setStep('HAS_FINGERPRINT')} 
@@ -562,7 +599,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
               </div>
               <div className="text-center">
                 <p className="text-emerald-800 font-black text-lg">¡Identidad Verificada!</p>
-                <p className="text-xs text-emerald-600 font-medium mt-0.5">La huella coincide al 100% con la plantilla registrada.</p>
+                <p className="text-xs text-emerald-600 font-medium mt-0.5">La huella colocada coincide al 100% con el registro activo.</p>
               </div>
               <button 
                 onClick={() => setStep('HAS_FINGERPRINT')} 
@@ -581,7 +618,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
               </div>
               <div className="text-center">
                 <p className="text-red-800 font-black text-lg">Verificación Fallida</p>
-                <p className="text-xs text-red-600 font-medium mt-0.5">La huella colocada no coincide con la registrada para este DNI.</p>
+                <p className="text-xs text-red-600 font-medium mt-0.5">La huella colocada NO coincide con la registrada para este DNI.</p>
               </div>
               <div className="flex gap-2 mt-3">
                 <button 
