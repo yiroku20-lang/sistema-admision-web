@@ -5,6 +5,7 @@ import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
 import { safeStorage } from '../lib/safeStorage';
 import { User, PersonalSorteo } from '../types';
+import { isElectronApp, getGatewayBaseUrl } from '../lib/fileGateway';
 
 export interface RubroAttendanceRecord {
   id: string;
@@ -185,6 +186,22 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
   const [fingerprintStatus, setFingerprintStatus] = useState<'IDLE' | 'SCANNING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const getBiometricServerUrl = () => {
+    if (isElectronApp()) {
+      return 'http://localhost:8081';
+    }
+    const gatewayUrl = getGatewayBaseUrl();
+    try {
+      if (gatewayUrl && !gatewayUrl.includes('localhost') && !gatewayUrl.includes('127.0.0.1')) {
+        const parsed = new URL(gatewayUrl);
+        return `${parsed.protocol}//${parsed.hostname}:8081`;
+      }
+    } catch {
+      // fallback
+    }
+    return 'http://localhost:8081';
+  };
+
   const checkBiometricAndProceed = async (person: PersonalSorteo, type: 'INGRESO' | 'SALIDA') => {
     setPendingPerson(person);
     setPendingTipo(type);
@@ -199,7 +216,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
         .eq('dni', person.dni);
       
       if (templates && templates.length > 0) {
-        const res = await fetch('http://localhost:8081/ping', { method: 'GET', signal: AbortSignal.timeout(2000) });
+        const serverUrl = getBiometricServerUrl();
+        const res = await fetch(`${serverUrl}/ping`, { method: 'GET', signal: AbortSignal.timeout(2000) });
         if (res.ok) {
            setModalStep('BIOMETRIC');
            setFingerprintStatus('SCANNING');
@@ -207,7 +225,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
            if (abortControllerRef.current) abortControllerRef.current.abort();
            abortControllerRef.current = new AbortController();
 
-           const verifyRes = await fetch('http://localhost:8081/verify', {
+           const verifyRes = await fetch(`${serverUrl}/verify`, {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({ template: templates[0].template_base64 }),
@@ -223,7 +241,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
              }, 1200);
            } else {
              setFingerprintStatus('ERROR');
-             notify('La huella no coincide o lectura falló. Puede intentar nuevamente o cerrar.', 'error');
+             notify('La huella no coincide o lectura falló. Puede reintentar o continuar solo con firma.', 'warning');
            }
         }
       }
@@ -1362,13 +1380,25 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                     </p>
 
                     {fingerprintStatus === 'ERROR' && (
-                      <button 
-                        onClick={() => checkBiometricAndProceed(pendingPerson, pendingTipo)}
-                        className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-xl text-xs flex items-center gap-2"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">refresh</span>
-                        Reintentar
-                      </button>
+                      <div className="flex items-center gap-2 mt-4">
+                        <button 
+                          onClick={() => checkBiometricAndProceed(pendingPerson, pendingTipo)}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-3.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">refresh</span>
+                          Reintentar
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setBiometricMethod('SOLO_FIRMA');
+                            setModalStep('SIGNATURE');
+                          }}
+                          className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-2 px-3.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">draw</span>
+                          Continuar solo con Firma
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

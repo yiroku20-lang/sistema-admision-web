@@ -2108,6 +2108,17 @@ UNSAAC`);
           notify={notify}
       />
 
+      <BiometricEnrollModal
+        isOpen={enrollModalOpen}
+        onClose={() => {
+          setEnrollModalOpen(false);
+          setEnrollPerson(null);
+          fetchDirectorio();
+        }}
+        person={enrollPerson}
+        notify={notify}
+      />
+
     </div>
   );
 };
