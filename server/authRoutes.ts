@@ -133,11 +133,83 @@ router.get("/operators", async (_req, res) => {
   try {
     const { data, error } = await adminSupabase
       .from("usuarios")
-      .select("id, name, role, dni, permissions");
+      .select("id, name, role, dni, permissions")
+      .order("name", { ascending: true });
     if (error) throw error;
     res.json(data || []);
   } catch (err: any) {
     console.error("Error fetching operators from server:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint seguro para consultar todos los usuarios registrados (para panel de configuración)
+router.get("/users", async (_req, res) => {
+  try {
+    const { data, error } = await adminSupabase
+      .from("usuarios")
+      .select("id, dni, name, role, permissions, created_at, password")
+      .order("name", { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err: any) {
+    console.error("Error fetching users list from server:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para actualizar usuario (nombre, dni, rol, permisos)
+router.post("/update-user", async (req, res) => {
+  try {
+    const { id, dni, name, role, permissions } = req.body;
+    if (!id || !dni || !name || !role) {
+      return res.status(400).json({ error: "Faltan campos obligatorios." });
+    }
+
+    const { error } = await adminSupabase
+      .from("usuarios")
+      .update({
+        dni: String(dni).trim(),
+        name: String(name).trim(),
+        role,
+        permissions: role === "Operador" ? permissions : null,
+      })
+      .eq("id", id);
+
+    if (error) throw error;
+    res.json({ success: true, message: "Usuario actualizado exitosamente." });
+  } catch (err: any) {
+    console.error("Error updating user:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para eliminar usuario
+router.post("/delete-user", async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "ID de usuario requerido." });
+    }
+
+    // 1. Eliminar de tabla usuarios
+    const { error: dbError } = await adminSupabase
+      .from("usuarios")
+      .delete()
+      .eq("id", id);
+
+    if (dbError) throw dbError;
+
+    // 2. Intentar eliminar de auth.users si existe
+    try {
+      await adminSupabase.auth.admin.deleteUser(id);
+    } catch (authErr) {
+      console.warn("Auth user deletion warning:", authErr);
+    }
+
+    res.json({ success: true, message: "Usuario eliminado exitosamente." });
+  } catch (err: any) {
+    console.error("Error deleting user:", err);
     res.status(500).json({ error: err.message });
   }
 });

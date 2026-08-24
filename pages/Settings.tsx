@@ -3,9 +3,18 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { User } from '../types';
 import { DataImport } from '../components/DataImport';
+import {
+  getAllUsers,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
+  updateAdminUserPassword,
+  AdminUserItem,
+} from '../lib/usersApi';
 
 export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'success'|'error'|'warning') => void }> = ({ user, notify }) => {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AdminUserItem[]>([]);
+  const [userSearch, setUserSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -68,17 +77,9 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     }
     setIsChangingPassword(true);
     try {
-      const response = await fetch('/api/update-user-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          password: newPassword.trim()
-        })
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Error al actualizar contraseña.');
+      const res = await updateAdminUserPassword(user.id, newPassword.trim());
+      if (!res.success) {
+        throw new Error(res.error || 'Error al actualizar contraseña.');
       }
 
       notify?.('Contraseña actualizada exitosamente.', 'success');
@@ -94,14 +95,11 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .order('name', { ascending: true });
-      if (error) throw error;
+      const data = await getAllUsers();
       setUsers(data || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching users:', err);
+      notify?.(`Error al cargar usuarios: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -116,66 +114,38 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     setIsSubmitting(true);
     setDbError(null);
     try {
-      const userData: any = {
-        dni: dni.trim(),
-        name: name.trim(),
-        role: role,
-        permissions: role === 'Operador' ? permissions : null // Only save permissions for Operador
-      };
-
-      if (password) {
-        userData.password = password.trim();
-      }
-
       if (editingId) {
         // Update user profile
-        const { error: profileError } = await supabase
-          .from('usuarios')
-          .update(userData)
-          .eq('id', editingId);
-        if (profileError) throw profileError;
-        
-        // If password was provided, update it via our secure API
-        if (password) {
-           try {
-             const response = await fetch('/api/update-user-password', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({
-                     user_id: editingId,
-                     password: password.trim()
-                 })
-             });
-             const result = await response.json();
-             if (!response.ok) {
-                 throw new Error(result.error || "Error al actualizar contraseña.");
-             }
-           } catch(err: any) {
-               throw err;
-           }
+        const updateRes = await updateAdminUser(editingId, {
+          dni: dni.trim(),
+          name: name.trim(),
+          role: role,
+          permissions: role === 'Operador' ? permissions : null
+        });
+
+        if (!updateRes.success) {
+          throw new Error(updateRes.error || 'Error al actualizar usuario.');
         }
 
-      } else {
-        // Create new user using the secure server API
-        try {
-          const response = await fetch('/api/create-user', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  dni: dni.trim(),
-                  password: password.trim(),
-                  name: name.trim(),
-                  role,
-                  permissions: role === 'Operador' ? permissions : null
-              })
-          });
-          
-          const result = await response.json();
-          if (!response.ok) {
-              throw new Error(result.error || "Error al crear usuario.");
+        // If password was provided, update it via our secure API
+        if (password) {
+          const pwRes = await updateAdminUserPassword(editingId, password.trim());
+          if (!pwRes.success) {
+            throw new Error(pwRes.error || 'Error al actualizar contraseña.');
           }
-        } catch (err: any) {
-            throw err;
+        }
+      } else {
+        // Create new user using secure API
+        const createRes = await createAdminUser({
+          dni: dni.trim(),
+          password: password.trim(),
+          name: name.trim(),
+          role,
+          permissions: role === 'Operador' ? permissions : null
+        });
+
+        if (!createRes.success) {
+          throw new Error(createRes.error || 'Error al crear usuario.');
         }
       }
 
@@ -185,10 +155,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
       notify?.('Usuario guardado exitosamente.', 'success');
     } catch (err: any) {
       if (err.message?.includes('permissions') || err.code === 'PGRST204') {
-          setDbError('La columna "permissions" no existe en la tabla "usuarios". Por favor, actualiza la base de datos usando el script SQL en la pestaña "Base de Datos".');
-          notify?.('Error de base de datos. Revisa el mensaje arriba.', 'error');
+        setDbError('La columna "permissions" no existe en la tabla "usuarios". Por favor, actualiza la base de datos usando el script SQL en la pestaña "Base de Datos".');
+        notify?.('Error de base de datos. Revisa el mensaje arriba.', 'error');
       } else {
-          notify?.(`Error al guardar usuario: ${err.message}`, 'error');
+        notify?.(`Error al guardar usuario: ${err.message}`, 'error');
       }
     } finally {
       setIsSubmitting(false);
@@ -401,11 +371,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
   const handleDeleteUser = async (id: string) => {
     if (!window.confirm('¿Está seguro de eliminar este usuario?')) return;
     try {
-      const { error } = await supabase
-        .from('usuarios')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      const res = await deleteAdminUser(id);
+      if (!res.success) {
+        throw new Error(res.error || 'Error al eliminar usuario');
+      }
       fetchUsers();
       notify?.('Usuario eliminado exitosamente.', 'success');
     } catch (err: any) {
@@ -772,49 +741,136 @@ VALUES
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* User List */}
         <div className="lg:col-span-2 flex flex-col gap-4">
+          {/* Search & Actions Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-2 flex-1 min-w-[220px] bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <span className="material-symbols-outlined text-slate-400 text-lg">search</span>
+              <input
+                type="text"
+                value={userSearch}
+                onChange={e => setUserSearch(e.target.value)}
+                placeholder="Buscar por nombre o DNI..."
+                className="bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none w-full font-medium"
+              />
+              {userSearch && (
+                <button onClick={() => setUserSearch('')} className="text-slate-400 hover:text-slate-600">
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2.5 py-1.5 rounded-lg">
+                {users.length} {users.length === 1 ? 'usuario' : 'usuarios'}
+              </span>
+              <button
+                onClick={fetchUsers}
+                disabled={loading}
+                title="Recargar lista"
+                className="p-2 text-slate-500 hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-slate-200"
+              >
+                <span className={`material-symbols-outlined text-base ${loading ? 'animate-spin' : ''}`}>refresh</span>
+              </button>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Usuario / DNI</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Rol</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Rol / Permisos</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-10 text-center">
-                      <span className="material-symbols-outlined animate-spin text-primary text-3xl">progress_activity</span>
+                    <td colSpan={3} className="px-6 py-12 text-center">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="material-symbols-outlined animate-spin text-primary text-3xl">progress_activity</span>
+                        <span className="text-xs text-slate-400 font-medium">Cargando usuarios...</span>
+                      </div>
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-10 text-center text-slate-400 text-sm">No hay usuarios registrados.</td>
+                    <td colSpan={3} className="px-6 py-12 text-center text-slate-400 text-sm">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="material-symbols-outlined text-slate-300 text-4xl">group_off</span>
+                        <span>No hay usuarios registrados.</span>
+                        <button 
+                          onClick={() => { resetForm(); setIsModalOpen(true); }}
+                          className="mt-2 text-xs text-primary font-bold hover:underline"
+                        >
+                          Crear primer usuario
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                ) : users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                ) : users.filter(u => {
+                  if (!userSearch.trim()) return true;
+                  const query = userSearch.toLowerCase().trim();
+                  return (
+                    (u.name && u.name.toLowerCase().includes(query)) ||
+                    (u.dni && u.dni.toLowerCase().includes(query)) ||
+                    (u.role && u.role.toLowerCase().includes(query))
+                  );
+                }).length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-6 py-8 text-center text-slate-400 text-xs">
+                      No se encontraron usuarios que coincidan con "{userSearch}".
+                    </td>
+                  </tr>
+                ) : users
+                    .filter(u => {
+                      if (!userSearch.trim()) return true;
+                      const query = userSearch.toLowerCase().trim();
+                      return (
+                        (u.name && u.name.toLowerCase().includes(query)) ||
+                        (u.dni && u.dni.toLowerCase().includes(query)) ||
+                        (u.role && u.role.toLowerCase().includes(query))
+                      );
+                    })
+                    .map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="font-bold text-slate-900 text-sm">{u.name}</span>
-                        <span className="text-[10px] font-mono text-slate-400">{u.dni}</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[11px] font-mono font-medium text-slate-500">DNI: {u.dni}</span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                        u.role === 'Administrador' ? 'bg-red-100 text-red-700' :
-                        u.role === 'Director' ? 'bg-blue-100 text-blue-700' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
-                        {u.role}
-                      </span>
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                          u.role === 'Administrador' ? 'bg-red-100 text-red-700 border border-red-200' :
+                          u.role === 'Director' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                          'bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}>
+                          {u.role}
+                        </span>
+                        {u.role === 'Operador' && Array.isArray(u.permissions) && (
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {u.permissions.length} {u.permissions.length === 1 ? 'permiso activo' : 'permisos activos'}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => openEdit(u)} className="p-2 text-slate-400 hover:text-primary transition-colors">
+                      <div className="flex justify-end gap-1.5">
+                        <button 
+                          onClick={() => openEdit(u)} 
+                          title="Editar usuario"
+                          className="p-2 text-slate-400 hover:text-primary hover:bg-slate-100 rounded-lg transition-colors"
+                        >
                           <span className="material-symbols-outlined text-lg">edit</span>
                         </button>
-                        <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 transition-colors">
+                        <button 
+                          onClick={() => handleDeleteUser(u.id)} 
+                          title="Eliminar usuario"
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
                           <span className="material-symbols-outlined text-lg">delete</span>
                         </button>
                       </div>

@@ -358,3 +358,184 @@ ipcMain.handle("auth-login", async (event, { dni, password }) => {
   }
 });
 
+// IPC Handler para listar usuarios en Desktop
+ipcMain.handle("get-users", async () => {
+  try {
+    const SUPABASE_URL = "https://cnqpzyanmmwspvemcfeb.supabase.co";
+    const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios?select=id,dni,name,role,permissions,created_at,password&order=name.asc`, {
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`
+      }
+    });
+
+    if (!res.ok) {
+      throw new Error(`Error ${res.status}: ${await res.text()}`);
+    }
+
+    const users = await res.json();
+    return { success: true, users: users || [] };
+  } catch (err) {
+    console.error("[Electron Main get-users] Error:", err);
+    return { success: false, error: err.message, users: [] };
+  }
+});
+
+// IPC Handler para crear usuario en Desktop
+ipcMain.handle("create-user", async (event, userData) => {
+  try {
+    const SUPABASE_URL = "https://cnqpzyanmmwspvemcfeb.supabase.co";
+    const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+
+    const { dni, password, name, role, permissions } = userData;
+    const email = `${dni}@admin.unsaac.pe`;
+
+    // 1. Crear en Supabase Auth
+    const authRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email,
+        password,
+        email_confirm: true
+      })
+    });
+
+    if (!authRes.ok) {
+      const errJson = await authRes.json();
+      return { success: false, error: errJson.msg || errJson.message || "Error al crear auth user" };
+    }
+
+    const authData = await authRes.json();
+    const userId = authData.id;
+
+    // 2. Insertar en tabla usuarios
+    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/usuarios`, {
+      method: "POST",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify({
+        id: userId,
+        dni,
+        password,
+        name,
+        role,
+        permissions: role === "Operador" ? permissions : null
+      })
+    });
+
+    if (!insertRes.ok) {
+      return { success: false, error: "Error al guardar en base de datos" };
+    }
+
+    return { success: true, userId };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC Handler para actualizar usuario en Desktop
+ipcMain.handle("update-user", async (event, id, userData) => {
+  try {
+    const SUPABASE_URL = "https://cnqpzyanmmwspvemcfeb.supabase.co";
+    const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+
+    const { dni, name, role, permissions } = userData;
+    const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/usuarios?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify({
+        dni: String(dni).trim(),
+        name: String(name).trim(),
+        role,
+        permissions: role === "Operador" ? permissions : null
+      })
+    });
+
+    if (!updateRes.ok) {
+      return { success: false, error: `Error ${updateRes.status}` };
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC Handler para eliminar usuario en Desktop
+ipcMain.handle("delete-user", async (event, id) => {
+  try {
+    const SUPABASE_URL = "https://cnqpzyanmmwspvemcfeb.supabase.co";
+    const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+
+    await fetch(`${SUPABASE_URL}/rest/v1/usuarios?id=eq.${id}`, {
+      method: "DELETE",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`
+      }
+    });
+
+    try {
+      await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${id}`, {
+        method: "DELETE",
+        headers: {
+          "apikey": SERVICE_KEY,
+          "Authorization": `Bearer ${SERVICE_KEY}`
+        }
+      });
+    } catch (e) {}
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC Handler para actualizar contraseña en Desktop
+ipcMain.handle("update-user-password", async (event, userId, newPassword) => {
+  try {
+    const SUPABASE_URL = "https://cnqpzyanmmwspvemcfeb.supabase.co";
+    const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+
+    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+      method: "PUT",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ password: newPassword })
+    });
+
+    await fetch(`${SUPABASE_URL}/rest/v1/usuarios?id=eq.${userId}`, {
+      method: "PATCH",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ password: newPassword })
+    });
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+

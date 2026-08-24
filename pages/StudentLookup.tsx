@@ -1,10 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Participant, User } from '../types';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { 
+  StudentDocument, 
+  getGatewayBaseUrl, 
+  testGatewayHealth, 
+  fetchStudentDocumentsFromGateway, 
+  getDocumentStreamUrl, 
+  parseDocumentInfo,
+  isElectronApp 
+} from '../lib/fileGateway';
+import { FileGatewayModal } from '../components/FileGatewayModal';
+import { DocumentViewerModal } from '../components/DocumentViewerModal';
 
 type SearchMode = 'individual' | 'batch' | 'import';
 
@@ -20,16 +31,20 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
-  // Local API configuration (Cloudflare URL)
-  const defaultApiUrl = 'https://june-entertainment-thanks-include.trycloudflare.com';
-  const [localApiUrl] = useState(() => {
-    const stored = localStorage.getItem('local_api_url');
-    if (stored && (stored.includes('night-fan-profiles-sides') || (stored.includes('trycloudflare.com') && !stored.includes('june-entertainment-thanks-include')))) {
-       localStorage.setItem('local_api_url', defaultApiUrl);
-       return defaultApiUrl;
-    }
-    return stored || (import.meta as any).env?.VITE_API_URL || defaultApiUrl;
+  // File Gateway connection state
+  const [gatewayUrl, setGatewayUrl] = useState(() => getGatewayBaseUrl());
+  const [gatewayStatus, setGatewayStatus] = useState<{
+    connected: boolean;
+    latency?: number;
+    checking: boolean;
+    url: string;
+  }>({
+    connected: false,
+    checking: true,
+    url: getGatewayBaseUrl()
   });
+  const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
+  const [selectedDocForViewer, setSelectedDocForViewer] = useState<StudentDocument | null>(null);
   
   // State for toggling individual folders in local documents
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
@@ -70,9 +85,45 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const [reservas, setReservas] = useState<any[]>([]);
   
   // Local Documents State
-  const [localDocuments, setLocalDocuments] = useState<any[]>([]);
+  const [localDocuments, setLocalDocuments] = useState<StudentDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
+
+  // Check gateway health
+  const checkGateway = useCallback(async (targetUrl?: string) => {
+    const url = targetUrl || getGatewayBaseUrl();
+    setGatewayStatus(prev => ({ ...prev, checking: true, url }));
+    try {
+      const result = await testGatewayHealth(url);
+      setGatewayStatus({
+        connected: result.ok,
+        latency: result.latency,
+        checking: false,
+        url: result.url
+      });
+    } catch {
+      setGatewayStatus({
+        connected: false,
+        checking: false,
+        url
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    checkGateway();
+
+    const handleGatewayChanged = (e: any) => {
+      const newUrl = e.detail?.url || getGatewayBaseUrl();
+      setGatewayUrl(newUrl);
+      checkGateway(newUrl);
+    };
+
+    window.addEventListener('gateway-url-changed', handleGatewayChanged);
+    return () => {
+      window.removeEventListener('gateway-url-changed', handleGatewayChanged);
+    };
+  }, [checkGateway]);
 
   const fetchExtraInfo = async (history: Participant[]) => {
       setExpandedFolders({});
@@ -84,27 +135,25 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           return;
       }
       
-      // Auto-fetch local documents from hybrid local API for the first code
+      // Auto-fetch local documents from Gateway
       setLoadingDocs(true);
       setDocsError(null);
       try {
-          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : 'https://night-fan-profiles-sides.trycloudflare.com';
-          const resDocs = await fetch(`${apiUrl}/api/files/student-documents/${studentCodes[0]}`);
+          const resDocs = await fetchStudentDocumentsFromGateway(studentCodes[0], gatewayUrl);
           if (!resDocs.ok) {
-              if (resDocs.status === 404) {
-                 setLocalDocuments([]);
-                 setDocsError('No se encontraron documentos en el disco local.');
-              } else {
-                 throw new Error('Servidor local apagado o desconectado.');
-              }
+              setLocalDocuments([]);
+              setDocsError(resDocs.error || 'No se pudo consultar el servidor de archivos.');
+              setGatewayStatus(prev => ({ ...prev, connected: false }));
           } else {
-              const data = await resDocs.json();
-              // Array could be data or data.documents depending on how the other AI returned it
-              setLocalDocuments(data.documents || data || []);
+              setLocalDocuments(resDocs.documents || []);
+              if (resDocs.documents.length > 0) {
+                  setGatewayStatus(prev => ({ ...prev, connected: true }));
+              }
           }
       } catch (err: any) {
-          setDocsError(err.message);
+          setDocsError(err.message || 'Servidor de archivos fuera de línea');
           setLocalDocuments([]);
+          setGatewayStatus(prev => ({ ...prev, connected: false }));
       } finally {
           setLoadingDocs(false);
       }
@@ -194,12 +243,11 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const getGroupedDocuments = (docs: any[]) => {
-      const groups: { [key: string]: any[] } = {};
+      const groups: { [key: string]: StudentDocument[] } = {};
       if (!docs || !Array.isArray(docs)) return groups;
       
       docs.forEach(doc => {
           if (!doc) return;
-          // Prefer relativePath since it's the exact clean path inside the H: drive root
           const rawPath = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || doc.file_path || doc.url || '');
           
           let cleanPath = rawPath;
@@ -214,61 +262,19 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
               }
           }
           
-          const filename = typeof doc === 'string' 
-              ? doc.split(/[\/\\]/).pop()! 
-              : (doc.name || doc.filename || (cleanPath && typeof cleanPath === 'string' ? cleanPath.split(/[\/\\]/).pop() : '') || 'Documento sin nombre');
-          
           const groupLabel = getModalityAndSemesterFromPath(cleanPath);
+          const parsedDoc = parseDocumentInfo(doc, cleanPath);
+          parsedDoc.concursoLabel = groupLabel;
           
           if (!groups[groupLabel]) {
               groups[groupLabel] = [];
           }
-          groups[groupLabel].push({
-              path: cleanPath,
-              filename,
-              originalDoc: doc
-          });
+          groups[groupLabel].push(parsedDoc);
       });
 
       Object.keys(groups).forEach(groupLabel => {
           // Sort documents inside this folder alphabetically to guarantee sequential ordering of files (e.g., 1_1_*, 2_1_*, 3_1_*)
           groups[groupLabel].sort((a, b) => (a.filename || '').localeCompare(b.filename || ''));
-          
-          let pdfCounter = 1;
-          
-          groups[groupLabel] = groups[groupLabel].map(doc => {
-              const ext = (doc.filename && typeof doc.filename === 'string' ? doc.filename.split('.').pop() : '')?.toUpperCase() || '';
-              const isPdf = ext === 'PDF';
-              const isImage = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF'].includes(ext);
-              
-              let friendlyName = doc.filename;
-              let docTypeLabel = '';
-              
-              const description = doc.originalDoc?.description;
-              
-              if (isImage) {
-                  friendlyName = description || 'Foto';
-                  docTypeLabel = 'Foto';
-              } else if (isPdf) {
-                  friendlyName = description || `Doc ${pdfCounter}`;
-                  docTypeLabel = description || `Doc ${pdfCounter}`;
-                  if (!description) {
-                      pdfCounter++;
-                  }
-              } else {
-                  friendlyName = description || doc.filename;
-                  docTypeLabel = ext;
-              }
-
-              return {
-                  ...doc,
-                  isPdf,
-                  isImage,
-                  ext,
-                  friendlyName,
-                  docTypeLabel
-              };
-          });
       });
       
       return groups;
@@ -1165,21 +1171,57 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             <h1 className="text-slate-900 text-3xl font-black leading-tight">Gestión de Ingresantes</h1>
             <p className="text-slate-500 text-sm font-medium">Búsqueda individual, cruce masivo o importación de nuevos registros.</p>
         </div>
-        <div className="flex bg-slate-200 p-1 rounded-xl shadow-inner shrink-0">
-            {[
-                {id: 'individual', label: 'Individual', icon: 'person'},
-                {id: 'batch', label: 'Cruce Masivo', icon: 'compare_arrows'},
-                {id: 'import', label: 'Importar Datos', icon: 'upload_file', adminOnly: true}
-            ].filter(m => !m.adminOnly || user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))).map((m) => (
-                <button 
-                    key={m.id}
-                    onClick={() => setActiveMode(m.id as any)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                    <span className="material-symbols-outlined text-[18px]">{m.icon}</span>
-                    {m.label}
-                </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {/* File Gateway Server Status Button */}
+            <button
+                type="button"
+                onClick={() => setIsGatewayModalOpen(true)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border shadow-sm active:scale-95 ${
+                    gatewayStatus.connected
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                        : gatewayStatus.checking
+                            ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                }`}
+                title={`Servidor de Archivos: ${gatewayStatus.url} (${gatewayStatus.connected ? 'Conectado' : 'Sin conexión'}). Clic para configurar.`}
+            >
+                <span className={`size-2.5 rounded-full shrink-0 ${
+                    gatewayStatus.connected 
+                        ? 'bg-emerald-500 animate-pulse' 
+                        : gatewayStatus.checking 
+                            ? 'bg-slate-400 animate-spin' 
+                            : 'bg-amber-500'
+                }`} />
+                <span className="material-symbols-outlined text-[16px]">dns</span>
+                <span className="hidden sm:inline">
+                    {gatewayStatus.connected
+                        ? `Servidor de Archivos Conectado${gatewayStatus.latency !== undefined ? ` (${gatewayStatus.latency}ms)` : ''}`
+                        : gatewayStatus.checking
+                            ? 'Verificando Servidor...'
+                            : 'Servidor Fuera de Línea'}
+                </span>
+                <span className="sm:hidden">
+                    {gatewayStatus.connected ? 'Servidor 🟢' : 'Servidor ⚪'}
+                </span>
+                <span className="material-symbols-outlined text-[14px] text-slate-400">tune</span>
+            </button>
+
+            <div className="flex bg-slate-200 p-1 rounded-xl shadow-inner shrink-0">
+                {[
+                    {id: 'individual', label: 'Individual', icon: 'person'},
+                    {id: 'batch', label: 'Cruce Masivo', icon: 'compare_arrows'},
+                    {id: 'import', label: 'Importar Datos', icon: 'upload_file', adminOnly: true}
+                ].filter(m => !m.adminOnly || user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))).map((m) => (
+                    <button 
+                        key={m.id}
+                        onClick={() => setActiveMode(m.id as any)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        <span className="material-symbols-outlined text-[18px]">{m.icon}</span>
+                        {m.label}
+                    </button>
+                ))}
+            </div>
         </div>
       </div>
 
@@ -1254,27 +1296,57 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                     <p className="font-bold text-blue-900 text-sm">{fixEncoding(mainStudent.CARRERA)}</p>
                                     <p className="text-[10px] text-blue-700 font-bold mt-1 uppercase">{mainStudent.MODALIDAD} • {mainStudent.SEMESTRE}-{mainStudent.ANIO}</p>
                                 </div>
-                                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Expediente Físico (H:)</p>
+                                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                                    <div className="flex justify-between items-center mb-3">
                                         <div className="flex items-center gap-1.5">
-                                            <span className="material-symbols-outlined text-slate-400 text-[14px]">folder_open</span>
+                                            <span className="material-symbols-outlined text-primary text-[18px]">folder_special</span>
+                                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                                                Requisitos y Documentos
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => fetchExtraInfo(studentHistory)}
+                                                disabled={loadingDocs}
+                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
+                                                title="Recargar documentos"
+                                            >
+                                                <span className={`material-symbols-outlined text-[15px] ${loadingDocs ? 'animate-spin' : ''}`}>sync</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsGatewayModalOpen(true)}
+                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
+                                                title="Configurar servidor de archivos"
+                                            >
+                                                <span className="material-symbols-outlined text-[15px]">tune</span>
+                                            </button>
                                         </div>
                                     </div>
 
                                     {loadingDocs ? (
-                                        <div className="flex items-center gap-2 text-slate-400 text-xs font-bold">
-                                            <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
-                                            Buscando en servidor local...
+                                        <div className="flex items-center justify-center py-6 gap-2 text-slate-500 text-xs font-bold bg-white rounded-lg border border-slate-200">
+                                            <span className="material-symbols-outlined text-[18px] text-primary animate-spin">sync</span>
+                                            Consultando archivos del postulante...
                                         </div>
                                     ) : docsError ? (
-                                        <div className="flex flex-col gap-1">
-                                            <div className="bg-red-50 text-red-600 text-[10px] p-2 rounded border border-red-100 font-bold">
-                                                {docsError}
+                                        <div className="flex flex-col gap-2 p-3 bg-amber-50/70 text-amber-900 rounded-xl border border-amber-200/80">
+                                            <div className="flex items-start gap-2">
+                                                <span className="material-symbols-outlined text-amber-600 text-[18px] shrink-0 mt-0.5">cloud_off</span>
+                                                <div className="text-[10px] leading-relaxed">
+                                                    <p className="font-bold text-amber-950">Servidor de Archivos no accesible</p>
+                                                    <p className="text-amber-800 mt-0.5">{docsError}</p>
+                                                </div>
                                             </div>
-                                            <p className="text-[9px] text-slate-400">
-                                                Asegúrate de que el servidor local (H:) esté activo y conectado adecuadamente.
-                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsGatewayModalOpen(true)}
+                                                className="w-full py-1.5 px-3 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                                            >
+                                                <span className="material-symbols-outlined text-[14px]">tune</span>
+                                                Configurar IP / Servidor
+                                            </button>
                                         </div>
                                     ) : localDocuments.length > 0 ? (
                                         <div className="flex flex-col gap-3">
@@ -1305,75 +1377,107 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                     return labelA.localeCompare(labelB);
                                                 })
                                                 .map(([folderLabel, docsInFolder], groupIdx) => {
-                                                    const isExpanded = !!expandedFolders[folderLabel];
+                                                    const isExpanded = expandedFolders[folderLabel] !== false; // Default open
                                                 return (
-                                                    <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                                                    <div key={groupIdx} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
                                                         {/* Folder Header */}
                                                         <button
                                                             onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
                                                             type="button"
-                                                            className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
+                                                            className="w-full flex items-center justify-between p-2.5 bg-slate-100/90 hover:bg-slate-200/90 transition-colors border-b border-slate-200"
                                                         >
                                                             <div className="flex items-center gap-2 text-left min-w-0">
                                                                 <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
-                                                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
+                                                                <span className="text-[11px] font-black text-slate-800 uppercase tracking-tight truncate">
                                                                     {folderLabel}
                                                                 </span>
-                                                                <span className="bg-slate-200 text-slate-700 text-[8px] font-black px-1.5 py-0.5 rounded-full shrink-0">
+                                                                <span className="bg-slate-200 text-slate-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0">
                                                                     {docsInFolder.length}
                                                                 </span>
                                                             </div>
-                                                            <span className="material-symbols-outlined text-slate-500 text-[15px] shrink-0">
+                                                            <span className="material-symbols-outlined text-slate-500 text-[16px] shrink-0">
                                                                 {isExpanded ? 'expand_less' : 'expand_more'}
                                                             </span>
                                                         </button>
                                                         
                                                         {/* Documents in Folder */}
                                                         {isExpanded && (
-                                                            <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
+                                                            <div className="p-2 flex flex-col gap-2 bg-slate-50/50">
                                                                 {docsInFolder.map((doc, i) => {
-                                                                    const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : defaultApiUrl;
-                                                                    const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
+                                                                    const docStreamUrl = getDocumentStreamUrl(doc.path, gatewayUrl);
                                                                     
                                                                     return (
-                                                                        <a
+                                                                        <div
                                                                             key={i}
-                                                                            href={docUrl}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="flex items-center gap-2 bg-white border border-slate-150 rounded p-1.5 hover:border-primary hover:shadow-sm transition-all group relative overflow-hidden"
+                                                                            className="bg-white border border-slate-200 rounded-lg p-2 hover:border-primary/50 hover:shadow-md transition-all flex flex-col gap-1.5 group relative"
                                                                         >
-                                                                            {/* Accent Left Bar */}
-                                                                            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${doc.isPdf ? 'bg-red-500' : doc.isImage ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                                                                            
-                                                                            <span className={`material-symbols-outlined shrink-0 text-[16px] ${doc.isPdf ? 'text-red-500' : doc.isImage ? 'text-blue-500' : 'text-slate-400'} pl-0.5`}>
-                                                                                {doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description'}
-                                                                            </span>
-                                                                            
-                                                                            <div className="flex-1 min-w-0 pr-1">
-                                                                                <p className="text-[9px] font-bold text-slate-800 group-hover:text-primary leading-tight truncate">
-                                                                                    {doc.friendlyName}
-                                                                                </p>
-                                                                                <p className="text-[7.5px] text-slate-400 font-mono truncate select-all mt-0.5">
-                                                                                    {doc.filename}
-                                                                                </p>
-                                                                            </div>
-                                                                            
-                                                                            <div className="flex items-center gap-1 shrink-0">
-                                                                                <span className={`text-[7.5px] font-black px-1 py-0.2 rounded uppercase tracking-wider ${
+                                                                            <div className="flex items-start gap-2 min-w-0">
+                                                                                <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                                                                                     doc.isPdf 
-                                                                                        ? 'bg-red-50 text-red-600 border border-red-100' 
+                                                                                        ? 'bg-red-50 text-red-600 border border-red-200' 
                                                                                         : doc.isImage 
-                                                                                            ? 'bg-blue-50 text-blue-600 border border-blue-100' 
-                                                                                            : 'bg-slate-50 text-slate-600 border border-slate-100'
+                                                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                                                                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
                                                                                 }`}>
-                                                                                    {doc.ext}
-                                                                                </span>
-                                                                                <span className="material-symbols-outlined text-transparent group-hover:text-primary text-[12px] transition-all">
-                                                                                    open_in_new
-                                                                                </span>
+                                                                                    <span className="material-symbols-outlined text-[18px]">
+                                                                                        {doc.icon || (doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description')}
+                                                                                    </span>
+                                                                                </div>
+                                                                                
+                                                                                <div className="flex-1 min-w-0">
+                                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                        <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                                                                            doc.badgeColor || (doc.isPdf ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-800')
+                                                                                        }`}>
+                                                                                            {doc.categoryLabel || 'DOCUMENTO'}
+                                                                                        </span>
+                                                                                        {doc.prefixCode && (
+                                                                                            <span className="text-[8px] font-mono font-bold text-slate-500 bg-slate-100 px-1 py-0.5 rounded">
+                                                                                                #{doc.prefixCode}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <p className="text-[10px] font-bold text-slate-900 group-hover:text-primary leading-snug truncate mt-0.5">
+                                                                                        {doc.friendlyName}
+                                                                                    </p>
+                                                                                    <p className="text-[8px] text-slate-400 font-mono truncate select-all">
+                                                                                        {doc.filename}
+                                                                                    </p>
+                                                                                </div>
                                                                             </div>
-                                                                        </a>
+
+                                                                            {/* Action Buttons */}
+                                                                            <div className="flex items-center justify-end gap-1 pt-1.5 border-t border-slate-100">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => setSelectedDocForViewer(doc)}
+                                                                                    className="px-2 py-1 bg-primary/10 hover:bg-primary text-primary hover:text-white rounded-md text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all"
+                                                                                    title="Ver archivo"
+                                                                                >
+                                                                                    <span className="material-symbols-outlined text-[13px]">visibility</span>
+                                                                                    Ver
+                                                                                </button>
+                                                                                
+                                                                                <a
+                                                                                    href={docStreamUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
+                                                                                    title="Abrir en pestaña nueva"
+                                                                                >
+                                                                                    <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                                                                                </a>
+                                                                                
+                                                                                <a
+                                                                                    href={docStreamUrl}
+                                                                                    download={doc.filename}
+                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
+                                                                                    title="Descargar archivo"
+                                                                                >
+                                                                                    <span className="material-symbols-outlined text-[13px]">download</span>
+                                                                                </a>
+                                                                            </div>
+                                                                        </div>
                                                                     );
                                                                 })}
                                                             </div>
@@ -1383,7 +1487,10 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                             })}
                                         </div>
                                     ) : (
-                                        <p className="text-[10px] font-bold text-slate-500">No hay documentos registrados.</p>
+                                        <div className="p-4 text-center bg-white rounded-xl border border-slate-200">
+                                            <span className="material-symbols-outlined text-slate-300 text-3xl mb-1">folder_open</span>
+                                            <p className="text-[10px] font-bold text-slate-500">No se encontraron documentos digitalizados.</p>
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -1677,6 +1784,28 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             </div>
         )}
       </div>
+
+      {/* File Gateway Settings Modal */}
+      <FileGatewayModal
+        isOpen={isGatewayModalOpen}
+        onClose={() => setIsGatewayModalOpen(false)}
+        onGatewayUpdated={(newUrl) => {
+          setGatewayUrl(newUrl);
+          checkGateway(newUrl);
+          if (studentHistory.length > 0) {
+            fetchExtraInfo(studentHistory);
+          }
+        }}
+      />
+
+      {/* Document In-App Viewer Modal */}
+      {selectedDocForViewer && (
+        <DocumentViewerModal
+          document={selectedDocForViewer}
+          streamUrl={getDocumentStreamUrl(selectedDocForViewer.path, gatewayUrl)}
+          onClose={() => setSelectedDocForViewer(null)}
+        />
+      )}
     </div>
   );
 };

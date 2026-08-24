@@ -57,7 +57,46 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Main public client initialized with anon credentials
+// Custom fetch wrapper with automatic retry for transient network errors and socket disconnects
+export const customFetchWithRetry = async (
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> => {
+  const maxRetries = 1;
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(input, init);
+      // If server returns gateway timeout or bad gateway on idle disconnect, retry once
+      if ((response.status === 502 || response.status === 503 || response.status === 504) && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        continue;
+      }
+      return response;
+    } catch (err: any) {
+      lastError = err;
+      const isNetworkError =
+        err?.name === 'TypeError' ||
+        err?.message?.includes('Failed to fetch') ||
+        err?.message?.includes('NetworkError') ||
+        err?.message?.includes('network') ||
+        err?.message?.includes('socket') ||
+        err?.message?.includes('aborted');
+
+      if (attempt < maxRetries && isNetworkError) {
+        // Wait 300ms before retrying to allow socket re-establishment
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError;
+};
+
+// Main public client initialized with anon credentials and resilient retry fetch
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,
@@ -70,6 +109,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     },
   },
   global: {
+    fetch: customFetchWithRetry,
     headers: {
       'apikey': supabaseAnonKey,
     },

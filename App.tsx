@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase, clearStaleAuthTokens } from './lib/supabaseClient';
+import { initKeepAliveSystem } from './lib/keepAlive';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
 import { IncomingFiles } from './pages/IncomingFiles';
@@ -56,6 +57,9 @@ function App() {
   useEffect(() => {
     let isMounted = true;
 
+    // Initialize Supabase Keep-Alive & Auto-Reconnect system
+    const cleanupKeepAlive = initKeepAliveSystem();
+
     // Safety timeout: ensure loading spinner never blocks the user for more than 500ms
     const safetyTimeout = setTimeout(() => {
       if (isMounted) {
@@ -88,6 +92,7 @@ function App() {
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
+      cleanupKeepAlive();
     };
   }, []);
 
