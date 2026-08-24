@@ -56,57 +56,26 @@ function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // Safety timeout: ensure loading spinner never blocks the user for more than 1s
+    // Safety timeout: ensure loading spinner never blocks the user for more than 500ms
     const safetyTimeout = setTimeout(() => {
       if (isMounted) {
         setIsCheckingAuth(false);
       }
-    }, 1000);
+    }, 500);
 
-    const initAuth = async () => {
+    const initAuth = () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          console.warn('Session verification failed, resetting auth state:', error.message);
-          clearStaleAuthTokens();
-          await supabase.auth.signOut().catch(() => {});
-          if (isMounted) {
-            setUser(null);
-            try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
-            setIsCheckingAuth(false);
-          }
-          return;
-        }
-
-        const session = data?.session;
-        if (session?.user) {
-          const { data: profile, error: profileError } = await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (isMounted) {
-            if (profile && !profileError) {
-              setUser(profile as User);
-              try { localStorage.setItem('unsaac_auth_user', JSON.stringify(profile)); } catch(e){}
+        const savedUserStr = localStorage.getItem('unsaac_auth_user');
+        if (savedUserStr) {
+          try {
+            const parsed = JSON.parse(savedUserStr);
+            if (parsed && isMounted) {
+              setUser(parsed);
             }
-            setIsCheckingAuth(false);
-          }
-        } else {
-          if (isMounted) {
-            setIsCheckingAuth(false);
-          }
+          } catch (e) {}
         }
       } catch (err: any) {
-        console.warn('Unexpected error checking session:', err);
-        clearStaleAuthTokens();
-        try {
-          await supabase.auth.signOut().catch(() => {});
-        } catch (e) {}
-        if (isMounted) {
-          setIsCheckingAuth(false);
-        }
+        console.warn('Session check warning:', err);
       } finally {
         if (isMounted) {
           setIsCheckingAuth(false);
@@ -116,37 +85,9 @@ function App() {
 
     initAuth();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT') {
-        if (isMounted) {
-          setUser(null);
-          try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
-        }
-      } else if (event === 'TOKEN_REFRESHED') {
-        if (!session) {
-          clearStaleAuthTokens();
-          if (isMounted) {
-            setUser(null);
-            try { localStorage.removeItem('unsaac_auth_user'); } catch(e){}
-          }
-        }
-      } else if (event === 'SIGNED_IN' && session?.user) {
-        const { data: profile } = await supabase
-          .from('usuarios')
-          .select('*')
-          .eq('id', session.user.id)
-          .maybeSingle();
-        if (isMounted && profile) {
-          setUser(profile as User);
-          try { localStorage.setItem('unsaac_auth_user', JSON.stringify(profile)); } catch(e){}
-        }
-      }
-    });
-
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
-      authListener?.subscription?.unsubscribe();
     };
   }, []);
 
@@ -160,135 +101,140 @@ function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
+  const handleLogout = async () => {
+    try {
+      if (user?.name) {
+        await supabase.from('tramite_seguimiento').insert([{
+          action_type: 'Sistema',
+          description: 'Cierre de Sesión',
+          user_name: user.name
+        }]);
+      }
+    } catch(e) {}
+    try {
+      localStorage.removeItem('unsaac_auth_user');
+    } catch(e) {}
+    setUser(null);
+    clearStaleAuthTokens();
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch(e) {}
+  };
+
   if (isCheckingAuth) {
     return <div className="flex h-screen items-center justify-center bg-slate-900"><span className="material-symbols-outlined animate-spin text-white text-4xl">progress_activity</span></div>;
   }
 
-  if (!user) {
-    return (
-      <HashRouter>
+  return (
+    <HashRouter>
+      <ToastContainer toasts={toasts} onClose={removeToast} />
+      {!user ? (
         <Routes>
           <Route path="/login" element={<Login onLogin={(u) => { setUser(u); addToast(`Bienvenido, ${u.name}`); }} />} />
           <Route path="/staff-confirm" element={<StaffConfirmation />} />
           <Route path="/unsubscribe" element={<Unsubscribe />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
-        <ToastContainer toasts={toasts} onClose={removeToast} />
-      </HashRouter>
-    );
-  }
+      ) : (
+        <div className="flex h-screen w-full bg-[#f8fafc] overflow-hidden">
+          <ChatBot />
+          <Sidebar user={user} onLogout={handleLogout} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+          
+          <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#f8fafc] relative">
+            <header className="md:hidden flex items-center justify-between p-4 bg-white border-b border-slate-200 shrink-0 print:hidden">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">school</span>
+                <span className="font-bold text-lg">UNSAAC</span>
+              </div>
+              <button className="p-2" onClick={() => setIsSidebarOpen(true)}><span className="material-symbols-outlined">menu</span></button>
+            </header>
 
-  return (
-    <HashRouter>
-      <div className="flex h-screen w-full bg-[#f8fafc] overflow-hidden">
-        <ChatBot />
-        <ToastContainer toasts={toasts} onClose={removeToast} />
-        <Sidebar user={user} onLogout={async () => {
-          try {
-              await supabase.from('tramite_seguimiento').insert([{
-                  action_type: 'Sistema',
-                  description: 'Cierre de Sesión',
-                  user_name: user?.name || 'Usuario'
-              }]);
-          } catch(e) {}
-          setUser(null); 
-          await supabase.auth.signOut(); 
-        }} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
-        
-        <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#f8fafc] relative">
-          <header className="md:hidden flex items-center justify-between p-4 bg-white border-b border-slate-200 shrink-0 print:hidden">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary">school</span>
-              <span className="font-bold text-lg">UNSAAC</span>
+            <div className="flex-1 overflow-y-auto">
+              <Routes>
+                <Route path="/" element={<Dashboard user={user} />} />
+                <Route path="/incoming" element={<IncomingFiles user={user} notify={addToast} />} />
+                <Route path="/outgoing" element={<OutgoingFiles user={user} />} />
+                <Route path="/lookup" element={<StudentLookup user={user} />} />
+                <Route path="/resolutions" element={<Resolutions user={user} />} />
+                <Route path="/payments" element={<TransferRefunds user={user} />} />
+                
+                {/* Rutas Protegidas por Rol y Permisos */}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_prestamos'))) && (
+                  <Route path="/loans" element={<Loans user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_orientacion'))) && (
+                  <Route path="/orientation" element={<VocationalOrientation user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_plantillas'))) && (
+                  <>
+                    <Route path="/templates" element={<Templates />} />
+                    <Route path="/templates/:id" element={<TemplateEditor user={user} />} />
+                  </>
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_renuncias'))) && (
+                  <Route path="/resignations" element={<Resignations user={user} />} />
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_reserva'))) && (
+                  <Route path="/vacancy" element={<VacancyReservation user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_cuadro_vacantes'))) && (
+                  <Route path="/vacancies" element={<VacancyChart user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_asistencia'))) && (
+                  <Route path="/attendance" element={<Attendance user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_actas'))) && (
+                  <Route path="/actas" element={<MeetingMinutes user={user} notify={addToast} />} />
+                )}
+                {/* Adjudicación */}
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_adjudicaciones'))) && (
+                  <Route path="/adjudication" element={<Adjudication />} />
+                )}
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_vacancy_evolution'))) && (
+                  <Route path="/vacancy-evolution" element={<VacancyEvolution user={user} notify={addToast} />} />
+                )}
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_pre_review'))) && (
+                  <Route path="/pre-review" element={<ApplicantPreReview user={user} notify={addToast} />} />
+                )}
+                
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_presupuesto'))) && (
+                  <Route path="/budget" element={<ExamBudget user={user} notify={addToast} />} />
+                )}
+                
+                {/* Agenda / Calendario */}
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_agenda'))) && (
+                  <Route path="/calendar" element={<CalendarEvents user={user} notify={addToast} />} />
+                )}
+                
+                {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_auditoria'))) && (
+                  <Route path="/logs" element={<SystemLogs />} />
+                )}
+                
+                {user.role === 'Administrador' && (
+                  <Route path="/data-cleanup" element={<DataCleanup user={user} />} />
+                )}
+                
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_personal'))) && (
+                  <Route path="/staff" element={<StaffManagement user={user} notify={addToast} />} />
+                )}
+                
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_reporte_ingresantes'))) && (
+                  <Route path="/reporte-ingresantes" element={<IngresantesReport user={user} notify={addToast} />} />
+                )}
+                
+                <Route path="/staff-confirm" element={<StaffConfirmation />} />
+                <Route path="/unsubscribe" element={<Unsubscribe />} />
+
+                <Route path="/settings" element={<Settings user={user} notify={addToast} />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+              <footer className="p-6 text-center text-[10px] font-black text-slate-300 uppercase tracking-widest border-t border-slate-100 mt-auto">
+                © 2024 Dirección de Admisión UNSAAC • Conectado como {user.name} ({user.role})
+              </footer>
             </div>
-            <button className="p-2" onClick={() => setIsSidebarOpen(true)}><span className="material-symbols-outlined">menu</span></button>
-          </header>
-
-          <div className="flex-1 overflow-y-auto">
-            <Routes>
-              <Route path="/" element={<Dashboard user={user} />} />
-              <Route path="/incoming" element={<IncomingFiles user={user} notify={addToast} />} />
-              <Route path="/outgoing" element={<OutgoingFiles user={user} />} />
-              <Route path="/lookup" element={<StudentLookup user={user} />} />
-              <Route path="/resolutions" element={<Resolutions user={user} />} />
-              <Route path="/payments" element={<TransferRefunds user={user} />} />
-              
-              {/* Rutas Protegidas por Rol y Permisos */}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_prestamos'))) && (
-                <Route path="/loans" element={<Loans user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_orientacion'))) && (
-                <Route path="/orientation" element={<VocationalOrientation user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_plantillas'))) && (
-                <>
-                  <Route path="/templates" element={<Templates />} />
-                  <Route path="/templates/:id" element={<TemplateEditor user={user} />} />
-                </>
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_renuncias'))) && (
-                <Route path="/resignations" element={<Resignations user={user} />} />
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_reserva'))) && (
-                <Route path="/vacancy" element={<VacancyReservation user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_cuadro_vacantes'))) && (
-                <Route path="/vacancies" element={<VacancyChart user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_asistencia'))) && (
-                <Route path="/attendance" element={<Attendance user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_actas'))) && (
-                <Route path="/actas" element={<MeetingMinutes user={user} notify={addToast} />} />
-              )}
-              {/* Adjudicación */}
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_adjudicaciones'))) && (
-                <Route path="/adjudication" element={<Adjudication />} />
-              )}
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_vacancy_evolution'))) && (
-                <Route path="/vacancy-evolution" element={<VacancyEvolution user={user} notify={addToast} />} />
-              )}
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_pre_review'))) && (
-                <Route path="/pre-review" element={<ApplicantPreReview user={user} notify={addToast} />} />
-              )}
-              
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_presupuesto'))) && (
-                <Route path="/budget" element={<ExamBudget user={user} notify={addToast} />} />
-              )}
-              
-              {/* Agenda / Calendario */}
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_agenda'))) && (
-                <Route path="/calendar" element={<CalendarEvents user={user} notify={addToast} />} />
-              )}
-              
-              {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_auditoria'))) && (
-                <Route path="/logs" element={<SystemLogs />} />
-              )}
-              
-              {user.role === 'Administrador' && (
-                <Route path="/data-cleanup" element={<DataCleanup user={user} />} />
-              )}
-              
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_personal'))) && (
-                <Route path="/staff" element={<StaffManagement user={user} notify={addToast} />} />
-              )}
-              
-              {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_reporte_ingresantes'))) && (
-                <Route path="/reporte-ingresantes" element={<IngresantesReport user={user} notify={addToast} />} />
-              )}
-              
-              <Route path="/staff-confirm" element={<StaffConfirmation />} />
-              <Route path="/unsubscribe" element={<Unsubscribe />} />
-
-              <Route path="/settings" element={<Settings user={user} notify={addToast} />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-            <footer className="p-6 text-center text-[10px] font-black text-slate-300 uppercase tracking-widest border-t border-slate-100 mt-auto">
-              © 2024 Dirección de Admisión UNSAAC • Conectado como {user.name} ({user.role})
-            </footer>
-          </div>
-        </main>
-      </div>
+          </main>
+        </div>
+      )}
     </HashRouter>
   );
 }

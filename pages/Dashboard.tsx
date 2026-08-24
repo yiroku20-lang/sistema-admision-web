@@ -31,7 +31,7 @@ export const Dashboard: React.FC<{ user: User | null }> = ({ user }) => {
 
   useEffect(() => {
     fetchDashboardData();
-  }, [user]);
+  }, [user?.id]);
 
   const fetchDashboardData = async () => {
     setLoading(true);

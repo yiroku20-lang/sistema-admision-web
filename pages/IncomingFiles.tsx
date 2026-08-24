@@ -147,9 +147,18 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       const { data, error } = await supabase
         .from('usuarios')
         .select('id, name, role, dni');
-      if (error) throw error;
-      if (data) {
+      if (!error && data && data.length > 0) {
         setOperators(data);
+        return;
+      }
+
+      // Fallback al endpoint del servidor
+      const res = await fetch('/api/auth/operators');
+      if (res.ok) {
+        const serverData = await res.json();
+        if (Array.isArray(serverData) && serverData.length > 0) {
+          setOperators(serverData);
+        }
       }
     } catch (err) {
       console.error("Error fetching operators:", err);

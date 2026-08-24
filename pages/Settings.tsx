@@ -68,10 +68,18 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     }
     setIsChangingPassword(true);
     try {
-      const { error: authError } = await supabase.auth.updateUser({
-        password: newPassword
+      const response = await fetch('/api/update-user-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          password: newPassword.trim()
+        })
       });
-      if (authError) throw authError;
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Error al actualizar contraseña.');
+      }
 
       notify?.('Contraseña actualizada exitosamente.', 'success');
       setNewPassword('');

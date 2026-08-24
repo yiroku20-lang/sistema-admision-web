@@ -39,11 +39,6 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
               localStorage.setItem('unsaac_auth_user', JSON.stringify(result.user));
             } catch(e) {}
 
-            // Sincronizar sesión en segundo plano sin bloquear la navegación
-            if (result.session) {
-              supabase.auth.setSession(result.session).catch(() => {});
-            }
-            
             setIsLoading(false);
             onLogin(result.user);
             navigate('/');
@@ -75,6 +70,9 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
           .maybeSingle();
 
         if (profile) {
+          try {
+            localStorage.setItem('unsaac_auth_user', JSON.stringify(profile));
+          } catch(e) {}
           onLogin(profile);
           navigate('/');
           return;
@@ -92,6 +90,9 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         const isValidPlain = dbUser.password === cleanPassword;
         const isBypass = ['admin123', '123456', '123', 'admin'].includes(cleanPassword);
         if (isValidPlain || isBypass) {
+          try {
+            localStorage.setItem('unsaac_auth_user', JSON.stringify(dbUser));
+          } catch(e) {}
           onLogin(dbUser);
           navigate('/');
           return;
