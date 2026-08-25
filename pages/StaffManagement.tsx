@@ -183,8 +183,8 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
     const { data, error, count } = await query.order('nombre', { ascending: true }).range(from, to);
     
     if (!error && data) {
-        // Obtenemos los DNIs de esta página para ver si tienen huella
-        const dnis = data.map(d => d.dni).filter(Boolean);
+        // Obtenemos los DNIs limpios de esta página para verificar si tienen huella
+        const dnis = data.map(d => (d.dni ? String(d.dni).trim() : '')).filter(Boolean);
         let enrolledDnis = new Set<string>();
         
         if (dnis.length > 0) {
@@ -195,14 +195,14 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({ user, notify }
                 
             if (fingerprints) {
                 fingerprints.forEach(f => {
-                    if (f.dni) enrolledDnis.add(f.dni);
+                    if (f.dni) enrolledDnis.add(String(f.dni).trim());
                 });
             }
         }
 
         const dataWithFingerprintInfo = data.map(d => ({
             ...d,
-            has_fingerprint: enrolledDnis.has(d.dni)
+            has_fingerprint: enrolledDnis.has(d.dni ? String(d.dni).trim() : '')
         }));
 
         setDirectorio(dataWithFingerprintInfo);

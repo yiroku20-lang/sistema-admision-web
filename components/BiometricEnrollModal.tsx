@@ -70,12 +70,13 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
   const checkExistingFingerprint = useCallback(async () => {
     setStep('CHECKING');
     try {
+      const cleanDni = person?.dni ? String(person.dni).trim() : '';
       const [serviceOk, { data, error }] = await Promise.all([
         checkServiceHealth(),
         supabase
           .from('fingerprint_templates')
           .select('id, template_base64, created_at')
-          .eq('dni', person.dni)
+          .eq('dni', cleanDni)
           .order('created_at', { ascending: false })
           .limit(1)
       ]);
@@ -196,30 +197,18 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
       setSamplesCollected(4);
       setEnrollMessage('Actualizando plantilla única en base de datos...');
 
-      // Step 4: Delete ANY previous templates for this DNI to ensure strictly ONE finger exists
-      const { error: delError } = await supabase
-        .from('fingerprint_templates')
-        .delete()
-        .eq('dni', person.dni);
+      // Guardar plantilla en base de datos con upsert y onConflict exacto
+      const { error } = await supabase.from('fingerprint_templates').upsert({
+        personal_id: person.id,
+        dni: person.dni.trim(),
+        finger_name: 'Índice Derecho',
+        finger_index: 1,
+        template_base64: templateBase64,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'personal_id,finger_index' });
 
-      if (delError) {
-        console.warn('Advertencia al limpiar registros anteriores:', delError);
-      }
-
-      // Step 5: Insert the fresh single template
-      const { error: insertError } = await supabase
-        .from('fingerprint_templates')
-        .insert([{
-          personal_id: person.id || null,
-          dni: person.dni,
-          finger_name: 'Huella Principal',
-          finger_index: 1,
-          template_base64: templateBase64,
-          created_at: new Date().toISOString()
-        }]);
-
-      if (insertError) {
-        throw new Error(`Error guardando en base de datos: ${insertError.message}`);
+      if (error) {
+        throw new Error(`Error guardando en base de datos: ${error.message}`);
       }
 
       // Update state locally
@@ -280,22 +269,12 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
       const verifyData = await verifyRes.json();
       console.log('[Biometric Verify Response]:', verifyData);
       
-      // Strict 1-to-1 comparison check from the biometric bridge
+      // Validación estricta 1 a 1: verifyData.success === true && verifyData.verified === true
       const isVerified = Boolean(
         verifyRes.ok && 
         verifyData &&
-        verifyData.success !== false &&
-        (
-          verifyData.verified === true ||
-          verifyData.matched === true ||
-          (typeof verifyData.score === 'number' && verifyData.score >= 50) ||
-          verifyData.status === 'MATCH' ||
-          verifyData.status === 'matched' ||
-          verifyData.match === true
-        ) &&
-        verifyData.verified !== false &&
-        verifyData.matched !== false &&
-        verifyData.status !== 'NO_MATCH'
+        verifyData.success === true &&
+        verifyData.verified === true
       );
       
       if (isVerified) {
@@ -303,8 +282,7 @@ export const BiometricEnrollModal: React.FC<Props> = ({ isOpen, onClose, person,
          notify('¡Comprobación exitosa! La huella coincide con el registro activo.', 'success');
       } else {
          setStep('VERIFY_FAILED');
-         const reason = verifyData?.error || verifyData?.message || 'La huella colocada no coincide con la huella registrada.';
-         notify(reason, 'warning');
+         notify('Huella no coincide con la plantilla registrada del titular', 'error');
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
