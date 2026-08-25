@@ -232,13 +232,17 @@ export interface PaymentRegistry {
   reason: string;
   type: 'Devolución' | 'Transferencia';
   target_exam?: string; 
-  status: 'Pendiente Originales' | 'Observado' | 'Apto' | 'En Bloque' | 'Finalizado';
+  status: 'Pendiente Originales' | 'Observado' | 'Apto' | 'En Bloque' | 'Finalizado' | 'Rechazado';
   incoming_file_number?: string; 
   outgoing_doc_number?: string;
   resolution_number?: string;
   resolution_date?: string;
   resolution_pdf?: string;
   transfer_notified?: boolean;
+  rejection_reason?: string;
+  rejection_date?: string;
+  rejected_by?: string;
+  previous_block_id?: string;
 }
 
 export interface Participant {

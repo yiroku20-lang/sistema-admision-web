@@ -1758,6 +1758,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                                         ) : (
                                             paymentCandidates.map(c => {
                                                 const isBlocked = c.status === 'En Bloque' || c.status === 'Finalizado';
+                                                const wasRejected = c.status === 'Rechazado';
                                                 return (
                                                     <button 
                                                         key={c.id} 
@@ -1771,7 +1772,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                                                         className={`w-full p-4 text-left transition-colors flex justify-between items-center group ${isBlocked ? 'opacity-60 cursor-not-allowed bg-slate-100' : 'hover:bg-white'}`}
                                                     >
                                                         <div>
-                                                            <p className="text-sm font-black uppercase text-slate-800">{c.student_name}</p>
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="text-sm font-black uppercase text-slate-800">{c.student_name}</p>
+                                                                {wasRejected && (
+                                                                    <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200">
+                                                                        Devolución Rechazada (Apto para Transferencia)
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{c.dni} • S/ {c.amount} • {c.type}</p>
                                                             {isBlocked && (
                                                                 <p className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1">

@@ -612,6 +612,44 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     return Array.from(datesSet).sort((a, b) => b.localeCompare(a)); // desc
   };
 
+  // Helper to calculate total hours worked for a person across given dates
+  const calculatePersonTotalMinutes = (dni: string, datesToEvaluate: string[]) => {
+    let totalMinutes = 0;
+    let daysAttended = 0;
+
+    datesToEvaluate.forEach(dateStr => {
+      const personRecords = records.filter(r => r.dni === dni && r.fecha === dateStr);
+      const inRec = personRecords.find(r => r.tipo === 'INGRESO');
+      const outRec = personRecords.find(r => r.tipo === 'SALIDA');
+      if (inRec) daysAttended++;
+      if (inRec && outRec) {
+        try {
+          const t1 = new Date(`${inRec.fecha}T${inRec.hora}`);
+          const t2 = new Date(`${outRec.fecha}T${outRec.hora}`);
+          const diffMs = t2.getTime() - t1.getTime();
+          if (diffMs > 0) {
+            totalMinutes += Math.floor(diffMs / (1000 * 60));
+          }
+        } catch (e) {}
+      }
+    });
+
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    const decimalHours = (totalMinutes / 60).toFixed(2);
+    const formatted = `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
+
+    return {
+      totalMinutes,
+      hours,
+      mins,
+      decimalHours,
+      formatted,
+      formattedFull: `${formatted} (${decimalHours} hrs)`,
+      daysAttended
+    };
+  };
+
   // Multi-dimensional calculation of attendance per person & date
   interface AttendanceRow {
     num: number;
@@ -624,6 +662,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     ingresoRecord?: RubroAttendanceRecord;
     salidaRecord?: RubroAttendanceRecord;
     horasTrabajadas: string;
+    totalHorasPersona: string;
     totalMinutes: number;
     estado: 'COMPLETO' | 'EN CURSO' | 'INASISTENTE';
   }
@@ -645,6 +684,16 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
         s => s.nombres.toLowerCase().includes(q) || s.dni.includes(q)
       );
     }
+
+    // Precompute person totals for evaluated dates
+    const personTotalsMap = new Map<string, { formatted: string; formattedFull: string }>();
+    filteredPersonnel.forEach(s => {
+      const res = calculatePersonTotalMinutes(s.dni, datesToEvaluate);
+      personTotalsMap.set(s.dni, {
+        formatted: res.formatted,
+        formattedFull: res.formattedFull
+      });
+    });
 
     const rows: AttendanceRow[] = [];
     let rowCounter = 1;
@@ -680,6 +729,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
         if (ingresoRecord && salidaRecord) estado = 'COMPLETO';
         else if (ingresoRecord) estado = 'EN CURSO';
 
+        const totals = personTotalsMap.get(s.dni) || { formatted: '00h 00m', formattedFull: '00h 00m (0.00 hrs)' };
+
         rows.push({
           num: rowCounter++,
           fecha: dateStr,
@@ -691,6 +742,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
           ingresoRecord,
           salidaRecord,
           horasTrabajadas: horasTrabajadasStr,
+          totalHorasPersona: totals.formatted,
           totalMinutes,
           estado
         });
@@ -700,19 +752,41 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
     return rows;
   };
 
-  // Export Hours Report to Excel with sheet per date
+  // Export Hours Report to Excel in a SINGLE SHEET
   const handleExportExcel = () => {
     const workbook = XLSX.utils.book_new();
     const dates = selectedDateFilter === 'ALL' ? getUniqueDates() : [selectedDateFilter];
 
+    let personnel = eligibleSorteos;
+    if (selectedPersonFilter !== 'ALL') {
+      personnel = personnel.filter(s => s.dni === selectedPersonFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      personnel = personnel.filter(s => s.nombres.toLowerCase().includes(q) || s.dni.includes(q));
+    }
+
+    // Precalculate total hours per person across evaluated dates
+    const personTotalsMap = new Map<string, { formatted: string; decimalHours: string; daysAttended: number }>();
+    personnel.forEach(s => {
+      const res = calculatePersonTotalMinutes(s.dni, dates);
+      personTotalsMap.set(s.dni, {
+        formatted: res.formatted,
+        decimalHours: res.decimalHours,
+        daysAttended: res.daysAttended
+      });
+    });
+
+    const excelRows: any[] = [];
+    let rowIdx = 1;
+
     dates.forEach(dateStr => {
-      // Calculate rows specifically for this date
-      const dateRows = eligibleSorteos.map((s, index) => {
+      personnel.forEach(s => {
         const personRecords = records.filter(r => r.dni === s.dni && r.fecha === dateStr);
         const ingresoRecord = personRecords.find(r => r.tipo === 'INGRESO');
         const salidaRecord = personRecords.find(r => r.tipo === 'SALIDA');
 
-        let horasTrabajadasStr = '00:00';
+        let horasJornadaStr = '00:00';
         if (ingresoRecord && salidaRecord) {
           try {
             const t1 = new Date(`${ingresoRecord.fecha}T${ingresoRecord.hora}`);
@@ -722,10 +796,10 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               const totalMinutes = Math.floor(diffMs / (1000 * 60));
               const hrs = Math.floor(totalMinutes / 60);
               const mins = totalMinutes % 60;
-              horasTrabajadasStr = `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
+              horasJornadaStr = `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
             }
           } catch (e) {
-            horasTrabajadasStr = 'Error';
+            horasJornadaStr = 'Error';
           }
         }
 
@@ -733,8 +807,10 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
         if (ingresoRecord && salidaRecord) estado = 'COMPLETO';
         else if (ingresoRecord) estado = 'EN CURSO';
 
-        return {
-          'N°': index + 1,
+        const totals = personTotalsMap.get(s.dni) || { formatted: '00h 00m', decimalHours: '0.00', daysAttended: 0 };
+
+        excelRows.push({
+          'N°': rowIdx++,
           'FECHA': dateStr,
           'DNI': s.dni,
           'NOMBRES Y APELLIDOS': s.nombres,
@@ -743,43 +819,75 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
           'FIRMA INGRESO': ingresoRecord?.firma ? 'REGISTRADA' : 'SIN FIRMA',
           'HORA SALIDA': salidaRecord ? salidaRecord.hora : '-',
           'FIRMA SALIDA': salidaRecord?.firma ? 'REGISTRADA' : 'SIN FIRMA',
-          'TOTAL HORAS TRABAJADAS': horasTrabajadasStr,
+          'HORAS CUMPLIDAS (JORNADA)': horasJornadaStr,
+          'TOTAL HORAS CUMPLIDAS (PERSONA)': `${totals.formatted} (${totals.decimalHours} hrs)`,
           'ESTADO ASISTENCIA': estado
-        };
+        });
       });
-
-      const worksheet = XLSX.utils.json_to_sheet(dateRows);
-      const sheetName = `Asistencia ${dateStr.substring(5)}`;
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     });
 
+    const worksheet = XLSX.utils.json_to_sheet(excelRows);
+
+    // Set clean column widths for single sheet
+    worksheet['!cols'] = [
+      { wch: 6 },  // N°
+      { wch: 14 }, // FECHA
+      { wch: 12 }, // DNI
+      { wch: 36 }, // NOMBRES Y APELLIDOS
+      { wch: 32 }, // CARGO / RUBRO
+      { wch: 15 }, // HORA INGRESO
+      { wch: 16 }, // FIRMA INGRESO
+      { wch: 15 }, // HORA SALIDA
+      { wch: 16 }, // FIRMA SALIDA
+      { wch: 28 }, // HORAS CUMPLIDAS JORNADA
+      { wch: 34 }, // TOTAL HORAS CUMPLIDAS PERSONA
+      { wch: 20 }  // ESTADO
+    ];
+
+    // Single sheet append
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte_Asistencias');
     XLSX.writeFile(workbook, `Reporte_Asistencia_${cargo.replace(/\s+/g, '_')}.xlsx`);
-    notify('Reporte descargado en formato Excel con hojas por fecha.', 'success');
+    notify('Reporte generado en una sola hoja de Excel con el total de horas cumplidas por persona.', 'success');
   };
 
-  // Export Hours Report to PDF with Signatures embedded in cells
+  // Export Hours Report to PDF with Signatures and Total Hours Completed per Person
   const handleExportPDF = () => {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const dates = selectedDateFilter === 'ALL' ? getUniqueDates() : [selectedDateFilter];
+
+    let personnel = eligibleSorteos;
+    if (selectedPersonFilter !== 'ALL') {
+      personnel = personnel.filter(s => s.dni === selectedPersonFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      personnel = personnel.filter(s => s.nombres.toLowerCase().includes(q) || s.dni.includes(q));
+    }
+
+    // Precalculate total hours per person across evaluated dates
+    const personTotalsMap = new Map<string, { totalMinutes: number; formatted: string; decimalHours: string; daysAttended: number }>();
+    personnel.forEach(s => {
+      const res = calculatePersonTotalMinutes(s.dni, dates);
+      personTotalsMap.set(s.dni, {
+        totalMinutes: res.totalMinutes,
+        formatted: res.formatted,
+        decimalHours: res.decimalHours,
+        daysAttended: res.daysAttended
+      });
+    });
 
     dates.forEach((dateStr, pageIndex) => {
       if (pageIndex > 0) {
         doc.addPage();
       }
 
-      doc.setFontSize(14);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
-      doc.text(`REPORTE DE ASISTENCIA Y HORAS DE TRABAJO - ${dateStr}`, 14, 15);
+      doc.text(`REPORTE DE ASISTENCIA Y HORAS CUMPLIDAS - ${dateStr}`, 14, 14);
 
-      doc.setFontSize(10);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Proceso: ${procesoName} | Cargo: ${cargo} | Fecha de Generación: ${new Date().toLocaleString()}`, 14, 22);
-
-      // Data for this specific date
-      let personnel = eligibleSorteos;
-      if (selectedPersonFilter !== 'ALL') {
-        personnel = personnel.filter(s => s.dni === selectedPersonFilter);
-      }
+      doc.text(`Proceso: ${procesoName} | Cargo: ${cargo} | Generado: ${new Date().toLocaleString()}`, 14, 20);
 
       const rowsMeta: { firmaIn?: string; firmaOut?: string }[] = [];
 
@@ -788,7 +896,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
         const ingresoRecord = personRecords.find(r => r.tipo === 'INGRESO');
         const salidaRecord = personRecords.find(r => r.tipo === 'SALIDA');
 
-        let horasTrabajadasStr = '00:00';
+        let horasJornadaStr = '00:00';
         if (ingresoRecord && salidaRecord) {
           try {
             const t1 = new Date(`${ingresoRecord.fecha}T${ingresoRecord.hora}`);
@@ -798,16 +906,18 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
               const totalMinutes = Math.floor(diffMs / (1000 * 60));
               const hrs = Math.floor(totalMinutes / 60);
               const mins = totalMinutes % 60;
-              horasTrabajadasStr = `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
+              horasJornadaStr = `${hrs.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m`;
             }
           } catch (e) {
-            horasTrabajadasStr = 'Error';
+            horasJornadaStr = 'Error';
           }
         }
 
         let estado = 'INASISTENTE';
         if (ingresoRecord && salidaRecord) estado = 'COMPLETO';
         else if (ingresoRecord) estado = 'EN CURSO';
+
+        const totals = personTotalsMap.get(s.dni) || { totalMinutes: 0, formatted: '00h 00m', decimalHours: '0.00', daysAttended: 0 };
 
         rowsMeta.push({
           firmaIn: ingresoRecord?.firma,
@@ -822,28 +932,30 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
           ingresoRecord?.firma ? '' : '-', // Space for image
           salidaRecord ? salidaRecord.hora : '-',
           salidaRecord?.firma ? '' : '-',  // Space for image
-          horasTrabajadasStr,
+          horasJornadaStr,
+          totals.formatted,
           estado
         ];
       });
 
       autoTable(doc, {
-        startY: 28,
-        head: [['N°', 'DNI', 'Nombres y Apellidos', 'H. Ingreso', 'Firma IN', 'H. Salida', 'Firma OUT', 'Total Horas', 'Estado']],
+        startY: 25,
+        head: [['N°', 'DNI', 'Nombres y Apellidos', 'H. Ingreso', 'Firma IN', 'H. Salida', 'Firma OUT', 'Horas Día', 'Total Cumplidas', 'Estado']],
         body: tableBody,
         theme: 'grid',
-        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
-        styles: { fontSize: 8, cellPadding: 2, minCellHeight: 12, valign: 'middle' },
+        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center', fontSize: 8 },
+        styles: { fontSize: 7.5, cellPadding: 2, minCellHeight: 11, valign: 'middle' },
         columnStyles: {
-          0: { halign: 'center', cellWidth: 10 },
-          1: { halign: 'center', cellWidth: 22 },
-          2: { cellWidth: 65 },
-          3: { halign: 'center', cellWidth: 22 },
-          4: { halign: 'center', cellWidth: 32 }, // Firma IN
-          5: { halign: 'center', cellWidth: 22 },
-          6: { halign: 'center', cellWidth: 32 }, // Firma OUT
-          7: { halign: 'center', cellWidth: 25 },
-          8: { halign: 'center', cellWidth: 25 }
+          0: { halign: 'center', cellWidth: 8 },
+          1: { halign: 'center', cellWidth: 20 },
+          2: { cellWidth: 58 },
+          3: { halign: 'center', cellWidth: 18 },
+          4: { halign: 'center', cellWidth: 28 }, // Firma IN
+          5: { halign: 'center', cellWidth: 18 },
+          6: { halign: 'center', cellWidth: 28 }, // Firma OUT
+          7: { halign: 'center', cellWidth: 22 },
+          8: { halign: 'center', cellWidth: 26 }, // Total Horas Cumplidas
+          9: { halign: 'center', cellWidth: 22 }
         },
         didDrawCell: (data) => {
           if (data.section === 'body') {
@@ -857,10 +969,10 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                 doc.addImage(
                   meta.firmaIn,
                   'PNG',
-                  data.cell.x + 4,
+                  data.cell.x + 3,
                   data.cell.y + 1,
-                  24,
-                  10
+                  22,
+                  9
                 );
               } catch (err) {
                 console.warn('Error adding firmaIn to PDF cell:', err);
@@ -873,10 +985,10 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                 doc.addImage(
                   meta.firmaOut,
                   'PNG',
-                  data.cell.x + 4,
+                  data.cell.x + 3,
                   data.cell.y + 1,
-                  24,
-                  10
+                  22,
+                  9
                 );
               } catch (err) {
                 console.warn('Error adding firmaOut to PDF cell:', err);
@@ -887,8 +999,53 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
       });
     });
 
+    // Add a consolidated summary page if multiple dates or for complete executive overview
+    if (dates.length > 1 || selectedDateFilter === 'ALL') {
+      doc.addPage();
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`RESUMEN CONSOLIDADO DE HORAS CUMPLIDAS POR PERSONAL`, 14, 14);
+
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Proceso: ${procesoName} | Cargo: ${cargo} | Periodo evaluado: ${dates.length} fecha(s)`, 14, 20);
+
+      const summaryBody = personnel.map((s, idx) => {
+        const totals = personTotalsMap.get(s.dni) || { totalMinutes: 0, formatted: '00h 00m', decimalHours: '0.00', daysAttended: 0 };
+        return [
+          idx + 1,
+          s.dni,
+          s.nombres,
+          s.cargo,
+          `${totals.daysAttended} / ${dates.length}`,
+          totals.formatted,
+          `${totals.decimalHours} hrs`,
+          totals.totalMinutes > 0 ? 'CON HORAS CUMPLIDAS' : 'SIN REGISTRO COMPLETO'
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 25,
+        head: [['N°', 'DNI', 'Nombres y Apellidos', 'Cargo Asignado', 'Días Asistidos', 'Horas Cumplidas', 'Horas Decimales', 'Condición']],
+        body: summaryBody,
+        theme: 'striped',
+        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+        styles: { fontSize: 8, cellPadding: 3, valign: 'middle' },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 10 },
+          1: { halign: 'center', cellWidth: 24 },
+          2: { cellWidth: 70 },
+          3: { cellWidth: 60 },
+          4: { halign: 'center', cellWidth: 26 },
+          5: { halign: 'center', cellWidth: 28 },
+          6: { halign: 'center', cellWidth: 26 },
+          7: { halign: 'center', cellWidth: 32 }
+        }
+      });
+    }
+
     doc.save(`Planilla_Asistencia_Firmas_${cargo.replace(/\s+/g, '_')}.pdf`);
-    notify('Planilla en PDF con firmas digitales e impresas por día generada con éxito.', 'success');
+    notify('Planilla en PDF con firmas digitales y horas cumplidas por persona generada con éxito.', 'success');
   };
 
   if (!isOpen) return null;
@@ -1144,7 +1301,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
                     >
                       <span className="material-symbols-outlined text-base">table</span>
-                      Exportar Excel (Hojas x Día)
+                      Exportar Excel (Hoja Única)
                     </button>
                     <button
                       onClick={handleExportPDF}
@@ -1227,7 +1384,8 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                         <th className="p-3.5 text-center">Firma Ingreso</th>
                         <th className="p-3.5 text-center">Hora Salida</th>
                         <th className="p-3.5 text-center">Firma Salida</th>
-                        <th className="p-3.5 text-center">Total Horas</th>
+                        <th className="p-3.5 text-center">Horas Día</th>
+                        <th className="p-3.5 text-center">Total Cumplidas</th>
                         <th className="p-3.5 text-center">Estado</th>
                       </tr>
                     </thead>
@@ -1271,6 +1429,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                             )}
                           </td>
                           <td className="p-3.5 text-center font-mono font-black text-slate-900">{row.horasTrabajadas}</td>
+                          <td className="p-3.5 text-center font-mono font-black text-indigo-700 bg-indigo-50/40">{row.totalHorasPersona}</td>
                           <td className="p-3.5 text-center">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
                               row.estado === 'COMPLETO' ? 'bg-emerald-100 text-emerald-700' :
@@ -1284,7 +1443,7 @@ export const RubroAttendanceModal: React.FC<RubroAttendanceModalProps> = ({
                       ))}
                       {filteredRows.length === 0 && (
                         <tr>
-                          <td colSpan={9} className="p-8 text-center text-slate-400 font-bold uppercase text-xs">
+                          <td colSpan={10} className="p-8 text-center text-slate-400 font-bold uppercase text-xs">
                             No se encontraron registros de asistencia con los filtros seleccionados.
                           </td>
                         </tr>
