@@ -1705,7 +1705,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                       </div>
                   )}
 
-                  {rejectionScope === 'block' && blockToRejectRefunds && (
+                  {rejectionScope === 'all_refunds' && blockToRejectRefunds && (
                       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
                           <div className="flex items-center gap-2 text-amber-800 font-bold text-xs mb-2">
                               <span className="material-symbols-outlined text-[18px]">warning</span>

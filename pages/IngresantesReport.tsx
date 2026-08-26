@@ -49,32 +49,57 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
   const loadInitialFilters = async () => {
     setLoadingFilters(true);
     try {
-      // Load Years
+      // 1. Intentar cargar filtros consolidados mediante RPC optimizado
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_reporte_ingresantes_filtros');
+      if (!rpcError && rpcData) {
+        if (rpcData.anios && Array.isArray(rpcData.anios)) {
+          const sortedYears = rpcData.anios.map((y: any) => String(y).trim()).filter(Boolean).sort((a: string, b: string) => b.localeCompare(a));
+          setYearsList(sortedYears);
+        }
+        if (rpcData.semestres && Array.isArray(rpcData.semestres)) {
+          const sortedSemesters = rpcData.semestres.map((s: any) => String(s).trim()).filter(Boolean).sort((a: string, b: string) => b.localeCompare(a));
+          setSemestersList(sortedSemesters);
+        }
+        if (rpcData.carreras && Array.isArray(rpcData.carreras)) {
+          const sortedCareers = rpcData.carreras.map((c: any) => String(c).trim()).filter(Boolean).sort((a: string, b: string) => a.localeCompare(b));
+          setCareersList(sortedCareers);
+        }
+        return;
+      }
+
+      // Fallback si no existe la función RPC
+      // Load Years (cv_cuadros_anuales + participantes)
       const { data: cData } = await supabase.from('cv_cuadros_anuales').select('anio');
-      const { data: pData } = await supabase.from('participantes').select('ANIO').not('ANIO', 'is', null).limit(1000);
+      const { data: pData } = await supabase.from('participantes').select('ANIO').not('ANIO', 'is', null).limit(3000);
       
       const yrSet = new Set<string>();
-      if (cData) cData.forEach(c => c.anio && yrSet.add(String(c.anio)));
-      if (pData) pData.forEach(p => p.ANIO && yrSet.add(String(p.ANIO)));
+      if (cData) cData.forEach(c => c.anio && yrSet.add(String(c.anio).trim()));
+      if (pData) pData.forEach(p => p.ANIO && yrSet.add(String(p.ANIO).trim()));
       if (yrSet.size === 0) ['2026', '2025', '2024'].forEach(y => yrSet.add(y));
       const sortedYears = Array.from(yrSet).sort((a, b) => b.localeCompare(a));
       setYearsList(sortedYears);
 
-      // Load Schools/Careers
+      // Load Schools/Careers (cv_escuelas + participantes)
       const { data: escData } = await supabase.from('cv_escuelas').select('nombre').order('nombre', { ascending: true });
-      if (escData) {
-        const escNames = Array.from(new Set(escData.map(e => e.nombre.trim()))).filter(Boolean);
-        setCareersList(escNames);
-      }
+      const { data: pCareers } = await supabase.from('participantes').select('CARRERA').not('CARRERA', 'is', null).limit(3000);
+      const carSet = new Set<string>();
+      if (escData) escData.forEach(e => e.nombre && carSet.add(e.nombre.trim()));
+      if (pCareers) pCareers.forEach(p => p.CARRERA && carSet.add(p.CARRERA.trim()));
+      const sortedCareers = Array.from(carSet).filter(Boolean).sort((a, b) => a.localeCompare(b));
+      setCareersList(sortedCareers);
 
-      // Load Semesters
+      // Load Semesters (cv_modalidades + participantes)
       const { data: semData } = await supabase.from('cv_modalidades').select('semestre').not('semestre', 'is', null);
+      const { data: pSemesters } = await supabase.from('participantes').select('SEMESTRE').not('SEMESTRE', 'is', null).limit(3000);
       const semSet = new Set<string>();
-      semSet.add('2026-II');
-      semSet.add('2026-I');
-      semSet.add('2025-II');
-      semSet.add('2025-I');
       if (semData) semData.forEach(s => s.semestre && semSet.add(s.semestre.trim()));
+      if (pSemesters) pSemesters.forEach(p => p.SEMESTRE && semSet.add(p.SEMESTRE.trim()));
+      if (semSet.size === 0) {
+        semSet.add('2026-II');
+        semSet.add('2026-I');
+        semSet.add('2025-II');
+        semSet.add('2025-I');
+      }
       setSemestersList(Array.from(semSet).sort((a, b) => b.localeCompare(a)));
 
     } catch (e: any) {
@@ -86,40 +111,38 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
 
   const loadModalitiesForFilter = async (year: string, semester: string) => {
     try {
-      const modSet = new Set<string>();
+      const { data, error } = await supabase.rpc('get_distinct_modalidades', {
+        p_anio: year,
+        p_semestre: semester
+      });
 
-      // A) Query cv_modalidades
-      let modQuery = supabase.from('cv_modalidades').select('nombre, semestre, cv_cuadros_anuales(anio)');
-      if (semester !== 'Todos') {
-        modQuery = modQuery.eq('semestre', semester);
-      }
-      const { data: cvMods } = await modQuery;
-      if (cvMods) {
-        cvMods.forEach(m => {
-          const modAnio = (m.cv_cuadros_anuales as any)?.anio ? String((m.cv_cuadros_anuales as any).anio) : '';
-          if (year === 'Todos' || !modAnio || modAnio === year) {
-            if (m.nombre) modSet.add(m.nombre.trim());
-          }
-        });
+      if (!error && data) {
+        const uniqueMods: string[] = data.map((r: any) => (r.modalidad || r.MODALIDAD)?.trim()).filter(Boolean);
+        setModalitiesList(Array.from(new Set<string>(uniqueMods)).sort((a, b) => a.localeCompare(b)));
+        return;
       }
 
-      // B) Query distinct MODALIDAD from participantes for complete coverage
-      let partQuery = supabase.from('participantes').select('MODALIDAD');
-      if (year !== 'Todos') partQuery = partQuery.eq('ANIO', year);
-      if (semester !== 'Todos') partQuery = partQuery.eq('SEMESTRE', semester);
-      const { data: partMods } = await partQuery.limit(2000);
-      if (partMods) {
-        partMods.forEach(p => {
-          if (p.MODALIDAD && p.MODALIDAD.trim() !== '') {
-            modSet.add(p.MODALIDAD.trim());
-          }
-        });
+      // Fallback con paginación si no estuviera el RPC
+      let allMods: string[] = [];
+      let start = 0;
+      const step = 1000;
+      let hasMore = true;
+      while (hasMore && start < 10000) {
+        let q = supabase.from('participantes').select('MODALIDAD').not('MODALIDAD', 'is', null).range(start, start + step - 1);
+        if (year !== 'Todos') q = q.eq('ANIO', year);
+        if (semester !== 'Todos') q = q.eq('SEMESTRE', semester);
+        const { data: chunk } = await q;
+        if (chunk && chunk.length > 0) {
+          chunk.forEach(p => { if (p.MODALIDAD?.trim()) allMods.push(p.MODALIDAD.trim()); });
+          if (chunk.length < step) hasMore = false;
+          else start += step;
+        } else {
+          hasMore = false;
+        }
       }
-
-      const sortedMods = Array.from(modSet).sort((a, b) => a.localeCompare(b));
-      setModalitiesList(sortedMods);
+      setModalitiesList(Array.from(new Set(allMods)).sort((a, b) => a.localeCompare(b)));
     } catch (e: any) {
-      console.error('Error loading modalities list:', e);
+      console.error('Error loading modalities:', e);
     }
   };
 
@@ -141,16 +164,16 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
           .order('CARRERA', { ascending: true });
 
         if (reportYear !== 'Todos') {
-          query = query.eq('ANIO', reportYear);
+          query = query.eq('ANIO', reportYear.trim());
         }
         if (reportSemester !== 'Todos') {
-          query = query.eq('SEMESTRE', reportSemester);
+          query = query.eq('SEMESTRE', reportSemester.trim());
         }
         if (reportCareer !== 'Todas') {
-          query = query.eq('CARRERA', reportCareer);
+          query = query.eq('CARRERA', reportCareer.trim());
         }
         if (reportModality !== 'Todas') {
-          query = query.eq('MODALIDAD', reportModality);
+          query = query.eq('MODALIDAD', reportModality.trim());
         }
 
         if (searchQuery.trim() !== '') {
