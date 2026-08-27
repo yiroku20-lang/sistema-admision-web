@@ -5,6 +5,60 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+export interface ExtraColumnDef {
+  id: string;
+  label: string;
+  category: 'Contacto' | 'Personal' | 'Colegio' | 'Adjudicación';
+  defaultVisible?: boolean;
+}
+
+export const AVAILABLE_EXTRA_COLUMNS: ExtraColumnDef[] = [
+  { id: 'telefono', label: 'Teléfono / Celular', category: 'Contacto' },
+  { id: 'email', label: 'Correo Electrónico', category: 'Contacto' },
+  { id: 'direccion', label: 'Dirección Domicilio', category: 'Contacto' },
+  { id: 'ubigeo', label: 'Ubigeo / Lugar Nacimiento', category: 'Personal' },
+  { id: 'fecha_nacimiento', label: 'Fecha de Nacimiento', category: 'Personal' },
+  { id: 'sexo', label: 'Sexo', category: 'Personal' },
+  { id: 'discapacidad', label: 'Discapacidad', category: 'Personal' },
+  { id: 'colegio', label: 'Colegio de Procedencia', category: 'Colegio' },
+  { id: 'promedio_colegio', label: 'Promedio Colegio', category: 'Colegio' },
+  { id: 'escuela_adjudicada', label: 'Escuela Adjudicada', category: 'Adjudicación' },
+  { id: 'estado_adjudicacion', label: 'Estado Adjudicación', category: 'Adjudicación' },
+  { id: 'area', label: 'Área Académica', category: 'Adjudicación' },
+];
+
+export const getExtraColumnValue = (item: any, colId: string): string => {
+  if (!item) return '—';
+  switch (colId) {
+    case 'telefono':
+      return item.telefono || item.TELEFONO || item.celular || item.CELULAR || item.phone || item.TELEFONO_APODERADO || '—';
+    case 'email':
+      return item.email || item.EMAIL || item.correo || item.CORREO || item.email_postulante || '—';
+    case 'direccion':
+      return item.direccion || item.DIRECCION || item.domicilio || item.DOMICILIO || item.DIR_POSTULANTE || '—';
+    case 'ubigeo':
+      return item.ubigeo || item.UBIGEO || item.lugar_nacimiento || item.LUGAR_NACIMIENTO || item.distrito || item.DISTRITO || '—';
+    case 'fecha_nacimiento':
+      return item.fecha_nacimiento || item.FECHA_NACIMIENTO || item.fecnac || item.FECNAC || item.FECHA_NAC || item.FEC_NACIMIENTO || '—';
+    case 'sexo':
+      return item.sexo || item.SEXO || item.genero || item.GENERO || '—';
+    case 'discapacidad':
+      return item.discapacidad || item.DISCAPACIDAD || '—';
+    case 'colegio':
+      return item.colegio || item.COLEGIO || item.colegio_procedencia || item.COLEGIO_PROCEDENCIA || item.NOM_COLEGIO || '—';
+    case 'promedio_colegio':
+      return item.promedio_colegio || item.PROMEDIO_COLEGIO || item.promedio || item.PROMEDIO || item.POND_COLEGIO || '—';
+    case 'escuela_adjudicada':
+      return item.escuela_adjudicada || item.ESCUELA_ADJUDICADA || item.carrera_adjudicada || item.CARRERA_ADJUDICADA || item.CARRERA || '—';
+    case 'estado_adjudicacion':
+      return item.estado_adjudicacion || item.ESTADO_ADJUDICACION || item.estado || item.ESTADO || (item.NOTA ? 'Adjudicado' : '—');
+    case 'area':
+      return item.area || item.AREA || item.area_academica || item.AREA_ACADEMICA || item.grupo || item.GRUPO || '—';
+    default:
+      return item[colId] || item[colId.toUpperCase()] || '—';
+  }
+};
+
 export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, type?: 'success' | 'error' | 'warning') => void }> = ({ user, notify }) => {
   // Check permission
   const hasPermission =
@@ -18,6 +72,17 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
   const [reportCareer, setReportCareer] = useState<string>('Todas');
   const [reportModality, setReportModality] = useState<string>('Todas');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Custom Extra Columns configuration
+  const [selectedExtraColumns, setSelectedExtraColumns] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('ingresantes_report_extra_cols');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showColumnModal, setShowColumnModal] = useState<boolean>(false);
 
   // Dropdown reference lists
   const [yearsList, setYearsList] = useState<string[]>([]);
@@ -33,6 +98,58 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
   // UI Pagination
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 50;
+
+  // Save extra column selection
+  const handleToggleColumn = (colId: string) => {
+    setSelectedExtraColumns(prev => {
+      const updated = prev.includes(colId) ? prev.filter(id => id !== colId) : [...prev, colId];
+      try {
+        localStorage.setItem('ingresantes_report_extra_cols', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Error saving extra columns:', e);
+      }
+      return updated;
+    });
+  };
+
+  const handleSelectAllColumns = () => {
+    const allIds = AVAILABLE_EXTRA_COLUMNS.map(c => c.id);
+    setSelectedExtraColumns(allIds);
+    try {
+      localStorage.setItem('ingresantes_report_extra_cols', JSON.stringify(allIds));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeselectAllColumns = () => {
+    setSelectedExtraColumns([]);
+    try {
+      localStorage.setItem('ingresantes_report_extra_cols', JSON.stringify([]));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleToggleCategory = (category: string) => {
+    const categoryCols = AVAILABLE_EXTRA_COLUMNS.filter(c => c.category === category).map(c => c.id);
+    const allSelected = categoryCols.every(id => selectedExtraColumns.includes(id));
+    
+    setSelectedExtraColumns(prev => {
+      let updated: string[];
+      if (allSelected) {
+        updated = prev.filter(id => !categoryCols.includes(id));
+      } else {
+        updated = Array.from(new Set([...prev, ...categoryCols]));
+      }
+      try {
+        localStorage.setItem('ingresantes_report_extra_cols', JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
+    });
+  };
 
   // 1. Initial Load of Reference Filters (Years, Careers, Semesters, Modalities)
   useEffect(() => {
@@ -226,20 +343,32 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
       return;
     }
 
-    const exportData = ingresantes.map((item, index) => ({
-      'N°': index + 1,
-      'ORDEN MÉRITO': item.OMERITO || '—',
-      'DNI / CÓDIGO': item.CODPOSTULANTE || '',
-      'APELLIDOS Y NOMBRES': item.NOMBRE || '',
-      'ESCUELA PROFESIONAL': item.CARRERA || '',
-      'CÓDIGO CARRERA': item.codigo_carrera || '',
-      'FILIAL': item.FILIAL || 'CUSCO',
-      'MODALIDAD': item.MODALIDAD || '',
-      'PUNTAJE / NOTA': item.NOTA || '',
-      'SEMESTRE': item.SEMESTRE || '',
-      'AÑO': item.ANIO || '',
-      'FECHA INGRESO': item.FECHAINGRESO || ''
-    }));
+    const exportData = ingresantes.map((item, index) => {
+      const row: Record<string, any> = {
+        'N°': index + 1,
+        'ORDEN MÉRITO': item.OMERITO || '—',
+        'DNI / CÓDIGO': item.CODPOSTULANTE || '',
+        'APELLIDOS Y NOMBRES': item.NOMBRE || '',
+        'ESCUELA PROFESIONAL': item.CARRERA || '',
+        'CÓDIGO CARRERA': item.codigo_carrera || '',
+        'FILIAL': item.FILIAL || 'CUSCO',
+        'MODALIDAD': item.MODALIDAD || '',
+        'PUNTAJE / NOTA': item.NOTA || '',
+        'SEMESTRE': item.SEMESTRE || '',
+        'AÑO': item.ANIO || '',
+        'FECHA INGRESO': item.FECHAINGRESO || ''
+      };
+
+      // Append custom extra columns
+      selectedExtraColumns.forEach(colId => {
+        const colDef = AVAILABLE_EXTRA_COLUMNS.find(c => c.id === colId);
+        if (colDef) {
+          row[colDef.label.toUpperCase()] = getExtraColumnValue(item, colId);
+        }
+      });
+
+      return row;
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     
@@ -257,7 +386,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
 
     const fileName = `Reporte_Ingresantes_${reportYear}_${reportSemester}_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(workbook, fileName);
-    notify?.('Archivo Excel exportado exitosamente.', 'success');
+    notify?.('Archivo Excel exportado exitosamente con columnas personalizadas.', 'success');
   };
 
   // Export to PDF
@@ -286,8 +415,23 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
     doc.text(filterInfo, 14, 27);
     doc.text(`Fecha de emisión: ${new Date().toLocaleString()}`, 200, 27);
 
+    // Active extra column definitions
+    const activeExtraDefs = AVAILABLE_EXTRA_COLUMNS.filter(c => selectedExtraColumns.includes(c.id));
+
     // Table Columns
-    const tableColumns = ['N°', 'OM', 'DNI', 'APELLIDOS Y NOMBRES', 'ESCUELA PROFESIONAL', 'CÓD. CAR.', 'FILIAL', 'MODALIDAD', 'NOTA'];
+    const tableColumns = [
+      'N°',
+      'OM',
+      'DNI',
+      'APELLIDOS Y NOMBRES',
+      'ESCUELA PROFESIONAL',
+      'CÓD. CAR.',
+      'FILIAL',
+      'MODALIDAD',
+      'NOTA',
+      ...activeExtraDefs.map(c => c.label.toUpperCase())
+    ];
+
     const tableRows = ingresantes.map((item, idx) => [
       idx + 1,
       item.OMERITO || '—',
@@ -297,27 +441,17 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
       item.codigo_carrera || '',
       item.FILIAL || 'CUSCO',
       item.MODALIDAD || '',
-      item.NOTA || ''
+      item.NOTA || '',
+      ...activeExtraDefs.map(c => getExtraColumnValue(item, c.id))
     ]);
 
     autoTable(doc, {
       head: [tableColumns],
       body: tableRows,
       startY: 32,
-      styles: { fontSize: 7, cellPadding: 1.5 },
+      styles: { fontSize: activeExtraDefs.length > 2 ? 6 : 7, cellPadding: 1.2 },
       headStyles: { fillColor: [123, 21, 35], textColor: [255, 255, 255], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-      columnStyles: {
-        0: { cellWidth: 12 },
-        1: { cellWidth: 12 },
-        2: { cellWidth: 22 },
-        3: { cellWidth: 65 },
-        4: { cellWidth: 60 },
-        5: { cellWidth: 18 },
-        6: { cellWidth: 22 },
-        7: { cellWidth: 45 },
-        8: { cellWidth: 15 }
-      }
+      alternateRowStyles: { fillColor: [248, 250, 252] }
     });
 
     const fileName = `Reporte_Ingresantes_${reportYear}_${reportSemester}_${new Date().toISOString().split('T')[0]}.pdf`;
@@ -339,6 +473,15 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
   const totalIngresantes = ingresantes.length;
   const uniqueCareersCount = new Set(ingresantes.map(i => i.CARRERA).filter(Boolean)).size;
   const uniqueModalitiesCount = new Set(ingresantes.map(i => i.MODALIDAD).filter(Boolean)).size;
+
+  // Categories list for modal grouping
+  const categories: Array<'Contacto' | 'Personal' | 'Colegio' | 'Adjudicación'> = ['Contacto', 'Personal', 'Colegio', 'Adjudicación'];
+  const categoryIcons: Record<string, string> = {
+    'Contacto': 'call',
+    'Personal': 'person',
+    'Colegio': 'school',
+    'Adjudicación': 'verified'
+  };
 
   // Pagination slice
   const totalPages = Math.ceil(ingresantes.length / itemsPerPage);
@@ -363,7 +506,22 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Customize Columns Button */}
+          <button
+            onClick={() => setShowColumnModal(true)}
+            className="flex items-center gap-2 bg-white border border-slate-300 hover:border-primary/50 hover:bg-primary/5 text-slate-700 h-11 px-4 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
+            title="Personalizar columnas adicionales visibles en la tabla y exportaciones"
+          >
+            <span className="material-symbols-outlined text-lg text-primary">view_column</span>
+            <span>Columnas Extra</span>
+            {selectedExtraColumns.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-primary text-white text-[10px] font-black">
+                {selectedExtraColumns.length}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={exportToExcel}
             disabled={ingresantes.length === 0}
@@ -501,7 +659,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
       </div>
 
       {/* Summary Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm">
           <div className="bg-primary/10 text-primary p-3 rounded-xl">
             <span className="material-symbols-outlined text-2xl">groups</span>
@@ -531,17 +689,50 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
             <span className="text-2xl font-black text-slate-900">{uniqueModalitiesCount}</span>
           </div>
         </div>
+
+        <div 
+          onClick={() => setShowColumnModal(true)}
+          className="bg-white hover:bg-slate-50 transition-all cursor-pointer rounded-2xl border border-slate-200 p-5 flex items-center gap-4 shadow-sm group"
+        >
+          <div className="bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100 p-3 rounded-xl transition-all">
+            <span className="material-symbols-outlined text-2xl">view_column</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Columnas Adicionales</span>
+            <span className="text-2xl font-black text-slate-900">
+              {selectedExtraColumns.length} <span className="text-xs font-semibold text-slate-500">/ {AVAILABLE_EXTRA_COLUMNS.length}</span>
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Results Table Section */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         {/* Table Top Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 bg-slate-50">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-slate-500 text-lg">format_list_bulleted</span>
-            <span className="text-xs font-black uppercase tracking-wider text-slate-800">
-              Listado de Ingresantes {ingresantes.length > 0 && `(${ingresantes.length} registros)`}
-            </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-slate-500 text-lg">format_list_bulleted</span>
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                Listado de Ingresantes {ingresantes.length > 0 && `(${ingresantes.length} registros)`}
+              </span>
+            </div>
+
+            {/* Active columns indicator badge */}
+            {selectedExtraColumns.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 px-2.5 py-1 rounded-lg">
+                <span className="material-symbols-outlined text-primary text-[14px]">view_column</span>
+                <span className="text-[11px] font-bold text-primary">
+                  {selectedExtraColumns.length} extra {selectedExtraColumns.length === 1 ? 'columna activa' : 'columnas activas'}
+                </span>
+                <button
+                  onClick={() => setShowColumnModal(true)}
+                  className="ml-1 text-primary hover:underline text-[10px] font-black uppercase"
+                >
+                  Editar
+                </button>
+              </div>
+            )}
           </div>
 
           {totalPages > 1 && (
@@ -570,7 +761,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-100/70 border-b border-slate-200">
               <tr>
-                <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500 text-center w-12">#</th>
+                <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500 text-center w-12 sticky left-0 bg-slate-100 z-10">#</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500 text-center">OM</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500">DNI / Código</th>
                 <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-500">Apellidos y Nombres</th>
@@ -579,12 +770,29 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
                 <th className="px-6 py-3 text-[10px] font-black uppercase text-slate-500">Modalidad</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500 text-center">Puntaje</th>
                 <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-500 text-center">Semestre</th>
+
+                {/* Custom Extra Columns Headers */}
+                {selectedExtraColumns.map(colId => {
+                  const colDef = AVAILABLE_EXTRA_COLUMNS.find(c => c.id === colId);
+                  if (!colDef) return null;
+                  return (
+                    <th
+                      key={colDef.id}
+                      className="px-4 py-3 text-[10px] font-black uppercase text-primary bg-primary/5 border-l border-slate-200 whitespace-nowrap"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[13px] text-primary/70">{categoryIcons[colDef.category] || 'tag'}</span>
+                        <span>{colDef.label}</span>
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-16 text-center">
+                  <td colSpan={9 + selectedExtraColumns.length} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center justify-center gap-3">
                       <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
                       <span className="text-xs font-black text-slate-600 uppercase tracking-wider">Cargando reporte de ingresantes...</span>
@@ -593,7 +801,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
                 </tr>
               ) : ingresantes.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-16 text-center">
+                  <td colSpan={9 + selectedExtraColumns.length} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center justify-center gap-2 text-slate-400">
                       <span className="material-symbols-outlined text-5xl">manage_search</span>
                       <span className="text-sm font-bold text-slate-600">No hay datos que mostrar</span>
@@ -606,7 +814,7 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
                   const globalIdx = (currentPage - 1) * itemsPerPage + index + 1;
                   return (
                     <tr key={item.id || `${item.CODPOSTULANTE}-${index}`} className="hover:bg-slate-50/80 transition-colors text-xs">
-                      <td className="px-4 py-3 text-center font-bold text-slate-400">{globalIdx}</td>
+                      <td className="px-4 py-3 text-center font-bold text-slate-400 sticky left-0 bg-white z-0">{globalIdx}</td>
                       <td className="px-4 py-3 text-center">
                         <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono font-bold text-[11px]">
                           {item.OMERITO || '—'}
@@ -623,6 +831,13 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
                       </td>
                       <td className="px-4 py-3 text-center font-mono font-bold text-emerald-700">{item.NOTA || '—'}</td>
                       <td className="px-4 py-3 text-center font-bold text-slate-600">{item.SEMESTRE}</td>
+
+                      {/* Custom Extra Columns Data Cells */}
+                      {selectedExtraColumns.map(colId => (
+                        <td key={colId} className="px-4 py-3 font-medium text-slate-700 border-l border-slate-100 bg-slate-50/40 whitespace-nowrap">
+                          {getExtraColumnValue(item, colId)}
+                        </td>
+                      ))}
                     </tr>
                   );
                 })
@@ -676,6 +891,141 @@ export const IngresantesReport: React.FC<{ user: User; notify?: (msg: string, ty
           </div>
         )}
       </div>
+
+      {/* Modal: Customize Columns */}
+      {showColumnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-primary/10 text-primary p-2.5 rounded-xl border border-primary/20">
+                  <span className="material-symbols-outlined text-xl">view_column</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-tight text-slate-800">
+                    Personalizar Columnas y Datos Adicionales
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-semibold">
+                    Selecciona qué datos complementarios deseas visualizar en la tabla y exportaciones.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowColumnModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+
+            {/* Quick Actions Toolbar */}
+            <div className="px-6 py-2.5 bg-slate-100/70 border-b border-slate-200 flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-600">
+                {selectedExtraColumns.length} de {AVAILABLE_EXTRA_COLUMNS.length} seleccionadas
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSelectAllColumns}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[11px] transition-colors"
+                >
+                  Marcar Todas
+                </button>
+                <button
+                  onClick={handleDeselectAllColumns}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[11px] transition-colors"
+                >
+                  Desmarcar Todas
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: Categories & Columns */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {categories.map(category => {
+                const categoryCols = AVAILABLE_EXTRA_COLUMNS.filter(c => c.category === category);
+                const allSelected = categoryCols.every(c => selectedExtraColumns.includes(c.id));
+                const someSelected = categoryCols.some(c => selectedExtraColumns.includes(c.id)) && !allSelected;
+
+                return (
+                  <div key={category} className="space-y-2.5">
+                    {/* Category Header */}
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-base">
+                          {categoryIcons[category]}
+                        </span>
+                        <span className="text-xs font-black uppercase text-slate-800 tracking-wider">
+                          {category}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleToggleCategory(category)}
+                        className="text-[10px] font-bold text-primary hover:underline uppercase"
+                      >
+                        {allSelected ? 'Desmarcar grupo' : 'Marcar grupo'}
+                      </button>
+                    </div>
+
+                    {/* Category Column Pills / Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {categoryCols.map(col => {
+                        const isSelected = selectedExtraColumns.includes(col.id);
+                        return (
+                          <div
+                            key={col.id}
+                            onClick={() => handleToggleColumn(col.id)}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between select-none ${
+                              isSelected
+                                ? 'bg-primary/5 border-primary/40 shadow-sm'
+                                : 'bg-slate-50 border-slate-200 hover:border-slate-300 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                  isSelected
+                                    ? 'bg-primary border-primary text-white'
+                                    : 'border-slate-300 bg-white'
+                                }`}
+                              >
+                                {isSelected && (
+                                  <span className="material-symbols-outlined text-[13px] font-bold leading-none">
+                                    check
+                                  </span>
+                                )}
+                              </div>
+                              <span className={`text-xs font-bold ${isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                                {col.label}
+                              </span>
+                            </div>
+                            <span className="text-[9px] font-mono font-bold text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                              {col.id}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-semibold">
+                Los cambios se aplican inmediatamente y se conservan para tu sesión.
+              </span>
+              <button
+                onClick={() => setShowColumnModal(false)}
+                className="bg-primary hover:bg-merlot text-white px-6 h-10 rounded-xl font-black text-xs uppercase tracking-wider shadow-md shadow-primary/20 active:scale-95 transition-all cursor-pointer"
+              >
+                Guardar y Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

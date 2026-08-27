@@ -259,6 +259,15 @@ export interface Participant {
   OMERITO: string;      
   FECHAINGRESO: string;     
   created_at: string;
+  telefono?: string | null;
+  email?: string | null;
+  direccion?: string | null;
+  colegio?: string | null;
+  promedio_colegio?: string | null;
+  ubigeo?: string | null;
+  fecha_nacimiento?: string | null;
+  sexo?: string | null;
+  discapacidad?: string | null;
 }
 
 export interface AttendanceRecord {
@@ -389,6 +398,7 @@ export interface Prospecto {
   region?: string;
   estado_contacto: string;
   fecha_registro: string;
+  fecha_actualizacion?: string;
   suscrito: boolean;
   resultados_test: TestVocacionalResultado[];
 }

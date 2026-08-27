@@ -294,11 +294,36 @@ async function startServer() {
   });
 
   // --- Webhook for the Test App ---
+  app.options("/api/webhook/welcome-email", (req, res) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    res.sendStatus(200);
+  });
+
   app.post("/api/webhook/welcome-email", express.json({ limit: "5mb" }), async (req, res) => {
+    res.header("Access-Control-Allow-Origin", "*");
     try {
       // Support direct payloads and Supabase insert webhooks
       const payload = req.body.record ? req.body.record : req.body;
-      const { id, correo, nombre, carrera_interes } = payload;
+      let { id, correo, nombre, carrera_interes, resultados_test } = payload;
+
+      // Si carrera_interes no viene directa, extraerla de resultados_test si está disponible
+      if (!carrera_interes && resultados_test) {
+        try {
+          const tests = typeof resultados_test === 'string' ? JSON.parse(resultados_test) : resultados_test;
+          if (Array.isArray(tests) && tests.length > 0) {
+            const lastTest = tests[tests.length - 1];
+            if (lastTest.escuelas_recomendadas && Array.isArray(lastTest.escuelas_recomendadas) && lastTest.escuelas_recomendadas.length > 0) {
+              carrera_interes = lastTest.escuelas_recomendadas[0].carreras || lastTest.escuelas_recomendadas[0].area || '';
+            } else if (lastTest.perfil) {
+              carrera_interes = lastTest.perfil;
+            }
+          }
+        } catch (parseErr) {
+          console.warn("No se pudo extraer carrera de resultados_test:", parseErr);
+        }
+      }
 
       if (!correo || !nombre) {
         return res.status(400).json({ error: "Nombre y correo son requeridos." });

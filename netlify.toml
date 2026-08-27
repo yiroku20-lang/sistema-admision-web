@@ -36,6 +36,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/webhook/welcome-email"
+  to = "/.netlify/functions/webhook-welcome-email"
+  status = 200
+
+[[redirects]]
   from = "/api/files/*"
   to = "/.netlify/functions/files"
   status = 200
