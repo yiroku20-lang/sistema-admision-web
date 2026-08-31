@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Participant } from '../types';
 import { StudentDocument, getDocumentStreamUrl } from '../lib/fileGateway';
 import { DocumentViewerModal } from './DocumentViewerModal';
+import { fixCareerName } from '../pages/StudentLookup';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -189,7 +190,7 @@ export const IntegratedStudentModal: React.FC<IntegratedStudentModalProps> = ({
       historyRows.push([
         'INGRESO OFICIAL',
         `${adm.SEMESTRE}-${adm.ANIO}`,
-        adm.CARRERA,
+        fixCareerName(adm.CARRERA) || 'CARRERA UNIVERSITARIA',
         adm.MODALIDAD,
         adm.NOTA || '-',
         adm.OMERITO ? `Puesto ${adm.OMERITO}` : '-',
@@ -202,7 +203,7 @@ export const IntegratedStudentModal: React.FC<IntegratedStudentModalProps> = ({
       historyRows.push([
         app.condicion?.toUpperCase().includes('INGRESA') ? 'INGRESANTE (PROCESO)' : 'POSTULACIÓN',
         app.modalidad,
-        app.carreraIngreso || app.carrera1 || '-',
+        fixCareerName(app.carreraIngreso || app.carrera1 || app.carrera2) || '-',
         app.modalidad,
         app.nota || '-',
         app.puesto ? `Puesto ${app.puesto}` : '-',
@@ -536,7 +537,7 @@ export const IntegratedStudentModal: React.FC<IntegratedStudentModalProps> = ({
                                 Admisión {adm.SEMESTRE}-{adm.ANIO}
                               </span>
                               <h4 className="text-base font-black text-white uppercase mt-1">
-                                {adm.CARRERA}
+                                {fixCareerName(adm.CARRERA)}
                               </h4>
                             </div>
                             {adm.NOTA && (
@@ -583,7 +584,7 @@ export const IntegratedStudentModal: React.FC<IntegratedStudentModalProps> = ({
                                 {app.modalidad}
                               </span>
                               <h4 className="text-base font-black text-white uppercase mt-1">
-                                {app.carreraIngreso || app.carrera1 || 'CARRERA NO ESPECIFICADA'}
+                                {fixCareerName(app.carreraIngreso || app.carrera1 || app.carrera2) || 'CARRERA NO ESPECIFICADA'}
                               </h4>
                             </div>
                             {app.nota && (

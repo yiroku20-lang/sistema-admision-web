@@ -56,8 +56,125 @@ export const fixEncoding = (text: string | undefined | null) => {
     return fixed;
 };
 
+// Diccionario y Mapeo Oficial de Códigos de Carreras de la UNSAAC
+export const CAREER_CODE_MAP: Record<string, string> = {
+    // Área A - Ingeniería y Ciencias Básicas
+    '101': 'ARQUITECTURA',
+    '102': 'INGENIERÍA ELÉCTRICA',
+    '103': 'INGENIERÍA GEOLÓGICA',
+    '104': 'INGENIERÍA METALÚRGICA',
+    '105': 'INGENIERÍA DE MINAS',
+    '106': 'INGENIERÍA MECÁNICA',
+    '107': 'INGENIERÍA QUÍMICA',
+    '108': 'INGENIERÍA CIVIL',
+    '109': 'INGENIERÍA QUÍMICA',
+    '110': 'MATEMÁTICA',
+    '111': 'FÍSICA',
+    '112': 'INGENIERÍA ELECTRÓNICA',
+    '113': 'INGENIERÍA INFORMÁTICA Y DE SISTEMAS',
+    '114': 'INGENIERÍA PETROQUÍMICA',
+    '115': 'INGENIERÍA AGROINDUSTRIAL',
+    // Área B - Ciencias de la Salud y Biológicas
+    '201': 'AGRONOMÍA',
+    '202': 'BIOLOGÍA',
+    '203': 'ENFERMERÍA',
+    '204': 'FARMACIA Y BIOQUÍMICA',
+    '205': 'MEDICINA HUMANA',
+    '206': 'ZOOTECNIA',
+    '207': 'ODONTOLOGÍA',
+    '208': 'INGENIERÍA FORESTAL',
+    '209': 'INGENIERÍA AGROAMBIENTAL',
+    '210': 'MEDICINA VETERINARIA',
+    '211': 'OBSTETRICIA',
+    // Área C - Ciencias Económicas y Empresariales
+    '301': 'CIENCIAS ADMINISTRATIVAS',
+    '302': 'CONTABILIDAD',
+    '303': 'ECONOMÍA',
+    '304': 'TURISMO',
+    // Área D - Ciencias Sociales y Humanidades
+    '401': 'ANTROPOLOGÍA',
+    '402': 'ARQUEOLOGÍA',
+    '403': 'DERECHO',
+    '404': 'HISTORIA',
+    '405': 'CIENCIAS DE LA COMUNICACIÓN',
+    '406': 'PSICOLOGÍA',
+    '407': 'EDUCACIÓN',
+    '408': 'FILOSOFÍA'
+};
+
+export const fixCareerName = (codeOrName: string | undefined | null): string => {
+    if (!codeOrName) return '';
+    const str = String(codeOrName).trim();
+    if (/^\d+$/.test(str)) {
+        const unpadded = str.replace(/^0+/, '');
+        if (CAREER_CODE_MAP[unpadded]) return CAREER_CODE_MAP[unpadded];
+        if (CAREER_CODE_MAP[str]) return CAREER_CODE_MAP[str];
+    }
+    return fixEncoding(str);
+};
+
+export interface TimelineItem {
+    id: string;
+    tipo: 'INGRESO' | 'POSTULACION';
+    carrera: string;
+    modalidad: string;
+    anio: string | number;
+    semestre: string;
+    puntaje?: string | number;
+    puesto?: string | number;
+    grupo?: string;
+    sede?: string;
+    fecha?: string;
+    carpetaDocs?: string;
+    documentosCount?: number;
+    condicion?: string;
+    rawAdm?: Participant;
+    rawApp?: ApplicantApplicationRecord;
+}
+
 // Global cache for pre-revision files to avoid re-downloading on every keystroke
 let preRevisionCache: { data: any[]; timestamp: number } | null = null;
+
+export function getModalityAndSemesterFromPath(docPath: string): { label: string; year?: string; semester?: string; modality?: string } {
+    if (!docPath) return { label: 'PROCESO DE ADMISIÓN' };
+    
+    const parts = docPath.replace(/\\/g, '/').split('/').filter(Boolean);
+    let folderName = parts.length > 1 ? parts[parts.length - 2] : parts[0] || '';
+    folderName = folderName.replace(/^[A-Za-z]:\/?/g, '').replace(/_/g, ' ').trim();
+    if (!folderName || folderName.toLowerCase() === 'h:') {
+        folderName = 'EXPEDIENTE DIGITAL';
+    }
+    
+    let year = '';
+    const yMatch = folderName.match(/\b(20\d\d)\b/);
+    if (yMatch) year = yMatch[1];
+    
+    let semester = 'I';
+    const upper = folderName.toUpperCase();
+    if (upper.includes('-II') || upper.includes(' II') || upper.includes(' 2') || upper.includes('SEGUNDA')) {
+        semester = 'II';
+    } else if (upper.includes('PO') || upper.includes('PRIMERA OP') || upper.includes('PRIMERA')) {
+        semester = 'PO';
+    }
+
+    return {
+        label: folderName,
+        year,
+        semester,
+        modality: folderName
+    };
+}
+
+export function getGroupedDocuments(documents: StudentDocument[] = []): Record<string, StudentDocument[]> {
+    const groups: Record<string, StudentDocument[]> = {};
+    documents.forEach(doc => {
+        const rawPath = doc.relativePath || doc.path || '';
+        const { label } = getModalityAndSemesterFromPath(rawPath);
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(doc);
+    });
+    return groups;
+}
 
 const getPreRevisionRecords = async (): Promise<any[]> => {
     const now = Date.now();
@@ -501,9 +618,9 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           const appRec: ApplicantApplicationRecord = {
               id: `${dni}-${profile.applications.length}`,
               modalidad: String(r.nombremodalidad || r.Modalidad || 'PROCESO DE ADMISIÓN').toUpperCase(),
-              carrera1: fixEncoding(r['Carrera 1'] || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera),
-              carrera2: fixEncoding(r['Carrera 2'] || r.Escuela2 || r.escuela2),
-              carreraIngreso: fixEncoding(r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso),
+              carrera1: fixCareerName(r['Carrera 1'] || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera || r.COD_CARRERA || r.codigo_carrera),
+              carrera2: fixCareerName(r['Carrera 2'] || r.Escuela2 || r.escuela2),
+              carreraIngreso: fixCareerName(r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso),
               nota: String(r.Nota || r.notavigesimal || r.nota || r.PUNTAJE || '').trim(),
               puesto: String(r.POS || r.pos || r.PUESTO || r.OMERITO || '').trim(),
               condicion: obs || (isAdmittedInProcess ? 'INGRESANTE' : 'PARTICIPANTE'),
@@ -922,82 +1039,195 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       }
   };
 
-  // Build unified timeline events for selected profile
-  const getUnifiedTimelineEvents = () => {
+  // Build unified timeline events for selected profile with strict deduplication
+  const getUnifiedTimelineEvents = (): TimelineItem[] => {
       if (!selectedProfile) return [];
-      const events: any[] = [];
-      
-      // 1. Official admissions
-      selectedProfile.admissions.forEach(adm => {
-          events.push({
-              id: `ingreso-${adm.id}`,
-              type: 'ingreso',
-              sortKey: `${adm.ANIO}-${adm.SEMESTRE === 'I' ? '1' : adm.SEMESTRE === 'II' ? '2' : '3'}-ingreso`,
-              title: adm.CARRERA,
-              subtitle: `ADMISIÓN OFICIAL: ${adm.SEMESTRE}-${adm.ANIO} • ${adm.MODALIDAD}`,
-              score: adm.NOTA,
-              merit: adm.OMERITO,
-              date: adm.FECHAINGRESO,
-              branch: adm.FILIAL || 'CUSCO',
-              data: adm
-          });
-      });
+      const items: TimelineItem[] = [];
+      const matchedAppIds = new Set<string>();
+      const matchedFolderLabels = new Set<string>();
 
-      // 2. Applications from pre-revision processes
-      selectedProfile.applications.forEach((app, i) => {
-          const isIng = app.condicion?.toUpperCase().includes('INGRESA');
-          events.push({
-              id: `app-${app.id || i}`,
-              type: 'postulacion',
-              sortKey: `2026-${i}-app`,
-              title: app.carreraIngreso || app.carrera1 || 'CARRERA POSTULADA',
-              subtitle: `${app.modalidad} • CONDICIÓN: ${app.condicion || 'PARTICIPANTE'}`,
-              score: app.nota,
-              merit: app.puesto,
-              group: app.grupo,
-              isAdmitted: isIng,
-              data: app
-          });
-      });
+      // PASO A: INGRESOS OFICIALES (participantes)
+      selectedProfile.admissions.forEach((adm, idx) => {
+          let carreraName = fixCareerName(adm.CARRERA);
+          const admAnio = String(adm.ANIO || '').trim();
+          const admSem = String(adm.SEMESTRE || '').trim();
+          const admMod = String(adm.MODALIDAD || 'ORDINARIO').trim().toUpperCase();
 
-      // 3. Renuncias
-      selectedProfile.renuncias.forEach(r => {
-          const [anio, sem] = (r.semester || '0000-0').split('-');
-          events.push({
-              id: `renuncia-${r.id}`,
-              type: 'renuncia',
-              sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-renuncia`,
-              title: `Renuncia de Vacante: ${r.school}`,
-              subtitle: `PROCESO: ${r.semester} • Res: ${r.resolution_number}`,
-              date: r.resolution_date,
-              data: r
-          });
-      });
+          let puntaje: string | number | undefined = adm.NOTA && String(adm.NOTA) !== '0' ? adm.NOTA : undefined;
+          let puesto: string | number | undefined = adm.OMERITO && String(adm.OMERITO) !== '0' ? adm.OMERITO : undefined;
+          let grupo: string | undefined = undefined;
+          let matchedFolder: string | undefined = undefined;
+          let matchedDocCount = 0;
 
-      // 4. Reservas
-      selectedProfile.reservas.forEach(res => {
-          const [anio, sem] = (res.starting_semester || '0000-0').split('-');
-          events.push({
-              id: `reserva-${res.id}`,
-              type: 'reserva',
-              sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-reserva`,
-              title: `Reserva de Vacante: ${res.carrera}`,
-              subtitle: `Semestre Retorno: ${res.starting_semester}`,
-              data: res
+          // Buscar coincidencia en pre_revision_archivos (applications) para este mismo proceso y fusionar
+          const matchingApp = selectedProfile.applications.find(app => {
+              const appMod = String(app.modalidad || '').toUpperCase();
+              const sameYear = admAnio ? appMod.includes(admAnio) : true;
+              const sameSem = admSem ? (
+                  (admSem === 'I' && (appMod.includes(' 1') || appMod.includes('-I') || appMod.includes(' I '))) ||
+                  (admSem === 'II' && (appMod.includes(' 2') || appMod.includes('-II') || appMod.includes(' II ')))
+              ) : true;
+              
+              const appCareer = fixCareerName(app.carreraIngreso || app.carrera1);
+              const sameCareer = carreraName && appCareer ? (
+                  carreraName.includes(appCareer) || appCareer.includes(carreraName)
+              ) : false;
+
+              return (sameYear && sameSem) || sameCareer;
           });
-          if (res.is_withdrawn) {
-              events.push({
-                  id: `reserva-ret-${res.id}`,
-                  type: 'retiro_reserva',
-                  sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-retiro`,
-                  title: 'Retiro Definitivo (Tras Reserva)',
-                  subtitle: `PROCESO: ${res.starting_semester}`,
-                  data: res
-              });
+
+          if (matchingApp) {
+              matchedAppIds.add(matchingApp.id);
+              if (!puntaje && matchingApp.nota) puntaje = matchingApp.nota;
+              if (!puesto && matchingApp.puesto) puesto = matchingApp.puesto;
+              if (matchingApp.grupo) grupo = matchingApp.grupo;
+              if ((!carreraName || /^\d+$/.test(carreraName)) && (matchingApp.carreraIngreso || matchingApp.carrera1)) {
+                  carreraName = fixCareerName(matchingApp.carreraIngreso || matchingApp.carrera1);
+              }
           }
+
+          // Buscar documentos en disco H:\ asociados a este ingreso
+          const groupedDocs = getGroupedDocuments(selectedProfile.documents);
+          Object.entries(groupedDocs).forEach(([folderLabel, docs]) => {
+              const labelUpper = folderLabel.toUpperCase();
+              const hasYear = admAnio ? labelUpper.includes(admAnio) : false;
+              const hasSem = admSem ? (
+                  (admSem === 'I' && (labelUpper.includes('-I') || labelUpper.includes(' I') || labelUpper.includes(' 1'))) ||
+                  (admSem === 'II' && (labelUpper.includes('-II') || labelUpper.includes(' II') || labelUpper.includes(' 2')))
+              ) : false;
+
+              if (hasYear && (hasSem || docs.length > 0)) {
+                  matchedFolder = folderLabel;
+                  matchedDocCount = docs.length;
+                  matchedFolderLabels.add(folderLabel);
+              }
+          });
+
+          items.push({
+              id: `ingreso-${adm.id || idx}`,
+              tipo: 'INGRESO',
+              carrera: carreraName || 'CARRERA UNIVERSITARIA',
+              modalidad: adm.MODALIDAD || 'ORDINARIO',
+              anio: adm.ANIO || '',
+              semestre: adm.SEMESTRE || 'I',
+              puntaje,
+              puesto,
+              grupo,
+              sede: adm.FILIAL || 'CUSCO',
+              fecha: adm.FECHAINGRESO || '',
+              carpetaDocs: matchedFolder,
+              documentosCount: matchedDocCount,
+              rawAdm: adm
+          });
       });
 
-      return events;
+      // PASO B: POSTULACIONES SIN INGRESO
+      // B1: Desde pre_revision_archivos que no fueron fusionadas en el Paso A
+      selectedProfile.applications.forEach((app, idx) => {
+          if (matchedAppIds.has(app.id)) return; // Ya fusionada en el ingreso oficial
+
+          let extractedAnio = '';
+          const yMatch = String(app.modalidad).match(/\b(20\d\d)\b/);
+          if (yMatch) extractedAnio = yMatch[1];
+
+          let extractedSem = 'I';
+          const modUpper = String(app.modalidad).toUpperCase();
+          if (modUpper.includes('-II') || modUpper.includes(' II') || modUpper.includes(' 2') || modUpper.includes('SEGUNDA')) {
+              extractedSem = 'II';
+          } else if (modUpper.includes('PO') || modUpper.includes('PRIMERA OP') || modUpper.includes('PRIMERA')) {
+              extractedSem = 'PO';
+          }
+
+          // Verificar si ya existe un ingreso oficial para esta misma modalidad/año/semestre
+          const alreadyIngreso = items.some(it => 
+              it.tipo === 'INGRESO' && 
+              it.anio === extractedAnio && 
+              (it.semestre === extractedSem || it.modalidad.toUpperCase() === app.modalidad.toUpperCase())
+          );
+          if (alreadyIngreso) return;
+
+          const appCareer = fixCareerName(app.carrera1 || app.carrera2 || app.carreraIngreso || 'CARRERA POSTULADA');
+
+          items.push({
+              id: `postulacion-app-${app.id || idx}`,
+              tipo: 'POSTULACION',
+              carrera: appCareer,
+              modalidad: app.modalidad || 'PROCESO DE ADMISIÓN',
+              anio: extractedAnio || '2026',
+              semestre: extractedSem,
+              puntaje: app.nota,
+              puesto: app.puesto,
+              grupo: app.grupo,
+              condicion: app.condicion || 'No alcanzó vacante',
+              rawApp: app
+          });
+      });
+
+      // B2: Desde Carpetas del Disco H:\ (File Gateway) que no correspondan a un ingreso oficial
+      const groupedDocs = getGroupedDocuments(selectedProfile.documents);
+      Object.entries(groupedDocs).forEach(([folderLabel, docs]) => {
+          if (matchedFolderLabels.has(folderLabel)) return;
+
+          let extractedAnio = '';
+          const yMatch = folderLabel.match(/\b(20\d\d)\b/);
+          if (yMatch) extractedAnio = yMatch[1];
+
+          let extractedSem = 'I';
+          const labelUpper = folderLabel.toUpperCase();
+          if (labelUpper.includes('-II') || labelUpper.includes(' II') || labelUpper.includes(' 2') || labelUpper.includes('SEGUNDA')) {
+              extractedSem = 'II';
+          } else if (labelUpper.includes('PO') || labelUpper.includes('PRIMERA OP') || labelUpper.includes('PRIMERA')) {
+              extractedSem = 'PO';
+          }
+
+          // Si ya existe un ingreso oficial para este proceso, omitir
+          const alreadyCovered = items.some(it => 
+              it.anio === extractedAnio && 
+              (it.semestre === extractedSem || it.modalidad.toUpperCase() === folderLabel.toUpperCase() || it.carpetaDocs === folderLabel)
+          );
+          if (alreadyCovered) return;
+
+          items.push({
+              id: `postulacion-folder-${folderLabel}`,
+              tipo: 'POSTULACION',
+              carrera: 'Postulación Registrada',
+              modalidad: folderLabel,
+              anio: extractedAnio || 'Histórico',
+              semestre: extractedSem,
+              carpetaDocs: folderLabel,
+              documentosCount: docs.length,
+              condicion: 'Expediente digital en disco local • Rindió examen / No figura en padrón de ingresantes'
+          });
+      });
+
+      // PASO C: ORDENAMIENTO CRONOLÓGICO DESCENDENTE
+      const getSortScore = (item: TimelineItem) => {
+          let yearNum = 0;
+          const yMatch = String(item.anio).match(/\b(20\d\d|\d{4})\b/);
+          if (yMatch) {
+              yearNum = parseInt(yMatch[1], 10);
+          } else {
+              const modMatch = String(item.modalidad).match(/\b(20\d\d|\d{4})\b/);
+              if (modMatch) yearNum = parseInt(modMatch[1], 10);
+          }
+
+          let semScore = 1;
+          const semText = (String(item.semestre) + ' ' + String(item.modalidad)).toUpperCase();
+          if (semText.includes('II') || semText.includes('-2') || semText.includes('SEGUNDA')) {
+              semScore = 3;
+          } else if (semText.includes('I') || semText.includes('-1')) {
+              semScore = 2;
+          } else if (semText.includes('PO') || semText.includes('PRIMERA')) {
+              semScore = 1;
+          }
+
+          const typePriority = item.tipo === 'INGRESO' ? 0.2 : 0.0;
+          return yearNum * 10 + semScore + typePriority;
+      };
+
+      items.sort((a, b) => getSortScore(b) - getSortScore(a));
+
+      return items;
   };
 
   const timelineEvents = getUnifiedTimelineEvents();
@@ -1629,112 +1859,162 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                 </div>
 
                                 <div className="flex-1 overflow-y-auto pr-3 space-y-6 relative">
-                                    <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-slate-100"></div>
+                                    <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-slate-100 hidden md:block"></div>
                                     
-                                    {timelineEvents.map((evt, idx) => {
-                                        if (evt.type === 'ingreso') {
-                                            const item = evt.data;
+                                    {/* Alert for Renuncias or Reservas */}
+                                    {selectedProfile.renuncias.length > 0 && (
+                                        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-red-600 text-2xl shrink-0">cancel</span>
+                                            <div>
+                                                <p className="text-xs font-black uppercase text-red-900">
+                                                    Renuncia de Vacante Registrada ({selectedProfile.renuncias.length})
+                                                </p>
+                                                {selectedProfile.renuncias.map((ren, rIdx) => (
+                                                    <p key={rIdx} className="text-xs text-red-700 mt-0.5">
+                                                        • Escuela: <strong>{ren.school}</strong> • Semestre: <strong>{ren.semester}</strong> • Resolución: <strong>{ren.resolution_number}</strong> ({ren.resolution_date || 'Sin fecha'})
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {selectedProfile.reservas.length > 0 && (
+                                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-amber-600 text-2xl shrink-0">bookmark</span>
+                                            <div>
+                                                <p className="text-xs font-black uppercase text-amber-900">
+                                                    Reserva de Vacante ({selectedProfile.reservas.length})
+                                                </p>
+                                                {selectedProfile.reservas.map((res, rIdx) => (
+                                                    <p key={rIdx} className="text-xs text-amber-700 mt-0.5">
+                                                        • Carrera: <strong>{res.carrera}</strong> • Semestre Retorno: <strong>{res.starting_semester}</strong> {res.is_withdrawn ? '(Retiro Definitivo Registrado)' : ''}
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {timelineEvents.map((item, idx) => {
+                                        if (item.tipo === 'INGRESO') {
                                             return (
-                                                <div key={evt.id} className="flex gap-6 relative group">
-                                                    <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all ${
-                                                        idx === 0 ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 scale-105' : 'bg-slate-100 text-slate-400 group-hover:bg-primary/10 group-hover:text-primary'
-                                                    }`}>
+                                                <div key={item.id} className="flex gap-4 md:gap-6 relative group items-start">
+                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-emerald-600 text-white shadow-md shadow-emerald-200">
                                                         <span className="material-symbols-outlined text-xl">verified</span>
                                                     </div>
-                                                    <div className="flex-1 bg-slate-50/80 rounded-2xl p-5 border border-slate-100 hover:border-emerald-200 transition-all">
-                                                        <div className="flex justify-between items-start">
+                                                    
+                                                    {/* Card Ingreso Oficial - Alineado a la izquierda con borde verde */}
+                                                    <div className="flex-1 bg-emerald-50/40 rounded-2xl p-5 border-2 border-emerald-500/80 hover:border-emerald-600 transition-all shadow-sm">
+                                                        <div className="flex justify-between items-start gap-3">
                                                             <div>
-                                                                <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                                                                    INGRESO OFICIAL
-                                                                </span>
-                                                                <p className="font-black text-base uppercase text-slate-900 mt-1">
-                                                                    {fixEncoding(item.CARRERA)}
-                                                                </p>
-                                                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
-                                                                    Admisión: {item.SEMESTRE}-{item.ANIO} • {item.MODALIDAD}
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
+                                                                        🎓 INGRESO OFICIAL
+                                                                    </span>
+                                                                    {item.carpetaDocs && (
+                                                                        <span className="text-[9px] font-bold bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs">
+                                                                            <span className="material-symbols-outlined text-[13px] text-amber-500">folder</span>
+                                                                            {item.carpetaDocs} {item.documentosCount ? `(${item.documentosCount} docs)` : ''}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <h4 className="font-black text-lg uppercase text-slate-900 mt-1.5 leading-snug">
+                                                                    {item.carrera}
+                                                                </h4>
+                                                                <p className="text-[11px] font-bold text-emerald-950/70 uppercase tracking-wide mt-0.5">
+                                                                    Admisión: {item.semestre}-{item.anio} • Modalidad: {item.modalidad} {item.sede ? `• Sede: ${item.sede}` : ''}
                                                                 </p>
                                                             </div>
-                                                            <button 
-                                                                onClick={() => { setEditingRecord(item); setEditForm(item); setIsEditing(true); }}
-                                                                className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-200/60"
-                                                                title="Editar registro"
-                                                            >
-                                                                <span className="material-symbols-outlined text-[18px]">edit</span>
-                                                            </button>
+                                                            {item.rawAdm && (
+                                                                <button 
+                                                                    onClick={() => { setEditingRecord(item.rawAdm!); setEditForm(item.rawAdm!); setIsEditing(true); }}
+                                                                    className="p-2 text-emerald-700 hover:text-emerald-900 transition-colors rounded-lg hover:bg-emerald-100/60 shrink-0"
+                                                                    title="Editar registro de ingreso oficial"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                                                                </button>
+                                                            )}
                                                         </div>
 
-                                                        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                                                            {item.NOTA && <span className="bg-white text-emerald-800 border border-emerald-100 px-2.5 py-1 rounded-lg text-[10px] font-bold">Puntaje: {item.NOTA}</span>}
-                                                            {item.OMERITO && <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Puesto: {item.OMERITO}</span>}
-                                                            {item.FILIAL && <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Sede: {item.FILIAL}</span>}
-                                                            {item.FECHAINGRESO && <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Fecha: {item.FECHAINGRESO}</span>}
+                                                        <div className="mt-3.5 flex flex-wrap gap-2 text-xs">
+                                                            {item.puntaje && (
+                                                                <span className="bg-white text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-2xs">
+                                                                    Puntaje: {item.puntaje}
+                                                                </span>
+                                                            )}
+                                                            {item.puesto && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puesto: #{item.puesto}
+                                                                </span>
+                                                            )}
+                                                            {item.grupo && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Grupo: {item.grupo}
+                                                                </span>
+                                                            )}
+                                                            {item.fecha && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Fecha: {item.fecha}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>
                                             );
                                         }
 
-                                        if (evt.type === 'postulacion') {
-                                            const app = evt.data;
+                                        if (item.tipo === 'POSTULACION') {
                                             return (
-                                                <div key={evt.id} className="flex gap-6 relative group">
-                                                    <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all ${
-                                                        evt.isAdmitted ? 'bg-emerald-500 text-white shadow-md' : 'bg-slate-200 text-slate-600'
-                                                    }`}>
-                                                        <span className="material-symbols-outlined text-xl">school</span>
+                                                <div key={item.id} className="flex gap-4 md:gap-6 relative group items-start">
+                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-slate-200 text-slate-600">
+                                                        <span className="material-symbols-outlined text-xl">history_edu</span>
                                                     </div>
-                                                    <div className="flex-1 bg-white rounded-2xl p-5 border border-slate-200 hover:border-primary/40 transition-all">
-                                                        <div className="flex justify-between items-start">
+                                                    
+                                                    {/* Card Postulación sin Ingreso - Alineado a la derecha con borde punteado/gris */}
+                                                    <div className="flex-1 bg-slate-50/70 rounded-2xl p-5 border-2 border-dashed border-slate-300 hover:border-slate-400 transition-all md:ml-6">
+                                                        <div className="flex justify-between items-start gap-3">
                                                             <div>
-                                                                <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
-                                                                    evt.isAdmitted ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
-                                                                }`}>
-                                                                    {evt.isAdmitted ? 'INGRESANTE (PROCESO)' : 'POSTULANTE'}
-                                                                </span>
-                                                                <p className="font-black text-base uppercase text-slate-900 mt-1">
-                                                                    {evt.title}
-                                                                </p>
-                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
-                                                                    {evt.subtitle}
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 border border-slate-300 inline-flex items-center gap-1">
+                                                                        👥 POSTULACIÓN (Sin Ingreso)
+                                                                    </span>
+                                                                    {item.carpetaDocs && (
+                                                                        <span className="text-[9px] font-bold bg-white text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs">
+                                                                            <span className="material-symbols-outlined text-[13px] text-amber-500">folder</span>
+                                                                            {item.carpetaDocs} {item.documentosCount ? `(${item.documentosCount} docs)` : ''}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <h4 className="font-bold text-base uppercase text-slate-700 mt-1.5 leading-snug">
+                                                                    {item.carrera}
+                                                                </h4>
+                                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mt-0.5">
+                                                                    Proceso: {item.modalidad} {item.anio ? `(${item.anio}${item.semestre ? `-${item.semestre}` : ''})` : ''}
                                                                 </p>
                                                             </div>
                                                         </div>
 
-                                                        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                                                            {evt.score && <span className="bg-slate-50 text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Puntaje: {evt.score}</span>}
-                                                            {evt.merit && <span className="bg-slate-50 text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Puesto: {evt.merit}</span>}
-                                                            {evt.group && <span className="bg-slate-50 text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">Grupo: {evt.group}</span>}
+                                                        <div className="mt-3.5 flex flex-wrap gap-2 text-xs">
+                                                            {item.puntaje && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puntaje: {item.puntaje}
+                                                                </span>
+                                                            )}
+                                                            {item.puesto && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puesto: #{item.puesto}
+                                                                </span>
+                                                            )}
+                                                            {item.grupo && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Grupo: {item.grupo}
+                                                                </span>
+                                                            )}
+                                                            {item.condicion && (
+                                                                <span className="bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-medium">
+                                                                    {item.condicion}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-
-                                        if (evt.type === 'renuncia') {
-                                            const r = evt.data;
-                                            return (
-                                                <div key={evt.id} className="flex gap-6 relative group">
-                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-red-100 text-red-500">
-                                                        <span className="material-symbols-outlined text-xl">cancel</span>
-                                                    </div>
-                                                    <div className="flex-1 bg-red-50/50 rounded-2xl p-5 border border-red-200">
-                                                        <p className="font-black text-base uppercase text-red-950">{evt.title}</p>
-                                                        <p className="text-[10px] font-bold text-red-700 uppercase tracking-widest mt-0.5">{evt.subtitle}</p>
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-
-                                        if (evt.type === 'reserva') {
-                                            const res = evt.data;
-                                            return (
-                                                <div key={evt.id} className="flex gap-6 relative group">
-                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-amber-100 text-amber-600">
-                                                        <span className="material-symbols-outlined text-xl">bookmark</span>
-                                                    </div>
-                                                    <div className="flex-1 bg-amber-50/50 rounded-2xl p-5 border border-amber-200">
-                                                        <p className="font-black text-base uppercase text-amber-950">{evt.title}</p>
-                                                        <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest mt-0.5">{evt.subtitle}</p>
                                                     </div>
                                                 </div>
                                             );
