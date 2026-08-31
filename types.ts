@@ -311,6 +311,7 @@ export interface VacancyReservationDetail {
     withdrawal_resolution_date?: string;
     withdrawal_resolution_pdf?: string;
     batch?: VacancyReservationBatch;
+    admission_options?: Participant[];
 }
 
 export interface CalendarEvent {
