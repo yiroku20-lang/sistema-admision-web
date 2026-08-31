@@ -146,18 +146,23 @@ export const fixCareerName = (codeOrName: string | undefined | null): string => 
     return fixEncoding(str);
 };
 
-export function normalizeProcessKey(modalidad: string = '', semestre: string = '', anio: string | number = ''): string {
-    const text = `${modalidad} ${semestre} ${anio}`.toUpperCase();
+export function normalizeProcessKey(modalidad: string = '', semestre: string = '', anio: string | number = '', rawRow?: any): string {
+    let combined = `${modalidad} ${semestre} ${anio}`;
+    if (rawRow && typeof rawRow === 'object') {
+        const extra = `${rawRow.nombremodalidad || ''} ${rawRow.Modalidad || ''} ${rawRow.modalidad || ''} ${rawRow.proceso || ''} ${rawRow.Proceso || ''} ${rawRow.archivo || ''} ${rawRow.filename || ''} ${rawRow.Anio || ''} ${rawRow.anio || ''} ${rawRow.Semestre || ''} ${rawRow.semestre || ''} ${rawRow._modalidadId || ''}`;
+        combined += ` ${extra}`;
+    }
+    const text = combined.toUpperCase();
     
     // 1. Extraer Año (ej. 2024, 2025, 2026)
-    const yearMatch = text.match(/202\d/);
-    const year = yearMatch ? yearMatch[0] : (String(anio).match(/202\d/) ? String(anio).match(/202\d/)![0] : '');
+    const yearMatch = text.match(/\b(202\d|20\d\d)\b/);
+    const year = yearMatch ? yearMatch[1] : (String(anio).match(/\b(202\d|20\d\d)\b/) ? String(anio).match(/\b(202\d|20\d\d)\b/)![1] : '');
     
     // 2. Extraer Semestre (I, II o PO)
     let sem = 'I';
-    if (text.includes('2026-II') || text.includes('2025-II') || text.includes('2024-II') || text.includes('2023-II') || text.includes('-II') || text.includes(' II') || text.includes(' 2') || text.includes('SEGUNDA') || text.includes('SEGUNDO')) {
+    if (text.includes('2026-II') || text.includes('2025-II') || text.includes('2024-II') || text.includes('2023-II') || text.includes('-II') || text.includes(' II') || text.includes(' 2') || text.includes('SEGUNDA') || text.includes('SEGUNDO') || text.includes('SEMESTRE: II') || text.includes('SEMESTRE II') || text.includes('SEM II')) {
         sem = 'II';
-    } else if (text.includes('PO') || text.includes('PRIMERA OPORTUNIDAD') || text.includes('PRIMERA OP')) {
+    } else if (text.includes('PO') || text.includes('PRIMERA OPORTUNIDAD') || text.includes('PRIMERA OP') || text.includes('1RA OPORTUNIDAD') || text.includes('1ERA OPORTUNIDAD')) {
         sem = 'PO';
     }
     
@@ -165,9 +170,9 @@ export function normalizeProcessKey(modalidad: string = '', semestre: string = '
     let type = 'ORDINARIO';
     if (text.includes('FILIAL') || text.includes('SEDES') || text.includes('SEDE') || text.includes('CANCHIS') || text.includes('ESPINAR') || text.includes('ANDAHUAYLAS') || text.includes('SICUANI') || text.includes('SANTO TOMAS') || text.includes('PUERTO MALDONADO')) {
         type = 'FILIALES';
-    } else if (text.includes('CEPRU') && (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP'))) {
+    } else if (text.includes('CEPRU') && (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP') || text.includes('1RA OPORTUNIDAD'))) {
         type = 'CEPRU_PO';
-    } else if (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP')) {
+    } else if (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP') || text.includes('1RA OPORTUNIDAD')) {
         type = 'PO';
     } else if (text.includes('CEPRU')) {
         type = 'CEPRU';
@@ -692,12 +697,16 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           if (!profile.schoolName && (r.nombrecolegio || r.nombreColegio)) profile.schoolName = String(r.nombrecolegio || r.nombreColegio).trim();
 
           // Application Record
+          const rawCarrera1 = r['Carrera 1'] || r.Carrera1 || r.carrera1 || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera || r.COD_CARRERA || r.codigo_carrera || r.CARRERA;
+          const rawCarrera2 = r['Carrera 2'] || r.Carrera2 || r.carrera2 || r.Escuela2 || r.escuela2;
+          const rawCarreraIngreso = r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso || r.CARRERA_INGRESO || r.ESCUELA_INGRESO || r.escuelaIngreso || r.escuela_ingreso || r.carrera_admitida || r.CarreraAdmitida;
+
           const appRec: ApplicantApplicationRecord = {
               id: `${dni}-${profile.applications.length}`,
               modalidad: String(r.nombremodalidad || r.Modalidad || 'PROCESO DE ADMISIÓN').toUpperCase(),
-              carrera1: fixCareerName(r['Carrera 1'] || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera || r.COD_CARRERA || r.codigo_carrera),
-              carrera2: fixCareerName(r['Carrera 2'] || r.Escuela2 || r.escuela2),
-              carreraIngreso: fixCareerName(r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso),
+              carrera1: fixCareerName(rawCarrera1),
+              carrera2: fixCareerName(rawCarrera2),
+              carreraIngreso: fixCareerName(rawCarreraIngreso),
               nota: String(r.Nota || r.notavigesimal || r.nota || r.PUNTAJE || '').trim(),
               puesto: String(r.POS || r.pos || r.PUESTO || r.OMERITO || '').trim(),
               condicion: obs || (isAdmittedInProcess ? 'INGRESANTE' : 'PARTICIPANTE'),
@@ -1137,42 +1146,52 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           let matchedFolder: string | undefined = undefined;
           let matchedDocCount = 0;
 
-          // Buscar coincidencia en pre_revision_archivos (applications) para este mismo proceso y fusionar
-          const matchingApp = selectedProfile.applications.find(app => {
+          // Buscar TODAS las coincidencias en pre_revision_archivos (applications) para este mismo proceso y fusionar
+          const matchingApps = selectedProfile.applications.filter(app => {
+              if (matchedAppIds.has(app.id)) return false;
               const prKey = normalizeProcessKey(
                   app.modalidad, 
                   String(app.rawRow?.semestre || app.rawRow?.Semestre || ''), 
-                  String(app.rawRow?.anio || app.rawRow?.Anio || admAnio)
+                  String(app.rawRow?.anio || app.rawRow?.Anio || admAnio),
+                  app.rawRow
               );
               
-              // 1. Coincidencia exacta por clave normalizada
+              // 1. Coincidencia exacta por clave normalizada (ej. 2026-I_ORDINARIO === 2026-I_ORDINARIO)
               if (pKey && prKey && pKey === prKey) return true;
 
-              // 2. Coincidencia por año y tipo de examen (ej. 2026 y FILIALES)
+              // 2. Coincidencia por año y tipo de examen (ej. 2026 y ORDINARIO)
               const [pYear, pRest] = pKey.split('_');
               const [prYear, prRest] = prKey.split('_');
               if (pYear && prYear && pYear === prYear && pRest === prRest) return true;
 
-              // 3. Coincidencia por carrera y año
-              const appCareer = fixCareerName(app.carreraIngreso || app.carrera1 || app.carrera2);
-              const sameCareer = (carreraName && appCareer && (carreraName.includes(appCareer) || appCareer.includes(carreraName)));
-              const sameYear = admAnio && String(app.modalidad).includes(admAnio);
+              // 3. Coincidencia por prefijo año-semestre (ej. 2026-I)
+              const pSemPrefix = pKey.split('_')[0];
+              const prSemPrefix = prKey.split('_')[0];
+              if (pSemPrefix && prSemPrefix && pSemPrefix === prSemPrefix && pSemPrefix.length >= 6) {
+                  return true;
+              }
+
+              // 4. Coincidencia por carrera de ingreso real y año
+              const appRealCareer = fixCareerName(app.carreraIngreso || (app.condicion?.includes('INGRESA') ? app.carrera1 : ''));
+              const sameCareer = (carreraName && appRealCareer && (carreraName.includes(appRealCareer) || appRealCareer.includes(carreraName)));
+              const sameYear = admAnio && (String(app.modalidad).includes(admAnio) || String(app.rawRow?.anio || '').includes(admAnio));
               if (sameCareer && sameYear) return true;
 
               return false;
           });
 
-          if (matchingApp) {
+          matchingApps.forEach(matchingApp => {
               matchedAppIds.add(matchingApp.id);
               if (!puntaje && matchingApp.nota) puntaje = matchingApp.nota;
               if (!puesto && matchingApp.puesto) puesto = matchingApp.puesto;
-              if (matchingApp.grupo) grupo = matchingApp.grupo;
+              if (!grupo && matchingApp.grupo) grupo = matchingApp.grupo;
               
-              const candidateCareer = fixCareerName(matchingApp.carreraIngreso || matchingApp.carrera1 || matchingApp.carrera2);
+              // Si la carrera en participantes es genérica o código, usar carreraIngreso de pre-revisión
+              const candidateCareer = fixCareerName(matchingApp.carreraIngreso || adm.CARRERA);
               if ((!carreraName || carreraName === 'CARRERA UNIVERSITARIA') && candidateCareer) {
                   carreraName = candidateCareer;
               }
-          }
+          });
 
           // Buscar documentos en disco H:\ asociados a este ingreso
           const groupedDocs = getGroupedDocuments(selectedProfile.documents);
@@ -1210,54 +1229,74 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           const prKey = normalizeProcessKey(
               app.modalidad, 
               String(app.rawRow?.semestre || app.rawRow?.Semestre || ''), 
-              String(app.rawRow?.anio || app.rawRow?.Anio || '')
+              String(app.rawRow?.anio || app.rawRow?.Anio || ''),
+              app.rawRow
           );
 
-          // Verificar si ya existe un INGRESO con esa misma clave de proceso o carrera/año
-          const matchingIngreso = items.find(it => {
-              if (it.tipo !== 'INGRESO') return false;
+          // Verificar si ya existe un evento (INGRESO o POSTULACION) para este mismo proceso
+          const matchingItem = items.find(it => {
               const itKey = normalizeProcessKey(it.modalidad, it.semestre, it.anio);
+              
+              // 1. Clave de proceso idéntica
               if (itKey && prKey && itKey === prKey) return true;
 
+              // 2. Mismo año y mismo tipo
               const [itYear, itRest] = itKey.split('_');
               const [prYear, prRest] = prKey.split('_');
               if (itYear && prYear && itYear === prYear && itRest === prRest) return true;
 
-              const appCareer = fixCareerName(app.carreraIngreso || app.carrera1 || app.carrera2);
-              if (it.carrera && appCareer && (it.carrera.includes(appCareer) || appCareer.includes(it.carrera))) {
+              // 3. Mismo año y semestre (ej. 2026-I)
+              const itSemPrefix = itKey.split('_')[0];
+              const prSemPrefix = prKey.split('_')[0];
+              if (itSemPrefix && prSemPrefix && itSemPrefix === prSemPrefix && itSemPrefix.length >= 6) {
+                  return true;
+              }
+
+              // 4. Misma carrera y año
+              const appRealCareer = fixCareerName(app.carreraIngreso || app.carrera1 || app.carrera2);
+              if (it.carrera && appRealCareer && (it.carrera.includes(appRealCareer) || appRealCareer.includes(it.carrera))) {
                   const sameYear = it.anio && String(app.modalidad).includes(String(it.anio));
                   if (sameYear) return true;
               }
               return false;
           });
 
-          if (matchingIngreso) {
-              // SI YA EXISTE EL INGRESO: NO crear una segunda tarjeta. Inyectar datos faltantes
+          if (matchingItem) {
+              // SI YA EXISTE UN EVENTO EN ESTE MISMO PROCESO: NO crear una segunda tarjeta.
+              // Inyectar datos faltantes en la tarjeta existente
               matchedAppIds.add(app.id);
-              if (!matchingIngreso.puntaje && app.nota) matchingIngreso.puntaje = app.nota;
-              if (!matchingIngreso.puesto && app.puesto) matchingIngreso.puesto = app.puesto;
-              if (!matchingIngreso.grupo && app.grupo) matchingIngreso.grupo = app.grupo;
+              if (!matchingItem.puntaje && app.nota) matchingItem.puntaje = app.nota;
+              if (!matchingItem.puesto && app.puesto) matchingItem.puesto = app.puesto;
+              if (!matchingItem.grupo && app.grupo) matchingItem.grupo = app.grupo;
               return;
           }
 
-          // SI NO EXISTE EL INGRESO:
+          // SI NO EXISTE UN EVENTO EN ESTE PROCESO:
           const obs = String(app.condicion || app.rawRow?.OBSERVACION || app.rawRow?.ESTADO || '').toUpperCase();
           const isIngresante = obs.includes('INGRESA') || obs.includes('ADMITIDO') || (app.rawRow && (app.rawRow.Ingresante === 1 || app.rawRow.Ingresante === '1'));
 
           let extractedAnio = '';
-          const yMatch = String(app.modalidad).match(/\b(20\d\d)\b/);
+          const yMatch = (String(app.modalidad) + ' ' + String(app.rawRow?.anio || '')).match(/\b(20\d\d)\b/);
           if (yMatch) extractedAnio = yMatch[1];
 
           let extractedSem = 'I';
-          const modUpper = String(app.modalidad).toUpperCase();
-          if (modUpper.includes('-II') || modUpper.includes(' II') || modUpper.includes(' 2') || modUpper.includes('SEGUNDA')) {
+          const modUpper = (String(app.modalidad) + ' ' + String(app.rawRow?.semestre || '')).toUpperCase();
+          if (modUpper.includes('-II') || modUpper.includes(' II') || modUpper.includes(' 2') || modUpper.includes('SEGUNDA') || modUpper.includes('SEGUNDO')) {
               extractedSem = 'II';
           } else if (modUpper.includes('PO') || modUpper.includes('PRIMERA OP') || modUpper.includes('PRIMERA')) {
               extractedSem = 'PO';
           }
 
-          // Garantizar que nunca mostremos códigos numéricos crudos
-          let appCareer = fixCareerName(app.carrera1 || app.carrera2 || app.carreraIngreso);
+          // REGLA CRÍTICA:
+          // Si es ingresante, la carrera real es carreraIngreso (segunda opción o primera opción adjudicada).
+          // Si no es ingresante, la carrera postulada es carrera1 (primera opción) o carrera2.
+          let appCareer = '';
+          if (isIngresante) {
+              appCareer = fixCareerName(app.carreraIngreso) || fixCareerName(app.carrera1) || fixCareerName(app.carrera2);
+          } else {
+              appCareer = fixCareerName(app.carrera1) || fixCareerName(app.carrera2) || fixCareerName(app.carreraIngreso);
+          }
+
           if (!appCareer || /^\d+$/.test(appCareer)) {
               appCareer = app.modalidad || 'POSTULACIÓN REGISTRADA';
           }
