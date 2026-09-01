@@ -127,10 +127,20 @@ Dirección de Admisión`);
 
   const fetchProspects = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('prospectos_vocacionales')
       .select('*')
-      .order('fecha_registro', { ascending: false });
+      .order('fecha_actualizacion', { ascending: false, nullsFirst: false });
+
+    // Fallback if fecha_actualizacion does not exist yet
+    if (error) {
+      const fallback = await supabase
+        .from('prospectos_vocacionales')
+        .select('*')
+        .order('fecha_registro', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) {
       if (error.code === '42P01') {
@@ -837,9 +847,21 @@ _Dirección de Admisión UNSAAC_`;
                            {p.estado_contacto}
                          </span>
                        </td>
-                       <td className="px-6 py-3">
-                         <div className="text-[11px] font-bold text-slate-600">{format(new Date(p.fecha_registro), 'dd MMM yyyy', { locale: es })}</div>
-                       </td>
+                        <td className="px-6 py-3">
+                          <div className="text-[11px] font-bold text-slate-700">
+                            {format(new Date(p.fecha_actualizacion || p.fecha_registro), 'dd MMM yyyy', { locale: es })}
+                          </div>
+                          {p.resultados_test && p.resultados_test.length > 1 ? (
+                            <span className="inline-flex items-center gap-1 mt-1 bg-amber-100 text-amber-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md tracking-wider">
+                              <span className="material-symbols-outlined text-[11px]">update</span>
+                              {p.resultados_test.length} Tests
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
+                              1er Registro
+                            </span>
+                          )}
+                        </td>
                        <td className="px-6 py-3 text-right">
                          <div className="flex items-center justify-end gap-1">
                            <button onClick={() => handleWhatsAppSend(p)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Enviar WhatsApp">

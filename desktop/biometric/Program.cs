@@ -30,6 +30,10 @@ namespace BiometricBridge
         public static AutoResetEvent captureEvent = new AutoResetEvent(false);
         public static object lockObj = new object();
         public static bool isReaderConnected = false;
+        public static bool isEnrolling = false;
+        public static int enrollSamplesCollected = 0;
+        public static int enrollSamplesNeeded = 4;
+        public static string enrollStageMessage = "";
 
         // --- Referencia al form para actualizaciones de UI ---
         public static BridgeForm Instance = null;
@@ -138,7 +142,7 @@ namespace BiometricBridge
                     try { Capturer.StopCapture(); } catch { }
                 }
 
-                DPFP.Capture.Priority priority = DPFP.Capture.Priority.Normal;
+                DPFP.Capture.Priority priority = DPFP.Capture.Priority.Low;
                 DPFP.Capture.ReadersCollection readers = new DPFP.Capture.ReadersCollection();
                 if (readers.Count > 0)
                 {
@@ -438,6 +442,10 @@ namespace BiometricBridge
                     {
                         jsonResponse = HandlePing();
                     }
+                    else if (path == "/enroll-status")
+                    {
+                        jsonResponse = HandleEnrollStatus();
+                    }
                     else if (path == "/capture")
                     {
                         jsonResponse = HandleCapture();
@@ -554,12 +562,33 @@ namespace BiometricBridge
         }
         #endregion
 
+        #region Endpoint: /enroll-status
+        private string HandleEnrollStatus()
+        {
+            lock (lockObj)
+            {
+                return "{\"isEnrolling\":" + (isEnrolling ? "true" : "false") + "," +
+                       "\"samplesCollected\":" + enrollSamplesCollected + "," +
+                       "\"samplesNeeded\":" + enrollSamplesNeeded + "," +
+                       "\"message\":\"" + EscapeJson(enrollStageMessage ?? "") + "\"}";
+            }
+        }
+        #endregion
+
         #region Endpoint: /enroll (captura 4 muestras -> genera template)
         private string HandleEnroll()
         {
             SafeUpdate(lblHttp, " ENROLAMIENTO en progreso...", Color.FromArgb(147, 51, 234));
             SafeUpdate(lblEstado, "ENROLAMIENTO: Coloca tu dedo (muestra 1 de 4)", Color.FromArgb(250, 204, 21));
             SafeUpdate(lblProgress, "Iniciando proceso de enrolamiento...", Color.FromArgb(250, 204, 21));
+
+            lock (lockObj)
+            {
+                isEnrolling = true;
+                enrollSamplesCollected = 0;
+                enrollSamplesNeeded = 4;
+                enrollStageMessage = "Coloca tu dedo en el lector (muestra 1 de 4)";
+            }
 
             try
             {
@@ -582,11 +611,17 @@ namespace BiometricBridge
                         Color.FromArgb(148, 163, 184));
 
                     // Limpiar estado previo y esperar nueva captura con polling robusto
-                    // (evita race condition entre Reset y WaitOne)
-                    lock (lockObj) { latestSample = null; latestImageBase64 = null; }
+                    lock (lockObj)
+                    {
+                        latestSample = null;
+                        latestImageBase64 = null;
+                        enrollSamplesCollected = samplesCollected;
+                        enrollSamplesNeeded = samplesNeeded;
+                        enrollStageMessage = "Coloca tu dedo (muestra " + currentTarget + " de " + samplesNeeded + ")";
+                    }
 
                     DPFP.Sample sample = null;
-                    DateTime deadline = DateTime.Now.AddSeconds(45);
+                    DateTime deadline = DateTime.Now.AddSeconds(60);
                     while (DateTime.Now < deadline && sample == null)
                     {
                         captureEvent.WaitOne(500);  // Esperar 500ms o hasta señal
@@ -595,6 +630,7 @@ namespace BiometricBridge
 
                     if (sample == null)
                     {
+                        lock (lockObj) { isEnrolling = false; }
                         SafeUpdate(lblHttp, " HTTP ACTIVO: localhost:8081", Color.FromArgb(22, 163, 74));
                         SafeUpdate(lblProgress, "", Color.FromArgb(148, 163, 184));
                         return "{\"success\":false,\"error\":\"Tiempo agotado esperando muestra " + currentTarget + " de " + samplesNeeded + "\",\"samplesCollected\":" + samplesCollected + "}";
@@ -607,6 +643,7 @@ namespace BiometricBridge
                     if (features == null)
                     {
                         SafeUpdate(lblEstado, "Calidad insuficiente, vuelve a intentar...", Color.FromArgb(248, 113, 113));
+                        lock (lockObj) { enrollStageMessage = "Calidad insuficiente, vuelva a colocar el dedo"; }
                         continue;
                     }
 
@@ -615,6 +652,12 @@ namespace BiometricBridge
                     {
                         enrollment.AddFeatures(features);
                         samplesCollected++;
+                        lock (lockObj)
+                        {
+                            enrollSamplesCollected = samplesCollected;
+                            enrollStageMessage = "Muestra " + samplesCollected + " de " + samplesNeeded + " OK! Retira tu dedo...";
+                        }
+
                         SafeUpdate(lblEstado,
                             "Muestra " + samplesCollected + " de " + samplesNeeded + " OK! Retira tu dedo...",
                             Color.FromArgb(52, 211, 153));
@@ -622,10 +665,14 @@ namespace BiometricBridge
                         if ((int)enrollment.FeaturesNeeded > 0)
                         {
                             // Esperar a que retire el dedo antes de pedir la siguiente muestra
-                            Thread.Sleep(2500);
+                            Thread.Sleep(1500);
                             SafeUpdate(lblEstado,
                                 "Vuelve a colocar tu dedo (muestra " + (samplesCollected + 1) + " de " + samplesNeeded + ")",
                                 Color.FromArgb(56, 189, 248));
+                            lock (lockObj)
+                            {
+                                enrollStageMessage = "Coloca tu dedo nuevamente (muestra " + (samplesCollected + 1) + " de " + samplesNeeded + ")";
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -634,6 +681,8 @@ namespace BiometricBridge
                         continue;
                     }
                 }
+
+                lock (lockObj) { isEnrolling = false; }
 
                 // Verificar resultado del enrollment
                 if (enrollment.TemplateStatus == DPFP.Processing.Enrollment.Status.Ready)

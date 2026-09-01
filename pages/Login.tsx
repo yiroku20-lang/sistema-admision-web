@@ -2,7 +2,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, clearStaleAuthTokens } from '../lib/supabaseClient';
-import logoImg from '../logo_admision.png';
 
 interface Props {
   onLogin: (user: any) => void;
@@ -25,7 +24,30 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
       const cleanDni = dni.trim();
       const cleanPassword = password.trim();
 
-      // 1. Intentar autenticación inmediata vía API del Backend (Rápida, sin bloqueos de navegador/iframe)
+      // 0. Autenticación nativa directa en Electron (Sin bloqueos RLS y sin depender de puertos locales)
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.login) {
+        try {
+          const res = await (window as any).electronAPI.login({ dni: cleanDni, password: cleanPassword });
+          if (res && res.success && res.user) {
+            try {
+              localStorage.setItem('unsaac_auth_user', JSON.stringify(res.user));
+            } catch(e) {}
+
+            setIsLoading(false);
+            onLogin(res.user);
+            navigate('/');
+            return;
+          } else if (res && res.error) {
+            setError(res.error);
+            setIsLoading(false);
+            return;
+          }
+        } catch (ipcErr: any) {
+          console.warn('[Login] Electron IPC login exception:', ipcErr);
+        }
+      }
+
+      // 1. Intentar autenticación inmediata vía API del Backend (Web App)
       try {
         const response = await fetch('/api/auth/login', {
           method: 'POST',
@@ -40,11 +62,6 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
               localStorage.setItem('unsaac_auth_user', JSON.stringify(result.user));
             } catch(e) {}
 
-            // Sincronizar sesión en segundo plano sin bloquear la navegación
-            if (result.session) {
-              supabase.auth.setSession(result.session).catch(() => {});
-            }
-            
             setIsLoading(false);
             onLogin(result.user);
             navigate('/');
@@ -76,6 +93,9 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
           .maybeSingle();
 
         if (profile) {
+          try {
+            localStorage.setItem('unsaac_auth_user', JSON.stringify(profile));
+          } catch(e) {}
           onLogin(profile);
           navigate('/');
           return;
@@ -93,6 +113,9 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         const isValidPlain = dbUser.password === cleanPassword;
         const isBypass = ['admin123', '123456', '123', 'admin'].includes(cleanPassword);
         if (isValidPlain || isBypass) {
+          try {
+            localStorage.setItem('unsaac_auth_user', JSON.stringify(dbUser));
+          } catch(e) {}
           onLogin(dbUser);
           navigate('/');
           return;
@@ -116,7 +139,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         
         <div className="relative z-10 w-full max-w-md p-10 bg-white rounded-[40px] shadow-2xl animate-in zoom-in-95 duration-500">
             <div className="flex flex-col items-center mb-10">
-                <img src={logoImg} className="h-24 mb-6 object-contain" alt="Admisión UNSAAC" />
+                <img src="https://lh3.googleusercontent.com/d/1yN0_dziHYCbHPOnDb1Y7qYvHno-mUY7M" className="h-24 mb-6 object-contain" alt="Admisión UNSAAC" />
                 <h1 className="font-cinzel text-2xl font-black text-primary text-center">Gestión Admisión</h1>
                 <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mt-2">Consola de Seguridad Central</p>
             </div>

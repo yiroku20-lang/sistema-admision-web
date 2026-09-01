@@ -42,14 +42,6 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentFilter, setCurrentFilter] = useState('Todos');
-  const [searchInputValue, setSearchInputValue] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInputValue);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [searchInputValue]);
   const [isPendingReportOpen, setIsPendingReportOpen] = useState(false);
 
   useEffect(() => {
@@ -577,8 +569,8 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
               <input 
                   type="text" 
                   placeholder="Buscar por documento, expediente o asunto..." 
-                  value={searchInputValue}
-                  onChange={(e) => setSearchInputValue(e.target.value)}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full h-12 pl-12 pr-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-sm font-bold focus:bg-white focus:border-primary outline-none transition-all"
               />
           </div>

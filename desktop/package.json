@@ -1,7 +1,7 @@
 {
-  "name": "backup-app-admision-desktop",
-  "version": "1.0.2",
-  "description": "Carcasa Electron para Backup App Admision",
+  "name": "sistema-admision-desktop",
+  "version": "1.0.27",
+  "description": "Sistema de Admision UNSAAC - Version Oficial con Flujo de Pagos, Rechazos y Asistencia Mejorada",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
@@ -24,24 +24,29 @@
       "preload.js",
       "package.json",
       {
-        "from": "../backend/dist",
-        "to": "backend/dist"
+        "from": "../dist",
+        "to": "frontend/dist",
+        "filter": [
+          "**/*"
+        ]
       },
       {
-        "from": "../backend/package.json",
+        "from": "../../backend/dist",
+        "to": "backend/dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../backend/package.json",
         "to": "backend/package.json"
       },
       {
-        "from": "../backend/node_modules",
-        "to": "backend/node_modules"
-      },
-      {
-        "from": "../frontend/dist",
-        "to": "frontend/dist"
-      },
-      {
-        "from": "biometric",
-        "to": "biometric"
+        "from": "../../backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "extraResources": [
@@ -71,8 +76,7 @@
       {
         "provider": "github",
         "owner": "yiroku20-lang",
-        "repo": "yiroku20-lang-s-Org",
-        "releaseType": "release"
+        "repo": "sistema-admision-web"
       }
     ]
   }

@@ -14,20 +14,31 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
   const [tableMissing, setTableMissing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('Todos');
-  const [searchInputValue, setSearchInputValue] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInputValue);
-      setCurrentPage(0);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [searchInputValue]);
   const [currentPage, setCurrentPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
+
+  const toggleBlockExpand = (blockId: string) => {
+    setExpandedBlocks(prev => {
+      const next = new Set(prev);
+      if (next.has(blockId)) next.delete(blockId);
+      else next.add(blockId);
+      return next;
+    });
+  };
+
+  const expandAllBlocks = () => {
+    if (groupedBlocks) {
+      setExpandedBlocks(new Set(Object.keys(groupedBlocks)));
+    }
+  };
+
+  const collapseAllBlocks = () => {
+    setExpandedBlocks(new Set());
+  };
 
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -50,6 +61,13 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
   const [expedienteRefNumber, setExpedienteRefNumber] = useState('');
   const [expedienteDestination, setExpedienteDestination] = useState('');
   const [expedienteFile, setExpedienteFile] = useState<File | null>(null);
+
+  // New state for Rejecting Refunds
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [itemToReject, setItemToReject] = useState<PaymentRegistry | null>(null);
+  const [blockToRejectRefunds, setBlockToRejectRefunds] = useState<{ blockId: string; items: PaymentRegistry[] } | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [rejectionScope, setRejectionScope] = useState<'single' | 'all_refunds'>('single');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -75,6 +93,8 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
           query = query.eq('status', 'En Bloque');
       } else if (statusFilter === 'Finalizado') {
           query = query.eq('status', 'Finalizado');
+      } else if (statusFilter === 'Rechazados') {
+          query = query.eq('status', 'Rechazado');
       }
 
       if (searchQuery.trim()) query = query.or(`student_name.ilike.%${searchQuery.trim()}%,dni.eq.${searchQuery.trim()}`);
@@ -208,6 +228,112 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
               fetchExpedientesData(Object.keys(groupedBlocks));
           }
       } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
+
+  const openRejectSingleModal = (item: PaymentRegistry) => {
+      setItemToReject(item);
+      setBlockToRejectRefunds(null);
+      setRejectionScope('single');
+      setRejectionReasonInput('');
+      setIsRejectModalOpen(true);
+  };
+
+  const openRejectBlockRefundsModal = (blockId: string, items: PaymentRegistry[]) => {
+      const refundsOnly = items.filter(i => !i.type.toUpperCase().includes('TRANS'));
+      if (refundsOnly.length === 0) {
+          alert('Este bloque no contiene trámites de devolución para rechazar.');
+          return;
+      }
+      setItemToReject(null);
+      setBlockToRejectRefunds({ blockId, items: refundsOnly });
+      setRejectionScope('all_refunds');
+      setRejectionReasonInput('');
+      setIsRejectModalOpen(true);
+  };
+
+  const confirmRejection = async () => {
+      if (!rejectionReasonInput.trim()) {
+          alert('Por favor ingrese el motivo u oficio del rechazo.');
+          return;
+      }
+
+      setIsSubmitting(true);
+      try {
+          const nowISO = new Date().toISOString();
+          const targetItems = rejectionScope === 'single' && itemToReject
+              ? [itemToReject]
+              : (blockToRejectRefunds?.items || []);
+
+          if (targetItems.length === 0) return;
+
+          const idsToReject = targetItems.map(i => i.id);
+          const reasonText = rejectionReasonInput.trim();
+
+          // Actualizar registros:
+          // 1. Estado a 'Rechazado'
+          // 2. Liberar outgoing_doc_number para que ya no ocupen el bloque activo
+          // 3. Registrar metadata de rechazo en los campos dedicados (o fallback en reason)
+          for (const item of targetItems) {
+              const prevBlock = item.outgoing_doc_number || 'Bloque anterior';
+              const formattedObservation = `[RECHAZO DEVOLUCIÓN ${new Date().toLocaleDateString('es-PE')}]: ${reasonText} (Bloque: ${prevBlock})`;
+              
+              // Armamos el payload con campos de rechazo y trazabilidad
+              const payload: any = {
+                  status: 'Rechazado',
+                  outgoing_doc_number: null, // Se desvincula del bloque activo
+                  rejection_reason: reasonText,
+                  rejection_date: nowISO,
+                  rejected_by: user.name || 'Operador',
+                  previous_block_id: prevBlock,
+                  reason: item.reason ? `${item.reason} | ${formattedObservation}` : formattedObservation
+              };
+
+              const { error } = await supabase
+                  .from('padron_pagos')
+                  .update(payload)
+                  .eq('id', item.id);
+
+              if (error) {
+                  // Fallback si las nuevas columnas aún no se han creado en Supabase
+                  console.warn("Retrying with standard columns fallback:", error.message);
+                  await supabase
+                      .from('padron_pagos')
+                      .update({
+                          status: 'Rechazado',
+                          outgoing_doc_number: null,
+                          reason: item.reason ? `${item.reason} | ${formattedObservation}` : formattedObservation
+                      })
+                      .eq('id', item.id);
+              }
+          }
+
+          // Registrar en auditoría de seguimiento
+          try {
+              const auditDesc = rejectionScope === 'single' && itemToReject
+                  ? `Devolución rechazada para DNI ${itemToReject.dni} (${itemToReject.student_name}). Motivo: ${reasonText}. Bloque liberado: ${itemToReject.outgoing_doc_number || '-'}`
+                  : `Devoluciones rechazadas en bloque ${blockToRejectRefunds?.blockId} (${targetItems.length} alumnos). Motivo: ${reasonText}.`;
+
+              await supabase.from('tramite_seguimiento').insert([{
+                  action_type: 'Rechazo Devolución',
+                  description: auditDesc,
+                  user_name: user.name || 'Operador'
+              }]);
+          } catch (auditErr) {
+              console.warn("No se pudo registrar log de auditoría:", auditErr);
+          }
+
+          alert(`✅ Trámite(s) de devolución marcado(s) como RECHAZADO(S).\n\nLos postulantes han sido desbloqueados y ahora pueden ser atendidos con un nuevo expediente como TRANSFERENCIA.`);
+          
+          setIsRejectModalOpen(false);
+          setItemToReject(null);
+          setBlockToRejectRefunds(null);
+          setRejectionReasonInput('');
+          fetchData();
+      } catch (err: any) {
+          alert('Error al rechazar trámite: ' + err.message);
+      } finally {
+          setIsSubmitting(false);
+      }
   };
 
   const openTransferControl = () => {
@@ -595,6 +721,39 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
       return blocks;
   }, [data, statusFilter]);
 
+  const sortedBlockEntries = useMemo(() => {
+      if (!groupedBlocks) return [];
+      const entries = Object.entries(groupedBlocks) as [string, PaymentRegistry[]][];
+
+      return entries.sort(([blockA, itemsA], [blockB, itemsB]) => {
+          if (blockA === 'Sin Bloque Asignado') return 1;
+          if (blockB === 'Sin Bloque Asignado') return -1;
+
+          const expA = expedientesData[blockA];
+          const expB = expedientesData[blockB];
+
+          const timeA = expA?.created_at ? new Date(expA.created_at).getTime() : 0;
+          const timeB = expB?.created_at ? new Date(expB.created_at).getTime() : 0;
+
+          // Criterio principal: Timestamp de creación del oficio/expediente de salida (más reciente primero)
+          if (timeA && timeB && timeA !== timeB) {
+              return timeB - timeA;
+          }
+          if (timeA && !timeB) return -1;
+          if (!timeA && timeB) return 1;
+
+          // Criterio secundario: Timestamp más reciente de los alumnos registrados en el bloque
+          const itemTimeA = Math.max(...itemsA.map(i => i.created_at ? new Date(i.created_at).getTime() : 0), 0);
+          const itemTimeB = Math.max(...itemsB.map(i => i.created_at ? new Date(i.created_at).getTime() : 0), 0);
+          if (itemTimeA && itemTimeB && itemTimeA !== itemTimeB) {
+              return itemTimeB - itemTimeA;
+          }
+
+          // Criterio de respaldo: Orden alfanumérico natural descendente (ej: REP. 10 - 2026 antes de REP. 2 - 2026)
+          return blockB.localeCompare(blockA, undefined, { numeric: true, sensitivity: 'base' });
+      });
+  }, [groupedBlocks, expedientesData]);
+
   useEffect(() => {
       const blockIds = new Set<string>();
       if (groupedBlocks) {
@@ -656,11 +815,11 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
       <div className="flex flex-col lg:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0">
          <div className="w-full lg:w-96 relative">
             <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400">search</span>
-            <input value={searchInputValue} onChange={e => setSearchInputValue(e.target.value)} className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:bg-white outline-none transition-all" placeholder="Buscar por DNI o Nombre..."/>
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:bg-white outline-none transition-all" placeholder="Buscar por DNI o Nombre..."/>
          </div>
          <div className="flex gap-2 overflow-x-auto hide-scrollbar">
-            {['Todos', 'Aptos (Recibido)', 'En Bloque', 'Finalizado'].map(f => (
-                <button key={f} onClick={() => { setStatusFilter(f); setCurrentPage(0); }} className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase border transition-all whitespace-nowrap ${statusFilter === f ? 'bg-primary text-white border-primary shadow-md' : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200'}`}>
+            {['Todos', 'Aptos (Recibido)', 'En Bloque', 'Finalizado', 'Rechazados'].map(f => (
+                <button key={f} onClick={() => { setStatusFilter(f); setCurrentPage(0); }} className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase border transition-all whitespace-nowrap ${statusFilter === f ? (f === 'Rechazados' ? 'bg-red-600 text-white border-red-600 shadow-md' : 'bg-primary text-white border-primary shadow-md') : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-200'}`}>
                     {f}
                 </button>
             ))}
@@ -669,99 +828,271 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
 
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm flex-1 flex flex-col">
         {groupedBlocks ? (
-            <div className="flex-1 overflow-auto p-4 md:p-6 flex flex-col gap-6 bg-slate-50/50">
-                {(Object.entries(groupedBlocks) as [string, PaymentRegistry[]][]).map(([blockId, items]) => (
-                    <div key={blockId} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden shrink-0 flex flex-col max-h-[600px]">
-                        <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50 shrink-0">
-                            <div>
-                                <h3 className="font-black text-slate-900 text-lg flex items-center gap-2">
-                                    <span className="material-symbols-outlined text-indigo-500">folder_zip</span>
-                                    {blockId}
-                                </h3>
-                                {expedientesData[blockId]?.ref_number && (
-                                    <p className="text-sm font-black text-emerald-600 mt-1 flex items-center gap-1">
-                                        <span className="material-symbols-outlined text-[16px]">inventory_2</span>
-                                        EXP: {expedientesData[blockId].ref_number}
-                                        {expedientesData[blockId]?.destination && ` ➔ ${expedientesData[blockId].destination}`}
-                                    </p>
-                                )}
-                                <p className="text-xs font-bold text-slate-500 mt-1">{items.length} expedientes en este bloque</p>
-                            </div>
-                            <div className="flex gap-3 w-full md:w-auto flex-wrap">
-                                {expedientesData[blockId]?.pdf_url && (
-                                    <a 
-                                        href={expedientesData[blockId].pdf_url} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        className="w-full md:w-auto bg-slate-800 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-md shadow-slate-800/20"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">visibility</span>
-                                        Ver Expediente PDF
-                                    </a>
-                                )}
-                                {statusFilter === 'En Bloque' && !expedientesData[blockId]?.ref_number && blockId !== 'Sin Bloque Asignado' && (
-                                    <button 
-                                        onClick={() => openExpedienteModal(blockId)} 
-                                        className="w-full md:w-auto bg-amber-100 text-amber-700 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-200 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">post_add</span>
-                                        Completar Expediente
-                                    </button>
-                                )}
-                                <button
-                                    onClick={() => { setBlockToDownload({ id: blockId, items }); setIsDownloadModalOpen(true); }}
-                                    className="w-full md:w-auto bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95"
-                                >
-                                    <span className="material-symbols-outlined text-[18px]">download</span>
-                                    Descargar Reporte
-                                </button>
-                                {statusFilter === 'En Bloque' && (user.role === 'Administrador' || user.role === 'Director') && (
-                                    <button 
-                                        onClick={() => { setSelectedBlock(blockId); setIsResolutionModalOpen(true); }} 
-                                        className="w-full md:w-auto bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md flex items-center justify-center gap-2 active:scale-95"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">upload_file</span>
-                                        Subir Resolución
-                                    </button>
-                                )}
-                                {statusFilter === 'Finalizado' && items[0]?.resolution_pdf && (
-                                    <a 
-                                        href={items[0].resolution_pdf} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        className="w-full md:w-auto bg-emerald-100 text-emerald-700 px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-200 transition-all flex items-center justify-center gap-2 active:scale-95"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">download</span>
-                                        Ver Resolución
-                                    </a>
-                                )}
-                            </div>
+            <div className="flex-1 overflow-auto p-4 md:p-6 flex flex-col gap-4 bg-slate-50/50">
+                {Object.keys(groupedBlocks).length > 0 && (
+                    <div className="flex items-center justify-between bg-white px-5 py-3 rounded-xl border border-slate-200 shadow-sm shrink-0">
+                        <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-slate-500 text-[20px]">folder_copy</span>
+                            <span className="text-xs font-black uppercase text-slate-700 tracking-wider">
+                                {Object.keys(groupedBlocks).length} {Object.keys(groupedBlocks).length === 1 ? 'Bloque / Oficio registrado' : 'Bloques / Oficios registrados'}
+                            </span>
                         </div>
-                        <div className="divide-y divide-slate-100 overflow-y-auto">
-                            {items.map(item => (
-                                <div key={item.id} className="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-slate-50 transition-colors">
-                                    <div className="flex items-center gap-4">
-                                        <div className="size-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-black text-sm shrink-0">
-                                            {item.student_name.charAt(0)}
-                                        </div>
-                                        <div>
-                                            <p className="font-bold text-slate-900 text-sm uppercase">{item.student_name}</p>
-                                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{item.dni} • {item.concurso}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto gap-2">
-                                        <p className="font-black text-slate-800 text-sm">S/ {item.amount}</p>
-                                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${item.type.includes('TRANS') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                                            {item.type}
-                                        </span>
-                                    </div>
-                                </div>
-                            ))}
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={expandAllBlocks}
+                                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
+                            >
+                                <span className="material-symbols-outlined text-[16px]">unfold_more</span>
+                                Expandir todos
+                            </button>
+                            <button
+                                onClick={collapseAllBlocks}
+                                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1"
+                            >
+                                <span className="material-symbols-outlined text-[16px]">unfold_less</span>
+                                Colapsar todos
+                            </button>
                         </div>
                     </div>
-                ))}
+                )}
+
+                {sortedBlockEntries.map(([blockId, items]) => {
+                    const isExpanded = expandedBlocks.has(blockId);
+                    const totalMonto = items.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+                    const transfersCount = items.filter(i => i.type.toUpperCase().includes('TRANS')).length;
+                    const refundsCount = items.length - transfersCount;
+
+                    return (
+                        <div key={blockId} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden shrink-0 flex flex-col transition-all">
+                            {/* Header del Bloque (Inline Accordion) */}
+                            <div className="p-4 md:p-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-slate-50 hover:bg-slate-100/70 transition-colors">
+                                <div 
+                                    onClick={() => toggleBlockExpand(blockId)}
+                                    className="flex items-center gap-3 cursor-pointer select-none flex-1"
+                                >
+                                    <button 
+                                        type="button"
+                                        className={`size-8 rounded-lg flex items-center justify-center transition-all ${isExpanded ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-500 hover:bg-slate-200'}`}
+                                    >
+                                        <span className={`material-symbols-outlined text-[20px] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
+                                            chevron_right
+                                        </span>
+                                    </button>
+                                    <div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <h3 className="font-black text-slate-900 text-base md:text-lg flex items-center gap-2">
+                                                <span className="material-symbols-outlined text-indigo-600 text-[20px]">folder_zip</span>
+                                                {blockId}
+                                            </h3>
+                                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                                {items.length} {items.length === 1 ? 'persona' : 'personas'}
+                                            </span>
+                                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                S/ {totalMonto.toFixed(2)}
+                                            </span>
+                                            {transfersCount > 0 && (
+                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-purple-50 text-purple-700 border border-purple-200">
+                                                    {transfersCount} Transferencias
+                                                </span>
+                                            )}
+                                            {refundsCount > 0 && (
+                                                <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-50 text-blue-700 border border-blue-200">
+                                                    {refundsCount} Devoluciones
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {expedientesData[blockId]?.ref_number && (
+                                            <p className="text-xs font-black text-emerald-600 mt-1 flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-[15px]">inventory_2</span>
+                                                EXP: {expedientesData[blockId].ref_number}
+                                                {expedientesData[blockId]?.destination && ` ➔ ${expedientesData[blockId].destination}`}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 w-full lg:w-auto flex-wrap justify-end items-center" onClick={e => e.stopPropagation()}>
+                                    {expedientesData[blockId]?.pdf_url && (
+                                        <a 
+                                            href={expedientesData[blockId].pdf_url} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer" 
+                                            className="bg-slate-800 text-white px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-slate-700 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">visibility</span>
+                                            Expediente PDF
+                                        </a>
+                                    )}
+                                    {statusFilter === 'En Bloque' && !expedientesData[blockId]?.ref_number && blockId !== 'Sin Bloque Asignado' && (
+                                        <button 
+                                            onClick={() => openExpedienteModal(blockId)} 
+                                            className="bg-amber-100 text-amber-800 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-amber-200 transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">post_add</span>
+                                            Completar Exp.
+                                        </button>
+                                    )}
+                                    {statusFilter === 'En Bloque' && items.some(i => !i.type.toUpperCase().includes('TRANS')) && (user.role === 'Administrador' || user.role === 'Operador' || user.role === 'Director') && (
+                                        <button
+                                            onClick={() => openRejectBlockRefundsModal(blockId, items)}
+                                            className="bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
+                                            title="Rechazar devoluciones de este bloque para liberarlas a transferencias"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">cancel</span>
+                                            Rechazar Devoluciones
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => { setBlockToDownload({ id: blockId, items }); setIsDownloadModalOpen(true); }}
+                                        className="bg-slate-100 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-slate-200 transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">download</span>
+                                        Reporte
+                                    </button>
+                                    {statusFilter === 'En Bloque' && (user.role === 'Administrador' || user.role === 'Director') && (
+                                        <button 
+                                            onClick={() => { setSelectedBlock(blockId); setIsResolutionModalOpen(true); }} 
+                                            className="bg-indigo-600 text-white px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-indigo-700 transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">upload_file</span>
+                                            Subir Res.
+                                        </button>
+                                    )}
+                                    {statusFilter === 'Finalizado' && items[0]?.resolution_pdf && (
+                                        <a 
+                                            href={items[0].resolution_pdf} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer" 
+                                            className="bg-emerald-100 text-emerald-700 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-emerald-200 transition-all flex items-center gap-1.5 active:scale-95"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">gavel</span>
+                                            Resolución
+                                        </a>
+                                    )}
+                                    <button
+                                        onClick={() => toggleBlockExpand(blockId)}
+                                        className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                                            isExpanded 
+                                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' 
+                                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">
+                                            {isExpanded ? 'expand_less' : 'list_alt'}
+                                        </span>
+                                        {isExpanded ? 'Ocultar Lista' : `Ver Lista (${items.length})`}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Detalle Inline Desplegable */}
+                            {isExpanded && (
+                                <div className="border-t border-slate-200 bg-white overflow-x-auto">
+                                    <table className="w-full text-left border-collapse min-w-[900px]">
+                                        <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                            <tr>
+                                                <th className="px-4 py-3 w-12 text-center">#</th>
+                                                <th className="px-4 py-3">Estudiante / DNI</th>
+                                                <th className="px-4 py-3">Concurso</th>
+                                                <th className="px-4 py-3 text-center">Tipo Trámite</th>
+                                                <th className="px-4 py-3">Destino / Motivo</th>
+                                                <th className="px-4 py-3">Exp. Petición</th>
+                                                <th className="px-4 py-3 text-right">Monto</th>
+                                                <th className="px-4 py-3">Contacto / Apoderado</th>
+                                                {statusFilter === 'En Bloque' && (
+                                                    <th className="px-4 py-3 text-center">Acción</th>
+                                                )}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 text-xs">
+                                            {items.map((item, idx) => (
+                                                <tr key={item.id} className="hover:bg-indigo-50/30 transition-colors">
+                                                    <td className="px-4 py-3 text-center font-bold text-slate-400">
+                                                        {idx + 1}
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="flex items-center gap-2.5">
+                                                            <div className="size-7 rounded-full bg-slate-100 text-slate-600 font-bold text-xs flex items-center justify-center shrink-0">
+                                                                {item.student_name.charAt(0)}
+                                                            </div>
+                                                            <div>
+                                                                <p className="font-bold text-slate-900 uppercase leading-tight">{item.student_name}</p>
+                                                                <p className="text-[10px] text-slate-500 font-mono font-bold">DNI: {item.dni}</p>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-4 py-3 font-semibold text-slate-600 text-[11px]">
+                                                        {item.concurso}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${
+                                                            item.type.includes('TRANS') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'
+                                                        }`}>
+                                                            {item.type}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-[11px] text-slate-600 max-w-xs truncate">
+                                                        {item.type.includes('TRANS') ? (
+                                                            <span className="font-bold text-purple-700 flex items-center gap-1">
+                                                                <span className="material-symbols-outlined text-[13px]">arrow_right_alt</span>
+                                                                {item.target_exam || 'No especificado'}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-600 italic">
+                                                                {item.reason || '-'}
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-4 py-3 font-mono text-[11px] font-bold text-slate-700">
+                                                        {item.incoming_file_number || '-'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-mono font-black text-slate-900">
+                                                        S/ {item.amount}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-[10px] text-slate-500">
+                                                        {item.phone && <p className="font-semibold text-slate-700">Telf: {item.phone}</p>}
+                                                        {item.parent_name && <p className="truncate max-w-[150px]">Apod: {item.parent_name}</p>}
+                                                        {!item.phone && !item.parent_name && '-'}
+                                                    </td>
+                                                    {statusFilter === 'En Bloque' && (
+                                                        <td className="px-4 py-3 text-center">
+                                                            {!item.type.toUpperCase().includes('TRANS') ? (
+                                                                <button
+                                                                    onClick={() => openRejectSingleModal(item)}
+                                                                    className="bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 border border-red-200 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all inline-flex items-center gap-1"
+                                                                    title="Rechazar devolución y desbloquear al estudiante"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[14px]">cancel</span>
+                                                                    Rechazar
+                                                                </button>
+                                                            ) : (
+                                                                <span className="text-slate-300 text-[10px] font-bold">-</span>
+                                                            )}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                        <tfoot className="bg-slate-50 border-t border-slate-200 text-xs font-bold">
+                                            <tr>
+                                                <td colSpan={6} className="px-4 py-2.5 text-right text-slate-600 font-bold uppercase text-[10px] tracking-wider">
+                                                    Total del Bloque ({items.length} expedientes):
+                                                </td>
+                                                <td className="px-4 py-2.5 text-right font-mono font-black text-indigo-700 text-sm">
+                                                    S/ {totalMonto.toFixed(2)}
+                                                </td>
+                                                <td colSpan={statusFilter === 'En Bloque' ? 2 : 1}></td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
                 {Object.keys(groupedBlocks).length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
+                    <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-4">
                         <span className="material-symbols-outlined text-6xl opacity-20">folder_off</span>
                         <p className="font-bold uppercase tracking-widest text-sm">No hay bloques en este estado</p>
                     </div>
@@ -824,6 +1155,7 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                                         item.status === 'Apto' ? 'bg-green-50 text-green-700 border-green-200' :
                                         item.status === 'En Bloque' ? 'bg-blue-50 text-blue-700 border-blue-200' :
                                         item.status === 'Finalizado' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                                        item.status === 'Rechazado' ? 'bg-red-50 text-red-700 border-red-200' :
                                         'bg-slate-50 text-slate-500 border-slate-200'
                                     }`}>
                                         <span className={`size-1.5 rounded-full ${!item.status ? 'bg-slate-400' : 'bg-current opacity-60'}`}></span>
@@ -831,7 +1163,23 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 text-right pr-10">
-                                    <div className="flex justify-end gap-2">
+                                    <div className="flex justify-end items-center gap-2">
+                                        {item.status === 'En Bloque' && !item.type.toUpperCase().includes('TRANS') && (
+                                            <button
+                                                onClick={() => openRejectSingleModal(item)}
+                                                className="bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 border border-red-200 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-1"
+                                                title="Rechazar Devolución"
+                                            >
+                                                <span className="material-symbols-outlined text-[14px]">cancel</span>
+                                                Rechazar
+                                            </button>
+                                        )}
+                                        {item.status === 'Rechazado' && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
+                                                <span className="material-symbols-outlined text-[14px]">lock_open</span>
+                                                Desbloqueado p/ Transferencia
+                                            </span>
+                                        )}
                                         {item.outgoing_doc_number && expedientesData[item.outgoing_doc_number]?.pdf_url && (
                                             <a 
                                                 href={expedientesData[item.outgoing_doc_number].pdf_url}
@@ -883,6 +1231,24 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                                                 <p className="text-[11px] text-slate-600 leading-relaxed italic border-l-2 border-slate-200 pl-3">"${item.reason || 'Sin observación adicional.'}"</p>
                                             </div>
                                         </div>
+                                        {item.status === 'Rechazado' && (
+                                            <div className="mt-4 p-4 rounded-xl bg-red-50 border border-red-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="size-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                                                        <span className="material-symbols-outlined text-[18px]">history</span>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-black text-red-800 uppercase tracking-wider">Historial de Rechazo de Devolución</p>
+                                                        <p className="text-[11px] text-red-700 mt-0.5"><span className="font-bold">Motivo:</span> {item.rejection_reason || 'No especificado'}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-[10px] font-bold text-red-600 text-right shrink-0">
+                                                    <p>Fecha: {item.rejection_date ? new Date(item.rejection_date).toLocaleDateString('es-PE') : '-'}</p>
+                                                    {item.rejected_by && <p>Por: {item.rejected_by}</p>}
+                                                    {item.previous_block_id && <p>Bloque Origen: {item.previous_block_id}</p>}
+                                                </div>
+                                            </div>
+                                        )}
                                     </td>
                                 </tr>
                             )}
@@ -1290,6 +1656,104 @@ export const TransferRefunds: React.FC<{ user: User }> = ({ user }) => {
                       >
                           <span className="material-symbols-outlined text-[20px]">file_download</span>
                           PROCEDER E IMPRIMIR
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODAL RECHAZAR DEVOLUCIÓN (DESBLOQUEO PARA TRANSFERENCIA) */}
+      {isRejectModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-8 animate-in zoom-in-95 border border-slate-100 flex flex-col gap-5">
+                  <div className="flex items-center gap-4 border-b border-slate-100 pb-5">
+                      <div className="size-14 rounded-2xl bg-red-50 text-red-600 border border-red-200 flex items-center justify-center shrink-0 shadow-sm">
+                          <span className="material-symbols-outlined text-3xl">cancel</span>
+                      </div>
+                      <div>
+                          <h3 className="font-black text-slate-900 uppercase text-lg tracking-tight">
+                              {rejectionScope === 'single' ? 'Rechazar Trámite de Devolución' : 'Rechazar Devoluciones del Bloque'}
+                          </h3>
+                          <p className="text-xs text-slate-500 font-medium mt-0.5">
+                              {rejectionScope === 'single' 
+                                  ? 'Desvincula al postulante del bloque para que pueda ingresar como transferencia.' 
+                                  : `Se desvincularán ${blockToRejectRefunds?.items.length || 0} devoluciones de este oficio.`}
+                          </p>
+                      </div>
+                  </div>
+
+                  {/* Resumen del/los afectado(s) */}
+                  {rejectionScope === 'single' && itemToReject && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col gap-2">
+                          <div className="flex justify-between items-start">
+                              <div>
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Postulante</span>
+                                  <p className="font-black text-slate-900 uppercase text-sm">{itemToReject.student_name}</p>
+                              </div>
+                              <span className="font-mono text-xs font-bold bg-white border border-slate-200 px-2 py-0.5 rounded-lg text-slate-700">DNI: {itemToReject.dni}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200/60">
+                              <div>
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase">Monto:</span>
+                                  <p className="font-black text-indigo-700">S/ {itemToReject.amount}</p>
+                              </div>
+                              <div>
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase">Bloque actual:</span>
+                                  <p className="font-bold text-slate-700 truncate">{itemToReject.outgoing_doc_number || '-'}</p>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
+                  {rejectionScope === 'block' && blockToRejectRefunds && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                          <div className="flex items-center gap-2 text-amber-800 font-bold text-xs mb-2">
+                              <span className="material-symbols-outlined text-[18px]">warning</span>
+                              <span>Bloque: {blockToRejectRefunds.blockId}</span>
+                          </div>
+                          <p className="text-xs text-amber-900 font-medium">
+                              Se liberarán <b className="font-black text-amber-950">{blockToRejectRefunds.items.length}</b> solicitudes de devolución asociadas a este oficio. Los registros quedarán en estado <b>Rechazado</b> con su historial archivado.
+                          </p>
+                      </div>
+                  )}
+
+                  {/* Input de motivo */}
+                  <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                          Motivo del Rechazo / Justificación <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                          value={rejectionReasonInput}
+                          onChange={e => setRejectionReasonInput(e.target.value)}
+                          placeholder="Ej: Rechazado por DGA - Postulante opta por cambio a Transferencia de Examen..."
+                          className="w-full h-24 p-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-xs font-medium focus:bg-white focus:border-red-500 outline-none transition-all resize-none"
+                          autoFocus
+                      />
+                      <p className="text-[10px] text-slate-400 italic">
+                          ℹ️ Al confirmar, el postulante quedará desbloqueado y disponible para registrar su nuevo trámite de transferencia en la mesa de partes.
+                      </p>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                      <button
+                          onClick={() => {
+                              setIsRejectModalOpen(false);
+                              setItemToReject(null);
+                              setBlockToRejectRefunds(null);
+                              setRejectionReasonInput('');
+                          }}
+                          className="flex-1 h-12 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all active:scale-95"
+                          disabled={isSubmitting}
+                      >
+                          Cancelar
+                      </button>
+                      <button
+                          onClick={confirmRejection}
+                          disabled={!rejectionReasonInput.trim() || isSubmitting}
+                          className="flex-[2] h-12 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-red-600/30 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                          <span className="material-symbols-outlined text-[18px]">lock_open</span>
+                          {isSubmitting ? 'Procesando...' : 'Confirmar Rechazo y Desbloquear'}
                       </button>
                   </div>
               </div>

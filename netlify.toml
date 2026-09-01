@@ -6,6 +6,11 @@
   directory = "netlify/functions"
 
 [[redirects]]
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
   from = "/api/cron/*"
   to = "/.netlify/functions/cron-reminders"
   status = 200
@@ -28,6 +33,11 @@
 [[redirects]]
   from = "/api/webhook/prestamos"
   to = "/.netlify/functions/webhook-prestamos"
+  status = 200
+
+[[redirects]]
+  from = "/api/webhook/welcome-email"
+  to = "/.netlify/functions/webhook-welcome-email"
   status = 200
 
 [[redirects]]

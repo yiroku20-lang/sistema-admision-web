@@ -10,14 +10,6 @@ export const Resignations: React.FC<{ user: User }> = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentFilter, setCurrentFilter] = useState('Pendiente Resolución');
-  const [searchInputValue, setSearchInputValue] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInputValue);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [searchInputValue]);
   
   // New filters for Finalizados
   const [semesterFilter, setSemesterFilter] = useState('Todos');
@@ -352,7 +344,7 @@ export const Resignations: React.FC<{ user: User }> = ({ user }) => {
         <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
           <div className="w-full lg:w-96 relative">
             <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400">search</span>
-            <input value={searchInputValue} onChange={e => setSearchInputValue(e.target.value)} className="w-full h-10 pl-10 pr-4 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:bg-white outline-none" placeholder="Buscar estudiante..." />
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full h-10 pl-10 pr-4 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:bg-white outline-none" placeholder="Buscar estudiante..." />
           </div>
           <div className="flex gap-2">
               {['Todos', 'Pendiente Resolución', 'Finalizado'].map(f => (

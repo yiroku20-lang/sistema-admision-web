@@ -202,6 +202,23 @@ router.delete("/:id", async (req: Request, res: Response) => {
   }
 });
 
+function isExactCodeMatch(filename: string, queryCode: string): boolean {
+  if (!filename || !queryCode) return false;
+  const baseName = path.parse(filename).name;
+  const tokens = baseName.split(/[^a-zA-Z0-9]+/);
+  const q = String(queryCode).trim().toLowerCase();
+  const qNoZero = q.replace(/^0+/, '');
+  
+  for (const token of tokens) {
+    const t = token.toLowerCase();
+    if (t === q) return true;
+    if (qNoZero && t.replace(/^0+/, '') === qNoZero && qNoZero.length >= 5) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Buscar documentos cargados por DNI en el disco H:
  */
@@ -226,7 +243,7 @@ function searchDniInBaseDir(baseDir: string, dni: string): Array<any> {
         
         // Nivel 3: Archivos
         const files = fs.readdirSync(concursoPath, { withFileTypes: true })
-          .filter(f => f.isFile() && f.name.includes(dni));
+          .filter(f => f.isFile() && isExactCodeMatch(f.name, dni));
           
         for (const file of files) {
           const fullPath = path.join(concursoPath, file.name);

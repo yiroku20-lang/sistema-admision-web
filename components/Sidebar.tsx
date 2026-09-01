@@ -2,7 +2,6 @@
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, User } from '../types';
-import logoImg from '../logo_admision.png';
 import { UpdateStatusWidget } from './UpdateStatusWidget';
 
 interface SidebarProps {
@@ -81,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, onLogout, isOpen, onClos
             <div className="flex gap-4 items-center justify-between">
               <div className="flex gap-4 items-center">
                 <div className="bg-primary/5 p-3 rounded-2xl border border-primary/10">
-                    <img src={logoImg} alt="Logo Admisión" className="size-10 object-contain"/>
+                    <img src="https://lh3.googleusercontent.com/d/1yN0_dziHYCbHPOnDb1Y7qYvHno-mUY7M" alt="Logo Admisión" className="size-10 object-contain"/>
                 </div>
                 <div className="flex flex-col">
                   <h1 className="text-slate-900 text-sm font-black uppercase tracking-tighter leading-tight">Admisión UNSAAC</h1>

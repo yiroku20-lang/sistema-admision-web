@@ -20,7 +20,7 @@ async function startServer() {
   // --- LOCAL PROXY FOR FILES (DEV ONLY) ---
   app.use("/api/files", async (req, res) => {
     try {
-      const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
+      const baseUrl = process.env.VITE_API_URL || "https://june-entertainment-thanks-include.trycloudflare.com";
       const targetUrl = `${baseUrl}/api/files${req.url}`;
       
       const fetchReq = await import('node-fetch').then(m => m.default);
@@ -617,32 +617,88 @@ async function startServer() {
     }
   });
 
-  // --- Proxy para archivos locales en desarrollo (stream-document) ---
-  app.get("/api/files/stream-document", async (req, res) => {
+  // --- 5b. GET USERS ENDPOINT ---
+  app.get("/api/users", async (req, res) => {
     try {
-      const pathParam = req.query.path as string;
-      if (!pathParam) {
-        return res.status(400).json({ error: "Falta el parámetro path" });
-      }
-      
-      const baseUrl = process.env.VITE_API_URL || "http://127.0.0.1:5000";
-      const targetUrl = `${baseUrl.replace(/\/$/, "")}/api/files/stream-document?path=${encodeURIComponent(pathParam)}`;
-      
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        return res.status(response.status).json({ error: "Error al obtener archivo del servidor local" });
-      }
-      
-      res.setHeader("Content-Type", response.headers.get("content-type") || "application/pdf");
-      res.setHeader("Content-Disposition", "inline");
-      
-      const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('id, dni, name, role, permissions, created_at, password')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      res.json(data || []);
     } catch (error: any) {
-      console.error("Proxy stream error:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: error.message || "Error al transmitir el archivo a través del proxy" });
+      console.error("Fetch Users Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- 5c. UPDATE USER PROFILE ENDPOINT ---
+  app.post("/api/update-user", async (req, res) => {
+    try {
+      const { id, dni, name, role, permissions } = req.body;
+      if (!id || !dni || !name || !role) {
+        return res.status(400).json({ error: "Faltan datos obligatorios." });
       }
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { error: dbError } = await supabase
+        .from('usuarios')
+        .update({
+          dni: String(dni).trim(),
+          name: String(name).trim(),
+          role: role,
+          permissions: role === 'Operador' ? permissions : null
+        })
+        .eq('id', id);
+
+      if (dbError) {
+        return res.status(400).json({ error: "Error al actualizar usuario: " + dbError.message });
+      }
+
+      res.status(200).json({ success: true, message: "Usuario actualizado exitosamente." });
+    } catch (error: any) {
+      console.error("Update User Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- 5d. DELETE USER ENDPOINT ---
+  app.post("/api/delete-user", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ error: "ID de usuario requerido." });
+      }
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co"; 
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // 1. Delete from public.usuarios
+      const { error: dbError } = await supabase.from('usuarios').delete().eq('id', id);
+      if (dbError) {
+        return res.status(400).json({ error: "Error al eliminar usuario: " + dbError.message });
+      }
+
+      // 2. Try delete from auth.users
+      try {
+        await supabase.auth.admin.deleteUser(id);
+      } catch (authErr) {
+        console.warn("Auth user deletion warning:", authErr);
+      }
+
+      res.status(200).json({ success: true, message: "Usuario eliminado exitosamente." });
+    } catch (error: any) {
+      console.error("Delete User Error:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 

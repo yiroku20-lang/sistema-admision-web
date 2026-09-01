@@ -3,9 +3,19 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { User } from '../types';
 import { DataImport } from '../components/DataImport';
+import { DEFAULT_OFFICIAL_TEMPLATES } from '../lib/defaultTemplates';
+import {
+  getAllUsers,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
+  updateAdminUserPassword,
+  AdminUserItem,
+} from '../lib/usersApi';
 
 export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'success'|'error'|'warning') => void }> = ({ user, notify }) => {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AdminUserItem[]>([]);
+  const [userSearch, setUserSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -68,10 +78,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     }
     setIsChangingPassword(true);
     try {
-      const { error: authError } = await supabase.auth.updateUser({
-        password: newPassword
-      });
-      if (authError) throw authError;
+      const res = await updateAdminUserPassword(user.id, newPassword.trim());
+      if (!res.success) {
+        throw new Error(res.error || 'Error al actualizar contraseña.');
+      }
 
       notify?.('Contraseña actualizada exitosamente.', 'success');
       setNewPassword('');
@@ -86,14 +96,11 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .order('name', { ascending: true });
-      if (error) throw error;
+      const data = await getAllUsers();
       setUsers(data || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching users:', err);
+      notify?.(`Error al cargar usuarios: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -108,66 +115,38 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
     setIsSubmitting(true);
     setDbError(null);
     try {
-      const userData: any = {
-        dni: dni.trim(),
-        name: name.trim(),
-        role: role,
-        permissions: role === 'Operador' ? permissions : null // Only save permissions for Operador
-      };
-
-      if (password) {
-        userData.password = password.trim();
-      }
-
       if (editingId) {
         // Update user profile
-        const { error: profileError } = await supabase
-          .from('usuarios')
-          .update(userData)
-          .eq('id', editingId);
-        if (profileError) throw profileError;
-        
-        // If password was provided, update it via our secure API
-        if (password) {
-           try {
-             const response = await fetch('/api/update-user-password', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({
-                     user_id: editingId,
-                     password: password.trim()
-                 })
-             });
-             const result = await response.json();
-             if (!response.ok) {
-                 throw new Error(result.error || "Error al actualizar contraseña.");
-             }
-           } catch(err: any) {
-               throw err;
-           }
+        const updateRes = await updateAdminUser(editingId, {
+          dni: dni.trim(),
+          name: name.trim(),
+          role: role,
+          permissions: role === 'Operador' ? permissions : null
+        });
+
+        if (!updateRes.success) {
+          throw new Error(updateRes.error || 'Error al actualizar usuario.');
         }
 
-      } else {
-        // Create new user using the secure server API
-        try {
-          const response = await fetch('/api/create-user', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                  dni: dni.trim(),
-                  password: password.trim(),
-                  name: name.trim(),
-                  role,
-                  permissions: role === 'Operador' ? permissions : null
-              })
-          });
-          
-          const result = await response.json();
-          if (!response.ok) {
-              throw new Error(result.error || "Error al crear usuario.");
+        // If password was provided, update it via our secure API
+        if (password) {
+          const pwRes = await updateAdminUserPassword(editingId, password.trim());
+          if (!pwRes.success) {
+            throw new Error(pwRes.error || 'Error al actualizar contraseña.');
           }
-        } catch (err: any) {
-            throw err;
+        }
+      } else {
+        // Create new user using secure API
+        const createRes = await createAdminUser({
+          dni: dni.trim(),
+          password: password.trim(),
+          name: name.trim(),
+          role,
+          permissions: role === 'Operador' ? permissions : null
+        });
+
+        if (!createRes.success) {
+          throw new Error(createRes.error || 'Error al crear usuario.');
         }
       }
 
@@ -177,10 +156,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
       notify?.('Usuario guardado exitosamente.', 'success');
     } catch (err: any) {
       if (err.message?.includes('permissions') || err.code === 'PGRST204') {
-          setDbError('La columna "permissions" no existe en la tabla "usuarios". Por favor, actualiza la base de datos usando el script SQL en la pestaña "Base de Datos".');
-          notify?.('Error de base de datos. Revisa el mensaje arriba.', 'error');
+        setDbError('La columna "permissions" no existe en la tabla "usuarios". Por favor, actualiza la base de datos usando el script SQL en la pestaña "Base de Datos".');
+        notify?.('Error de base de datos. Revisa el mensaje arriba.', 'error');
       } else {
-          notify?.(`Error al guardar usuario: ${err.message}`, 'error');
+        notify?.(`Error al guardar usuario: ${err.message}`, 'error');
       }
     } finally {
       setIsSubmitting(false);
@@ -222,162 +201,14 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
         throw new Error("La tabla 'templates' no existe. Por favor, ejecute primero el script SQL en el panel de Supabase para crear la tabla.");
       }
 
-      const baseTemplates = [
-        {
-          name: 'CONSTANCIA DE INGRESO',
-          description: 'Plantilla oficial con barra lateral roja y marca de agua.',
-          category: 'Certificados',
-          thumbnail: 'https://placehold.co/400x500/7b1523/ffffff?text=CONSTANCIA',
-          content: `
-<div style="width: 100%; height: 100%; border: 1px solid #ccc; display: flex; font-family: 'Poppins', sans-serif; background: white; position: relative; box-sizing: border-box; overflow: hidden;">
-    <div style="width: 45px; background: #7b1523; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-        <div style="transform: rotate(-90deg); white-space: nowrap; font-weight: 900; font-size: 16px; letter-spacing: 4px; text-transform: uppercase; color: #ffffff;">CONSTANCIA OFICIAL</div>
-    </div>
-    <div style="flex: 1; padding: 30px 35px; position: relative; display: flex; flex-direction: column;">
-        <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; opacity: 0.08;">
-             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="width: 70%; height: auto; filter: grayscale(100%);" />
-        </div>
-        <div style="position: relative; z-index: 1; text-align: center; margin-bottom: 20px;">
-            <h2 style="font-family: 'Cinzel', serif; font-size: 22px; font-weight: 700; margin: 0; color: #7b1523;">UNIVERSIDAD NACIONAL DE SAN ANTONIO<br>ABAD DEL CUSCO</h2>
-            <div style="width: 50px; height: 3px; background: #e8a134; margin: 8px auto;"></div>
-            <h3 style="font-size: 14px; font-weight: 600; color: #333; letter-spacing: 2px;">DIRECCIÓN DE ADMISIÓN</h3>
-        </div>
-        <div style="position: relative; z-index: 1; flex: 1; font-size: 12px; line-height: 1.5; color: #333;">
-             <p>El Director de la Dirección de Admisión, que suscribe hace constar:</p>
-             <div style="border-top: 2px solid #7b1523; border-bottom: 2px solid #7b1523; padding: 15px 0; margin: 20px 0;">
-                <p>Que, Don(ña): <b>{{nombres}}</b>, INGRESÓ a la UNSAAC, a la Escuela de: <b>{{escuela}}</b> el {{fecha_ingreso}}, modalidad {{modalidad}}.</p>
-                <table style="width: 100%; margin-top: 10px;">
-                    <tr><td>● Código</td><td>: {{codigo}}</td></tr>
-                    <tr><td>● Puntaje</td><td>: {{nota}}</td></tr>
-                    <tr><td>● Orden</td><td>: {{omerito}}</td></tr>
-                </table>
-             </div>
-             <p>Cusco, {{fecha_actual}}</p>
-        </div>
-        <div style="display: flex; justify-content: space-between; border-top: 2px solid #7b1523; padding-top: 10px; font-size: 8px;">
-            <span>Recibo: {{BOUCHER}}</span>
-            <span>Exp: {{EXP}}</span>
-        </div>
-    </div>
-</div>`
-        },
-        {
-          name: 'INFORME DE RECTIFICACIÓN',
-          description: 'Informe técnico para corrección de datos en el sistema.',
-          category: 'Admisión',
-          thumbnail: 'https://placehold.co/400x500/1e293b/ffffff?text=INFORME',
-          content: `
-<div style="width: 100%; height: 100%; position: relative; font-family: 'Arial', sans-serif; color: #333; font-size: 14px; line-height: 1.5; box-sizing: border-box; overflow: hidden;">
-    <!-- Background shapes -->
-    <div style="position: absolute; top: -25mm; right: -25mm; width: 250px; height: 250px; background: #7b1523; border-bottom-left-radius: 100%; z-index: 0;"></div>
-    <div style="position: absolute; bottom: -25mm; left: -25mm; width: 0; height: 0; border-bottom: 300px solid #7b1523; border-right: 200px solid transparent; z-index: 0;"></div>
-
-    <!-- Content -->
-    <div style="position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column;">
-        <!-- Header -->
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="height: 60px;" />
-                <div>
-                    <h2 style="margin: 0; font-size: 18px; color: #7b1523; font-family: 'Times New Roman', serif;">UNSAAC</h2>
-                    <p style="margin: 0; font-size: 10px; color: #555;">Universidad Nacional de<br>San Antonio Abad del Cusco</p>
-                </div>
-            </div>
-            <!-- DA Logo placeholder -->
-            <div style="color: white; text-align: center; margin-top: 10px; margin-right: 20px;">
-                <div style="font-size: 24px; font-weight: bold; font-family: 'Times New Roman', serif;">DA</div>
-                <div style="font-size: 8px; letter-spacing: 1px;">DIRECCIÓN<br>DE ADMISIÓN</div>
-            </div>
-        </div>
-
-        <!-- Title -->
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h3 style="margin: 0; font-size: 16px; text-decoration: underline;">{{INFORME}}-DA-UNSAAC</h3>
-        </div>
-
-        <!-- Metadata -->
-        <table style="width: 100%; margin-bottom: 30px; font-size: 14px; border: none;">
-            <tr>
-                <td style="width: 80px; vertical-align: top; font-weight: bold;">DE</td>
-                <td style="width: 20px; vertical-align: top;">:</td>
-                <td style="vertical-align: top;">
-                    <b>DR. DOMINGO GONZALES GALLEGOS.</b><br>
-                    <span style="font-size: 12px; color: #555;">Director de la Dirección de Admisión.</span>
-                </td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="vertical-align: top; font-weight: bold;">A</td>
-                <td style="vertical-align: top;">:</td>
-                <td style="vertical-align: top;">
-                    <b>ING. AGUEDO HUAMANI HUAYHUA</b><br>
-                    <span style="font-size: 12px; color: #555;">Jefe de la unidad de Centro de Cómputo de la UNSAAC</span>
-                </td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">REF</td>
-                <td>:</td>
-                <td>Exp {{EXP}}</td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">ASUNTO</td>
-                <td>:</td>
-                <td>SOLICITA RECTIFICACIÓN DE DATOS</td>
-            </tr>
-            <tr><td colspan="3" style="height: 10px;"></td></tr>
-            <tr>
-                <td style="font-weight: bold;">FECHA</td>
-                <td>:</td>
-                <td>Cusco, {{fecha_actual}}</td>
-            </tr>
-        </table>
-
-        <!-- Body -->
-        <div style="text-align: justify; margin-bottom: 20px;">
-            <p style="margin-bottom: 15px;">Por medio del presente, la Dirección de Admisión tiene a bien presentar a su consideración el informe de rectificación de datos personales del estudiante <b>{{nombres}} {{apellidos}}</b>, identificado con código N° <b>{{codigo}}</b>.</p>
-            <p style="margin-bottom: 15px;">El estudiante antes mencionado solicita la rectificación de: <b>{{MOTIVO}}</b> en la base de datos de Centro de Computo.</p>
-            <p style="margin-bottom: 20px;">Según los registros de la Dirección de Admisión, el(la) estudiante ingresó a la Escuela Profesional de <b>{{escuela}}</b> en la modalidad <b>{{modalidad}}</b> bajo el nombre de <b>{{nombres}} {{apellidos}}</b>. Tal como consta en los documentos que obran en esta Dependencia, por lo que se solicita la actualización de los registros académicos con los siguientes datos:</p>
-        </div>
-
-        <!-- Table -->
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-            <tr>
-                <td style="border: 1px solid #000; padding: 8px 15px; width: 30%; font-weight: bold;">Dice</td>
-                <td style="border: 1px solid #000; padding: 8px 15px;">{{nombres}} {{apellidos}}</td>
-            </tr>
-            <tr>
-                <td style="border: 1px solid #000; padding: 8px 15px; font-weight: bold;">Debe decir</td>
-                <td style="border: 1px solid #000; padding: 8px 15px;">{{NOMBRECORRE}}</td>
-            </tr>
-        </table>
-
-        <!-- Closing -->
-        <div style="margin-bottom: 40px;">
-            <p style="margin-bottom: 15px;">Se adjunta recibo de pago N° {{BOUCHER}} y una copia del DNI del estudiante.</p>
-            <p>Es cuanto informo a usted, para su conocimiento y fines consiguientes</p>
-            <p style="text-align: center; margin-top: 20px;">Atentamente,</p>
-        </div>
-
-        <!-- Footer -->
-        <div style="margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end;">
-            <div style="font-size: 10px; color: #555;">
-                <p style="margin: 0;">DA/JACC</p>
-                <p style="margin: 0;">c.c.</p>
-                <p style="margin: 0;">Archivo.</p>
-            </div>
-            <div style="text-align: center; width: 250px;">
-                <div style="border-top: 1px dashed #000; padding-top: 5px;">
-                    <p style="margin: 0; font-weight: bold; font-size: 12px;">Dr. Domingo Gonzales Gallegos</p>
-                    <p style="margin: 0; font-size: 10px;">DIRECTOR DE LA DIRECCIÓN DE ADMISIÓN</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>`
-        }
-      ];
+      const baseTemplates = DEFAULT_OFFICIAL_TEMPLATES.map(t => ({
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        thumbnail: t.thumbnail,
+        content: t.content,
+        last_modified: new Date().toLocaleDateString()
+      }));
 
       const { error } = await supabase.from('templates').insert(baseTemplates);
       if (error) throw error;
@@ -393,11 +224,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
   const handleDeleteUser = async (id: string) => {
     if (!window.confirm('¿Está seguro de eliminar este usuario?')) return;
     try {
-      const { error } = await supabase
-        .from('usuarios')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      const res = await deleteAdminUser(id);
+      if (!res.success) {
+        throw new Error(res.error || 'Error al eliminar usuario');
+      }
       fetchUsers();
       notify?.('Usuario eliminado exitosamente.', 'success');
     } catch (err: any) {
@@ -520,7 +350,7 @@ CREATE TABLE IF NOT EXISTS public.templates (
 -- Habilitar RLS
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acceso total plantillas" ON public.templates;
-CREATE POLICY "Acceso total plantillas" ON public.templates FOR ALL USING (auth.role() = 'authenticated') WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Acceso total plantillas" ON public.templates FOR ALL USING (true) WITH CHECK (true);
 
 -- TABLA DE PROSPECTOS VOCACIONALES
 CREATE TABLE IF NOT EXISTS public.prospectos_vocacionales (
@@ -764,49 +594,136 @@ VALUES
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* User List */}
         <div className="lg:col-span-2 flex flex-col gap-4">
+          {/* Search & Actions Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-2 flex-1 min-w-[220px] bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+              <span className="material-symbols-outlined text-slate-400 text-lg">search</span>
+              <input
+                type="text"
+                value={userSearch}
+                onChange={e => setUserSearch(e.target.value)}
+                placeholder="Buscar por nombre o DNI..."
+                className="bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none w-full font-medium"
+              />
+              {userSearch && (
+                <button onClick={() => setUserSearch('')} className="text-slate-400 hover:text-slate-600">
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2.5 py-1.5 rounded-lg">
+                {users.length} {users.length === 1 ? 'usuario' : 'usuarios'}
+              </span>
+              <button
+                onClick={fetchUsers}
+                disabled={loading}
+                title="Recargar lista"
+                className="p-2 text-slate-500 hover:text-primary hover:bg-slate-50 rounded-xl transition-all border border-slate-200"
+              >
+                <span className={`material-symbols-outlined text-base ${loading ? 'animate-spin' : ''}`}>refresh</span>
+              </button>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Usuario / DNI</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Rol</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500">Rol / Permisos</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-500 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-10 text-center">
-                      <span className="material-symbols-outlined animate-spin text-primary text-3xl">progress_activity</span>
+                    <td colSpan={3} className="px-6 py-12 text-center">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="material-symbols-outlined animate-spin text-primary text-3xl">progress_activity</span>
+                        <span className="text-xs text-slate-400 font-medium">Cargando usuarios...</span>
+                      </div>
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-10 text-center text-slate-400 text-sm">No hay usuarios registrados.</td>
+                    <td colSpan={3} className="px-6 py-12 text-center text-slate-400 text-sm">
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <span className="material-symbols-outlined text-slate-300 text-4xl">group_off</span>
+                        <span>No hay usuarios registrados.</span>
+                        <button 
+                          onClick={() => { resetForm(); setIsModalOpen(true); }}
+                          className="mt-2 text-xs text-primary font-bold hover:underline"
+                        >
+                          Crear primer usuario
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                ) : users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                ) : users.filter(u => {
+                  if (!userSearch.trim()) return true;
+                  const query = userSearch.toLowerCase().trim();
+                  return (
+                    (u.name && u.name.toLowerCase().includes(query)) ||
+                    (u.dni && u.dni.toLowerCase().includes(query)) ||
+                    (u.role && u.role.toLowerCase().includes(query))
+                  );
+                }).length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-6 py-8 text-center text-slate-400 text-xs">
+                      No se encontraron usuarios que coincidan con "{userSearch}".
+                    </td>
+                  </tr>
+                ) : users
+                    .filter(u => {
+                      if (!userSearch.trim()) return true;
+                      const query = userSearch.toLowerCase().trim();
+                      return (
+                        (u.name && u.name.toLowerCase().includes(query)) ||
+                        (u.dni && u.dni.toLowerCase().includes(query)) ||
+                        (u.role && u.role.toLowerCase().includes(query))
+                      );
+                    })
+                    .map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="font-bold text-slate-900 text-sm">{u.name}</span>
-                        <span className="text-[10px] font-mono text-slate-400">{u.dni}</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[11px] font-mono font-medium text-slate-500">DNI: {u.dni}</span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                        u.role === 'Administrador' ? 'bg-red-100 text-red-700' :
-                        u.role === 'Director' ? 'bg-blue-100 text-blue-700' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
-                        {u.role}
-                      </span>
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                          u.role === 'Administrador' ? 'bg-red-100 text-red-700 border border-red-200' :
+                          u.role === 'Director' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                          'bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}>
+                          {u.role}
+                        </span>
+                        {u.role === 'Operador' && Array.isArray(u.permissions) && (
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {u.permissions.length} {u.permissions.length === 1 ? 'permiso activo' : 'permisos activos'}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => openEdit(u)} className="p-2 text-slate-400 hover:text-primary transition-colors">
+                      <div className="flex justify-end gap-1.5">
+                        <button 
+                          onClick={() => openEdit(u)} 
+                          title="Editar usuario"
+                          className="p-2 text-slate-400 hover:text-primary hover:bg-slate-100 rounded-lg transition-colors"
+                        >
                           <span className="material-symbols-outlined text-lg">edit</span>
                         </button>
-                        <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 transition-colors">
+                        <button 
+                          onClick={() => handleDeleteUser(u.id)} 
+                          title="Eliminar usuario"
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
                           <span className="material-symbols-outlined text-lg">delete</span>
                         </button>
                       </div>

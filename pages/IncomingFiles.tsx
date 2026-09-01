@@ -82,15 +82,6 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [newNumber, setNewNumber] = useState('');
   const [newSubject, setNewSubject] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchInputValue, setSearchInputValue] = useState('');
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInputValue);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [searchInputValue]);
-
   const [currentFilter, setCurrentFilter] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const filterParam = params.get('filter');
@@ -156,9 +147,18 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       const { data, error } = await supabase
         .from('usuarios')
         .select('id, name, role, dni');
-      if (error) throw error;
-      if (data) {
+      if (!error && data && data.length > 0) {
         setOperators(data);
+        return;
+      }
+
+      // Fallback al endpoint del servidor
+      const res = await fetch('/api/auth/operators');
+      if (res.ok) {
+        const serverData = await res.json();
+        if (Array.isArray(serverData) && serverData.length > 0) {
+          setOperators(serverData);
+        }
       }
     } catch (err) {
       console.error("Error fetching operators:", err);
@@ -1758,6 +1758,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                                         ) : (
                                             paymentCandidates.map(c => {
                                                 const isBlocked = c.status === 'En Bloque' || c.status === 'Finalizado';
+                                                const wasRejected = c.status === 'Rechazado';
                                                 return (
                                                     <button 
                                                         key={c.id} 
@@ -1771,7 +1772,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                                                         className={`w-full p-4 text-left transition-colors flex justify-between items-center group ${isBlocked ? 'opacity-60 cursor-not-allowed bg-slate-100' : 'hover:bg-white'}`}
                                                     >
                                                         <div>
-                                                            <p className="text-sm font-black uppercase text-slate-800">{c.student_name}</p>
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="text-sm font-black uppercase text-slate-800">{c.student_name}</p>
+                                                                {wasRejected && (
+                                                                    <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200">
+                                                                        Devolución Rechazada (Apto para Transferencia)
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{c.dni} • S/ {c.amount} • {c.type}</p>
                                                             {isBlocked && (
                                                                 <p className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1">
@@ -2194,8 +2202,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
         <div className="w-full lg:w-96 relative">
           <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400">search</span>
           <input 
-            value={searchInputValue} 
-            onChange={e => setSearchInputValue(e.target.value)} 
+            value={searchQuery} 
+            onChange={e => setSearchQuery(e.target.value)} 
             className="w-full h-10 pl-10 pr-4 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:bg-white outline-none focus:ring-2 focus:ring-primary/20 transition-all" 
             placeholder="Buscar por número o asunto..." 
           />

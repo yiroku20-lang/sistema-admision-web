@@ -1,10 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Participant, User } from '../types';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { 
+  StudentDocument, 
+  getGatewayBaseUrl, 
+  testGatewayHealth, 
+  fetchStudentDocumentsFromGateway, 
+  getDocumentStreamUrl, 
+  parseDocumentInfo,
+  isElectronApp 
+} from '../lib/fileGateway';
+import { FileGatewayModal } from '../components/FileGatewayModal';
+import { DocumentViewerModal } from '../components/DocumentViewerModal';
 
 type SearchMode = 'individual' | 'batch' | 'import';
 
@@ -20,32 +31,26 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
   const [activeMode, setActiveMode] = useState<SearchMode>('individual');
   
-  // Local API configuration (Cloudflare URL / Localhost / Electron fallback)
-  const [localApiUrl] = useState(() => {
-    const isLocalhost = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const isElectronOrFile = typeof window !== 'undefined' && (
-      window.navigator.userAgent.toLowerCase().includes('electron') ||
-      window.location.protocol === 'file:'
-    );
-    const customUrl = localStorage.getItem('local_api_url') || (import.meta as any).env?.VITE_API_URL;
-    if (customUrl) return customUrl;
-    if (isLocalhost || isElectronOrFile) {
-      return 'http://127.0.0.1:5000';
-    }
-    return '';
+  // File Gateway connection state
+  const [gatewayUrl, setGatewayUrl] = useState(() => getGatewayBaseUrl());
+  const [gatewayStatus, setGatewayStatus] = useState<{
+    connected: boolean;
+    latency?: number;
+    checking: boolean;
+    url: string;
+  }>({
+    connected: false,
+    checking: true,
+    url: getGatewayBaseUrl()
   });
-  
-  const isLocalApp = typeof window !== 'undefined' && (
-    ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
-    window.navigator.userAgent.toLowerCase().includes('electron') ||
-    window.location.protocol === 'file:'
-  );
+  const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
+  const [selectedDocForViewer, setSelectedDocForViewer] = useState<StudentDocument | null>(null);
   
   // State for toggling individual folders in local documents
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
 
   // Individual Search State
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [studentHistory, setStudentHistory] = useState<Participant[]>([]);
   const [candidates, setCandidates] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,6 +60,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   // Batch Search State
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [batchStatusText, setBatchStatusText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Import State
@@ -78,9 +85,45 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const [reservas, setReservas] = useState<any[]>([]);
   
   // Local Documents State
-  const [localDocuments, setLocalDocuments] = useState<any[]>([]);
+  const [localDocuments, setLocalDocuments] = useState<StudentDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
+
+  // Check gateway health
+  const checkGateway = useCallback(async (targetUrl?: string) => {
+    const url = targetUrl || getGatewayBaseUrl();
+    setGatewayStatus(prev => ({ ...prev, checking: true, url }));
+    try {
+      const result = await testGatewayHealth(url);
+      setGatewayStatus({
+        connected: result.ok,
+        latency: result.latency,
+        checking: false,
+        url: result.url
+      });
+    } catch {
+      setGatewayStatus({
+        connected: false,
+        checking: false,
+        url
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    checkGateway();
+
+    const handleGatewayChanged = (e: any) => {
+      const newUrl = e.detail?.url || getGatewayBaseUrl();
+      setGatewayUrl(newUrl);
+      checkGateway(newUrl);
+    };
+
+    window.addEventListener('gateway-url-changed', handleGatewayChanged);
+    return () => {
+      window.removeEventListener('gateway-url-changed', handleGatewayChanged);
+    };
+  }, [checkGateway]);
 
   const fetchExtraInfo = async (history: Participant[]) => {
       setExpandedFolders({});
@@ -92,35 +135,25 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           return;
       }
       
-      if (!isLocalApp) {
-          setLocalDocuments([]);
-          return;
-      }
-      
-      // Auto-fetch local documents from hybrid local API for the first code
+      // Auto-fetch local documents from Gateway
       setLoadingDocs(true);
       setDocsError(null);
       try {
-          const apiUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : '';
-          const resDocs = await fetch(`${apiUrl}/api/files/student-documents/${studentCodes[0]}`);
+          const resDocs = await fetchStudentDocumentsFromGateway(studentCodes[0], gatewayUrl);
           if (!resDocs.ok) {
-              if (resDocs.status === 404) {
-                 setLocalDocuments([]);
-                 setDocsError('No se encontraron expedientes locales para este código.');
-              } else {
-                 throw new Error('Servidor local de archivos desconectado.');
-              }
+              setLocalDocuments([]);
+              setDocsError(resDocs.error || 'No se pudo consultar el servidor de archivos.');
+              setGatewayStatus(prev => ({ ...prev, connected: false }));
           } else {
-              const data = await resDocs.json();
-              setLocalDocuments(data.documents || data || []);
+              setLocalDocuments(resDocs.documents || []);
+              if (resDocs.documents.length > 0) {
+                  setGatewayStatus(prev => ({ ...prev, connected: true }));
+              }
           }
       } catch (err: any) {
-          if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
-              setDocsError('Servidor local de expedientes no disponible en este entorno web.');
-          } else {
-              setDocsError(err.message || 'Servidor local no disponible.');
-          }
+          setDocsError(err.message || 'Servidor de archivos fuera de línea');
           setLocalDocuments([]);
+          setGatewayStatus(prev => ({ ...prev, connected: false }));
       } finally {
           setLoadingDocs(false);
       }
@@ -210,12 +243,11 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const getGroupedDocuments = (docs: any[]) => {
-      const groups: { [key: string]: any[] } = {};
+      const groups: { [key: string]: StudentDocument[] } = {};
       if (!docs || !Array.isArray(docs)) return groups;
       
       docs.forEach(doc => {
           if (!doc) return;
-          // Prefer relativePath since it's the exact clean path inside the H: drive root
           const rawPath = typeof doc === 'string' ? doc : (doc.relativePath || doc.path || doc.file_path || doc.url || '');
           
           let cleanPath = rawPath;
@@ -230,89 +262,46 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
               }
           }
           
-          const filename = typeof doc === 'string' 
-              ? doc.split(/[\/\\]/).pop()! 
-              : (doc.name || doc.filename || (cleanPath && typeof cleanPath === 'string' ? cleanPath.split(/[\/\\]/).pop() : '') || 'Documento sin nombre');
-          
           const groupLabel = getModalityAndSemesterFromPath(cleanPath);
+          const parsedDoc = parseDocumentInfo(doc, cleanPath);
+          parsedDoc.concursoLabel = groupLabel;
           
           if (!groups[groupLabel]) {
               groups[groupLabel] = [];
           }
-          groups[groupLabel].push({
-              path: cleanPath,
-              filename,
-              originalDoc: doc
-          });
+          groups[groupLabel].push(parsedDoc);
       });
 
       Object.keys(groups).forEach(groupLabel => {
           // Sort documents inside this folder alphabetically to guarantee sequential ordering of files (e.g., 1_1_*, 2_1_*, 3_1_*)
           groups[groupLabel].sort((a, b) => (a.filename || '').localeCompare(b.filename || ''));
-          
-          let pdfCounter = 1;
-          
-          groups[groupLabel] = groups[groupLabel].map(doc => {
-              const ext = (doc.filename && typeof doc.filename === 'string' ? doc.filename.split('.').pop() : '')?.toUpperCase() || '';
-              const isPdf = ext === 'PDF';
-              const isImage = ['JPG', 'JPEG', 'PNG', 'WEBP', 'GIF'].includes(ext);
-              
-              let friendlyName = doc.filename;
-              let docTypeLabel = '';
-              
-              const description = doc.originalDoc?.description;
-              
-              if (isImage) {
-                  friendlyName = description || 'Foto';
-                  docTypeLabel = 'Foto';
-              } else if (isPdf) {
-                  friendlyName = description || `Doc ${pdfCounter}`;
-                  docTypeLabel = description || `Doc ${pdfCounter}`;
-                  if (!description) {
-                      pdfCounter++;
-                  }
-              } else {
-                  friendlyName = description || doc.filename;
-                  docTypeLabel = ext;
-              }
-
-              return {
-                  ...doc,
-                  isPdf,
-                  isImage,
-                  ext,
-                  friendlyName,
-                  docTypeLabel
-              };
-          });
       });
       
       return groups;
   };
 
   const handleSearch = async () => {
-    const query = searchInputRef.current?.value || '';
-    if (!query.trim()) return;
+    if (!searchQuery.trim()) return;
     setLoading(true); setError(null); setStudentHistory([]); setCandidates([]); setHasSearched(true);
     setRenuncias([]); setReservas([]);
     try {
-      const term = query.trim();
+      const term = searchQuery.trim();
       const isNumeric = /^\d+$/.test(term);
       
-      let dbQuery = supabase.from('participantes').select('*');
+      let query = supabase.from('participantes').select('*');
       if (isNumeric) {
-          dbQuery = dbQuery.eq('CODPOSTULANTE', term);
+          query = query.eq('CODPOSTULANTE', term);
       } else {
           // Split by spaces, commas, hyphens and slashes to support any order/separators (like hyphenated names in the DB)
           const words = term.split(/[\s,\-/]+/).filter(Boolean);
           words.forEach(word => {
             // Replace vowels with '_' to be completely accent-insensitive and spelling-forgiving
             const agnostic = word.replace(/[aeiouáéíóúüAEIOUÁÉÍÓÚÜ]/g, '_');
-            dbQuery = dbQuery.ilike('NOMBRE', `%${agnostic}%`);
+            query = query.ilike('NOMBRE', `%${agnostic}%`);
           });
       }
       
-      const { data, error: err } = await dbQuery.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false });
+      const { data, error: err } = await query.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false });
       
       if (err) throw err;
       
@@ -449,6 +438,9 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           if (lines.length <= 1) return;
 
           setIsProcessingBatch(true);
+          setBatchProgress(0);
+          setBatchStatusText('Analizando archivo CSV...');
+
           const firstLine = lines[0];
           const delimiter = firstLine.includes(';') ? ';' : ',';
 
@@ -464,6 +456,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
               let dbMatches: any[] = [];
               const chunkSize = 200;
               
+              setBatchStatusText('Consultando base de datos por DNI...');
+              const totalCodeChunks = Math.ceil(exactCodes.length / chunkSize);
               for (let i = 0; i < exactCodes.length; i += chunkSize) {
                   const chunk = exactCodes.slice(i, i + chunkSize);
                   const { data, error } = await supabase
@@ -472,8 +466,13 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                       .in('CODPOSTULANTE', chunk);
                   if (error) throw error;
                   if (data) dbMatches = dbMatches.concat(data);
+                  
+                  const currentChunk = Math.floor(i / chunkSize) + 1;
+                  setBatchProgress(Math.round((currentChunk / (totalCodeChunks || 1)) * 40));
               }
 
+              setBatchStatusText('Consultando base de datos por Nombres...');
+              const totalNameChunks = Math.ceil(exactNames.length / chunkSize);
               for (let i = 0; i < exactNames.length; i += chunkSize) {
                   const chunk = exactNames.slice(i, i + chunkSize);
                   const { data, error } = await supabase
@@ -485,52 +484,182 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                       const newMatches = data.filter(d => !dbMatches.some(dm => dm.id === d.id));
                       dbMatches = dbMatches.concat(newMatches);
                   }
+                  
+                  const currentChunk = Math.floor(i / chunkSize) + 1;
+                  setBatchProgress(40 + Math.round((currentChunk / (totalNameChunks || 1)) * 40));
               }
 
-              const results: BatchResult[] = rawData.map(item => {
-                  let exactMatches: Participant[] = [];
-                  let probableMatches: Participant[] = [];
+              setBatchStatusText('Cruzando información...');
+              
+              const codeMap = new Map<string, Participant[]>();
+              const nameMap = new Map<string, Participant[]>();
 
-                  dbMatches?.forEach(m => {
-                      const matchCode = item.code ? String(m.CODPOSTULANTE).trim() === String(item.code).trim() : false;
-                      const matchName = item.name ? String(m.NOMBRE).trim() === String(item.name).trim() : false;
+              dbMatches.forEach(m => {
+                  const codeKey = String(m.CODPOSTULANTE).trim();
+                  const nameKey = String(m.NOMBRE).trim();
+
+                  if (codeKey) {
+                      if (!codeMap.has(codeKey)) codeMap.set(codeKey, []);
+                      codeMap.get(codeKey)!.push(m);
+                  }
+                  if (nameKey) {
+                      if (!nameMap.has(nameKey)) nameMap.set(nameKey, []);
+                      nameMap.get(nameKey)!.push(m);
+                  }
+              });
+
+              const results: BatchResult[] = [];
+              const batchProcessingSize = 500;
+              
+              for (let i = 0; i < rawData.length; i += batchProcessingSize) {
+                  const chunk = rawData.slice(i, i + batchProcessingSize);
+                  
+                  chunk.forEach(item => {
+                      const targetCode = String(item.code || '').trim();
+                      const targetName = String(item.name || '').trim();
+
+                      const codeMatches = targetCode ? (codeMap.get(targetCode) || []) : [];
+                      const nameMatches = targetName ? (nameMap.get(targetName) || []) : [];
                       
-                      const hasCodeStr = !!item.code;
-                      const hasNameStr = !!item.name;
+                      let exactMatches: Participant[] = [];
+                      let probableMatches: Participant[] = [];
+
+                      const hasCodeStr = !!targetCode;
+                      const hasNameStr = !!targetName;
+
+                      const seenIds = new Set<string>();
 
                       if (hasCodeStr && hasNameStr) {
-                          if (matchCode && matchName) exactMatches.push(m);
-                          else if (matchCode || matchName) probableMatches.push(m);
-                      } else if (hasNameStr) {
-                          if (matchName) exactMatches.push(m);
-                      } else if (hasCodeStr) {
-                          if (matchCode) exactMatches.push(m);
-                      }
-                  });
-                  
-                  const finalMatches = exactMatches.length > 0 ? exactMatches : probableMatches;
-                  let s: 'EXACT' | 'PROBABLE' | 'NOT_FOUND' = 'NOT_FOUND';
-                  if (exactMatches.length > 0) s = 'EXACT';
-                  else if (probableMatches.length > 0) s = 'PROBABLE';
+                          const nameMatchesSet = new Set(nameMatches.map(m => m.id));
+                          codeMatches.forEach(m => {
+                              if (nameMatchesSet.has(m.id)) {
+                                  exactMatches.push(m);
+                              } else {
+                                  probableMatches.push(m);
+                              }
+                              seenIds.add(m.id);
+                          });
+                          
+                          nameMatches.forEach(m => {
+                              if (!seenIds.has(m.id)) {
+                                  probableMatches.push(m);
+                                  seenIds.add(m.id);
+                              }
+                          });
 
-                  return {
-                      originalCode: item.code,
-                      originalName: item.name,
-                      found: finalMatches.length > 0,
-                      status: s,
-                      allMatches: finalMatches
-                  };
-              });
+                      } else if (hasNameStr) {
+                          exactMatches = nameMatches;
+                      } else if (hasCodeStr) {
+                          exactMatches = codeMatches;
+                      }
+
+                      const finalMatches = exactMatches.length > 0 ? exactMatches : probableMatches;
+                      let s: 'EXACT' | 'PROBABLE' | 'NOT_FOUND' = 'NOT_FOUND';
+                      if (exactMatches.length > 0) s = 'EXACT';
+                      else if (probableMatches.length > 0) s = 'PROBABLE';
+
+                      results.push({
+                          originalCode: item.code,
+                          originalName: item.name,
+                          found: finalMatches.length > 0,
+                          status: s,
+                          allMatches: finalMatches
+                      });
+                  });
+
+                  setBatchProgress(80 + Math.round(((i + chunk.length) / rawData.length) * 20));
+                  await new Promise(r => setTimeout(r, 0));
+              }
+
               setBatchResults(results);
           } catch (error: any) {
               console.error("Batch Error:", error);
               alert("Error al consultar la base de datos: " + error.message);
           } finally {
               setIsProcessingBatch(false);
-              e.target.value = ''; // Reset file input
+              setBatchProgress(100);
+              setBatchStatusText('');
+              if (e.target) e.target.value = '';
           }
       };
       reader.readAsText(file);
+  };
+
+  const handleExportCruceCC = async () => {
+      if (batchResults.length === 0) return;
+      setIsProcessingBatch(true);
+      setBatchStatusText('Generando Reporte CC...');
+      setBatchProgress(10);
+      
+      try {
+          const { data: escuelas, error } = await supabase.from('cv_escuelas').select('*');
+          if (error) throw error;
+          
+          const escuelasMap = new Map<string, any>();
+          escuelas?.forEach(e => {
+              escuelasMap.set(e.nombre.toUpperCase(), e);
+              if (e.alias) escuelasMap.set(e.alias.toUpperCase(), e);
+          });
+          
+          setBatchProgress(50);
+          
+          const formattedData: any[] = [];
+          
+          batchResults.forEach(res => {
+              if (res.allMatches.length > 0) {
+                  const sortedMatches = [...res.allMatches].sort((a, b) => {
+                      const anioA = parseInt(a.ANIO || '0');
+                      const anioB = parseInt(b.ANIO || '0');
+                      if (anioA !== anioB) return anioB - anioA;
+                      return (b.SEMESTRE || '').localeCompare(a.SEMESTRE || '');
+                  });
+
+                  sortedMatches.forEach(match => {
+                      const carreraStr = (match.CARRERA || '').toUpperCase();
+                      let escuela = escuelasMap.get(carreraStr);
+                      if (!escuela) {
+                          const found = escuelas?.find(e => carreraStr.includes(e.nombre.toUpperCase()) || (e.alias && carreraStr.includes(e.alias.toUpperCase())));
+                          if (found) escuela = found;
+                      }
+                      
+                      formattedData.push({
+                          'DNI': match.CODPOSTULANTE || res.originalCode,
+                          'NOMBRE': match.NOMBRE || res.originalName,
+                          'SIGLA': escuela?.siglas || '--',
+                          'CÓDIGO DE ESCUELA': escuela?.codigo_carrera || '--',
+                          'CARRERA': match.CARRERA,
+                          'MODALIDAD': match.MODALIDAD,
+                          'PROCESO': `${match.SEMESTRE || ''}-${match.ANIO || ''}`
+                      });
+                  });
+              } else {
+                  formattedData.push({
+                      'DNI': res.originalCode,
+                      'NOMBRE': res.originalName,
+                      'SIGLA': 'NO ENCONTRADO',
+                      'CÓDIGO DE ESCUELA': '--',
+                      'CARRERA': '--',
+                      'MODALIDAD': '--',
+                      'PROCESO': '--'
+                  });
+              }
+          });
+          
+          setBatchProgress(90);
+          
+          const worksheet = XLSX.utils.json_to_sheet(formattedData);
+          const workbook = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte_CC');
+          XLSX.writeFile(workbook, `Reporte_CC_${new Date().getTime()}.xlsx`);
+          
+      } catch (err: any) {
+          console.error(err);
+          alert("Error al generar reporte CC: " + err.message);
+      } finally {
+          setIsProcessingBatch(false);
+          setBatchStatusText('');
+          setBatchProgress(0);
+      }
   };
 
   const handleExportCruceExcel = () => {
@@ -1042,21 +1171,57 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             <h1 className="text-slate-900 text-3xl font-black leading-tight">Gestión de Ingresantes</h1>
             <p className="text-slate-500 text-sm font-medium">Búsqueda individual, cruce masivo o importación de nuevos registros.</p>
         </div>
-        <div className="flex bg-slate-200 p-1 rounded-xl shadow-inner shrink-0">
-            {[
-                {id: 'individual', label: 'Individual', icon: 'person'},
-                {id: 'batch', label: 'Cruce Masivo', icon: 'compare_arrows'},
-                {id: 'import', label: 'Importar Datos', icon: 'upload_file', adminOnly: true}
-            ].filter(m => !m.adminOnly || user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))).map((m) => (
-                <button 
-                    key={m.id}
-                    onClick={() => setActiveMode(m.id as any)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                    <span className="material-symbols-outlined text-[18px]">{m.icon}</span>
-                    {m.label}
-                </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {/* File Gateway Server Status Button */}
+            <button
+                type="button"
+                onClick={() => setIsGatewayModalOpen(true)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all border shadow-sm active:scale-95 ${
+                    gatewayStatus.connected
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                        : gatewayStatus.checking
+                            ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                }`}
+                title={`Servidor de Archivos: ${gatewayStatus.url} (${gatewayStatus.connected ? 'Conectado' : 'Sin conexión'}). Clic para configurar.`}
+            >
+                <span className={`size-2.5 rounded-full shrink-0 ${
+                    gatewayStatus.connected 
+                        ? 'bg-emerald-500 animate-pulse' 
+                        : gatewayStatus.checking 
+                            ? 'bg-slate-400 animate-spin' 
+                            : 'bg-amber-500'
+                }`} />
+                <span className="material-symbols-outlined text-[16px]">dns</span>
+                <span className="hidden sm:inline">
+                    {gatewayStatus.connected
+                        ? `Servidor de Archivos Conectado${gatewayStatus.latency !== undefined ? ` (${gatewayStatus.latency}ms)` : ''}`
+                        : gatewayStatus.checking
+                            ? 'Verificando Servidor...'
+                            : 'Servidor Fuera de Línea'}
+                </span>
+                <span className="sm:hidden">
+                    {gatewayStatus.connected ? 'Servidor 🟢' : 'Servidor ⚪'}
+                </span>
+                <span className="material-symbols-outlined text-[14px] text-slate-400">tune</span>
+            </button>
+
+            <div className="flex bg-slate-200 p-1 rounded-xl shadow-inner shrink-0">
+                {[
+                    {id: 'individual', label: 'Individual', icon: 'person'},
+                    {id: 'batch', label: 'Cruce Masivo', icon: 'compare_arrows'},
+                    {id: 'import', label: 'Importar Datos', icon: 'upload_file', adminOnly: true}
+                ].filter(m => !m.adminOnly || user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))).map((m) => (
+                    <button 
+                        key={m.id}
+                        onClick={() => setActiveMode(m.id as any)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${activeMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        <span className="material-symbols-outlined text-[18px]">{m.icon}</span>
+                        {m.label}
+                    </button>
+                ))}
+            </div>
         </div>
       </div>
 
@@ -1079,7 +1244,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                         <div className="relative">
                         <span className="material-symbols-outlined absolute left-3 top-3 text-slate-400">search</span>
                         <input
-                            ref={searchInputRef}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             className="w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-900 h-11 pl-10 pr-14 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-slate-400 uppercase"
                             placeholder="DNI O NOMBRE..."
@@ -1114,7 +1280,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                 {mainStudent && (
                     <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
                         <div className="h-24 bg-gradient-to-r from-primary to-merlot relative p-4 flex justify-end">
-                            <button onClick={() => { setStudentHistory([]); setCandidates([]); if (searchInputRef.current) searchInputRef.current.value = ''; setEditingRecord(null); setIsEditing(false); }} className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40"><span className="material-symbols-outlined text-[18px]">close</span></button>
+                            <button onClick={() => { setStudentHistory([]); setCandidates([]); setSearchQuery(''); setEditingRecord(null); setIsEditing(false); }} className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40"><span className="material-symbols-outlined text-[18px]">close</span></button>
                         </div>
                         <div className="px-6 pb-6 relative">
                             <div className="size-20 rounded-2xl border-4 border-white bg-slate-100 -mt-10 mb-4 flex items-center justify-center shadow-md"><span className="material-symbols-outlined text-4xl text-slate-400">person</span></div>
@@ -1130,143 +1296,203 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                     <p className="font-bold text-blue-900 text-sm">{fixEncoding(mainStudent.CARRERA)}</p>
                                     <p className="text-[10px] text-blue-700 font-bold mt-1 uppercase">{mainStudent.MODALIDAD} • {mainStudent.SEMESTRE}-{mainStudent.ANIO}</p>
                                 </div>
-                                {isLocalApp && (
-                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Expediente Físico (H:)</p>
-                                            <div className="flex items-center gap-1.5">
-                                                <span className="material-symbols-outlined text-slate-400 text-[14px]">folder_open</span>
-                                            </div>
+                                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="material-symbols-outlined text-primary text-[18px]">folder_special</span>
+                                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                                                Requisitos y Documentos
+                                            </p>
                                         </div>
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => fetchExtraInfo(studentHistory)}
+                                                disabled={loadingDocs}
+                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
+                                                title="Recargar documentos"
+                                            >
+                                                <span className={`material-symbols-outlined text-[15px] ${loadingDocs ? 'animate-spin' : ''}`}>sync</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsGatewayModalOpen(true)}
+                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
+                                                title="Configurar servidor de archivos"
+                                            >
+                                                <span className="material-symbols-outlined text-[15px]">tune</span>
+                                            </button>
+                                        </div>
+                                    </div>
 
-                                        {loadingDocs ? (
-                                            <div className="flex items-center gap-2 text-slate-400 text-xs font-bold">
-                                                <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
-                                                Buscando en servidor local...
-                                            </div>
-                                        ) : docsError ? (
-                                            <div className="flex flex-col gap-1">
-                                                <div className="bg-amber-50 text-amber-800 text-[10px] p-2.5 rounded-lg border border-amber-200 font-bold flex items-start gap-2">
-                                                    <span className="material-symbols-outlined text-amber-600 text-[16px] shrink-0 mt-0.5">info</span>
-                                                    <div>
-                                                        <p className="font-extrabold">{docsError}</p>
-                                                        <p className="text-[9px] font-normal text-amber-700 mt-1 leading-tight">
-                                                            Los expedientes físicos (400 GB en disco H:) requieren abrir la <b>App de Escritorio (.exe)</b> en la PC local de Admisión o configurar la URL del Servidor en Ajustes.
-                                                        </p>
-                                                    </div>
+                                    {loadingDocs ? (
+                                        <div className="flex items-center justify-center py-6 gap-2 text-slate-500 text-xs font-bold bg-white rounded-lg border border-slate-200">
+                                            <span className="material-symbols-outlined text-[18px] text-primary animate-spin">sync</span>
+                                            Consultando archivos del postulante...
+                                        </div>
+                                    ) : docsError ? (
+                                        <div className="flex flex-col gap-2 p-3 bg-amber-50/70 text-amber-900 rounded-xl border border-amber-200/80">
+                                            <div className="flex items-start gap-2">
+                                                <span className="material-symbols-outlined text-amber-600 text-[18px] shrink-0 mt-0.5">cloud_off</span>
+                                                <div className="text-[10px] leading-relaxed">
+                                                    <p className="font-bold text-amber-950">Servidor de Archivos no accesible</p>
+                                                    <p className="text-amber-800 mt-0.5">{docsError}</p>
                                                 </div>
                                             </div>
-                                        ) : localDocuments.length > 0 ? (
-                                            <div className="flex flex-col gap-3">
-                                                {Object.entries(getGroupedDocuments(localDocuments))
-                                                    .sort(([labelA], [labelB]) => {
-                                                        const yearMatchA = labelA.match(/\b\d{4}\b/);
-                                                        const yearMatchB = labelB.match(/\b\d{4}\b/);
-                                                        const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
-                                                        const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsGatewayModalOpen(true)}
+                                                className="w-full py-1.5 px-3 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                                            >
+                                                <span className="material-symbols-outlined text-[14px]">tune</span>
+                                                Configurar IP / Servidor
+                                            </button>
+                                        </div>
+                                    ) : localDocuments.length > 0 ? (
+                                        <div className="flex flex-col gap-3">
+                                            {Object.entries(getGroupedDocuments(localDocuments))
+                                                .sort(([labelA], [labelB]) => {
+                                                    const yearMatchA = labelA.match(/\b\d{4}\b/);
+                                                    const yearMatchB = labelB.match(/\b\d{4}\b/);
+                                                    const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
+                                                    const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
+                                                    
+                                                    if (yearA !== yearB) {
+                                                        return yearB - yearA; // Recientes primero
+                                                    }
+                                                    
+                                                    const getSemesterVal = (label: string) => {
+                                                        if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
+                                                        if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
+                                                        return 0;
+                                                    };
+                                                    
+                                                    const semA = getSemesterVal(labelA);
+                                                    const semB = getSemesterVal(labelB);
+                                                    
+                                                    if (semA !== semB) {
+                                                        return semB - semA; // II antes que I
+                                                    }
+                                                    
+                                                    return labelA.localeCompare(labelB);
+                                                })
+                                                .map(([folderLabel, docsInFolder], groupIdx) => {
+                                                    const isExpanded = expandedFolders[folderLabel] !== false; // Default open
+                                                return (
+                                                    <div key={groupIdx} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                                                        {/* Folder Header */}
+                                                        <button
+                                                            onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
+                                                            type="button"
+                                                            className="w-full flex items-center justify-between p-2.5 bg-slate-100/90 hover:bg-slate-200/90 transition-colors border-b border-slate-200"
+                                                        >
+                                                            <div className="flex items-center gap-2 text-left min-w-0">
+                                                                <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
+                                                                <span className="text-[11px] font-black text-slate-800 uppercase tracking-tight truncate">
+                                                                    {folderLabel}
+                                                                </span>
+                                                                <span className="bg-slate-200 text-slate-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0">
+                                                                    {docsInFolder.length}
+                                                                </span>
+                                                            </div>
+                                                            <span className="material-symbols-outlined text-slate-500 text-[16px] shrink-0">
+                                                                {isExpanded ? 'expand_less' : 'expand_more'}
+                                                            </span>
+                                                        </button>
                                                         
-                                                        if (yearA !== yearB) {
-                                                            return yearB - yearA; // Recientes primero
-                                                        }
-                                                        
-                                                        const getSemesterVal = (label: string) => {
-                                                            if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
-                                                            if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
-                                                            return 0;
-                                                        };
-                                                        
-                                                        const semA = getSemesterVal(labelA);
-                                                        const semB = getSemesterVal(labelB);
-                                                        
-                                                        if (semA !== semB) {
-                                                            return semB - semA; // II antes que I
-                                                        }
-                                                        
-                                                        return labelA.localeCompare(labelB);
-                                                    })
-                                                    .map(([folderLabel, docsInFolder], groupIdx) => {
-                                                        const isExpanded = !!expandedFolders[folderLabel];
-                                                        return (
-                                                            <div key={groupIdx} className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm">
-                                                                {/* Folder Header */}
-                                                                <button
-                                                                    onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
-                                                                    type="button"
-                                                                    className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors border-b border-slate-200"
-                                                                >
-                                                                    <div className="flex items-center gap-2 text-left min-w-0">
-                                                                        <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
-                                                                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-tight truncate">
-                                                                            {folderLabel}
-                                                                        </span>
-                                                                        <span className="bg-slate-200 text-slate-700 text-[8px] font-black px-1.5 py-0.5 rounded-full shrink-0">
-                                                                            {docsInFolder.length}
-                                                                        </span>
-                                                                    </div>
-                                                                    <span className="material-symbols-outlined text-slate-500 text-[15px] shrink-0">
-                                                                        {isExpanded ? 'expand_less' : 'expand_more'}
-                                                                    </span>
-                                                                </button>
-                                                                
-                                                                {/* Documents in Folder */}
-                                                                {isExpanded && (
-                                                                    <div className="p-1.5 flex flex-col gap-1.5 bg-slate-55/30">
-                                                                        {docsInFolder.map((doc, i) => {
-                                                                            const baseUrl = localApiUrl ? localApiUrl.replace(/\/$/, "") : "";
-                                                                            const docUrl = `${baseUrl}/api/files/stream-document?path=${encodeURIComponent(doc.path)}`;
-                                                                            
-                                                                            return (
+                                                        {/* Documents in Folder */}
+                                                        {isExpanded && (
+                                                            <div className="p-2 flex flex-col gap-2 bg-slate-50/50">
+                                                                {docsInFolder.map((doc, i) => {
+                                                                    const docStreamUrl = getDocumentStreamUrl(doc.path, gatewayUrl);
+                                                                    
+                                                                    return (
+                                                                        <div
+                                                                            key={i}
+                                                                            className="bg-white border border-slate-200 rounded-lg p-2 hover:border-primary/50 hover:shadow-md transition-all flex flex-col gap-1.5 group relative"
+                                                                        >
+                                                                            <div className="flex items-start gap-2 min-w-0">
+                                                                                <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                                                                    doc.isPdf 
+                                                                                        ? 'bg-red-50 text-red-600 border border-red-200' 
+                                                                                        : doc.isImage 
+                                                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                                                                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                                                                }`}>
+                                                                                    <span className="material-symbols-outlined text-[18px]">
+                                                                                        {doc.icon || (doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description')}
+                                                                                    </span>
+                                                                                </div>
+                                                                                
+                                                                                <div className="flex-1 min-w-0">
+                                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                        <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                                                                            doc.badgeColor || (doc.isPdf ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-800')
+                                                                                        }`}>
+                                                                                            {doc.categoryLabel || 'DOCUMENTO'}
+                                                                                        </span>
+                                                                                        {doc.prefixCode && (
+                                                                                            <span className="text-[8px] font-mono font-bold text-slate-500 bg-slate-100 px-1 py-0.5 rounded">
+                                                                                                #{doc.prefixCode}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <p className="text-[10px] font-bold text-slate-900 group-hover:text-primary leading-snug truncate mt-0.5">
+                                                                                        {doc.friendlyName}
+                                                                                    </p>
+                                                                                    <p className="text-[8px] text-slate-400 font-mono truncate select-all">
+                                                                                        {doc.filename}
+                                                                                    </p>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {/* Action Buttons */}
+                                                                            <div className="flex items-center justify-end gap-1 pt-1.5 border-t border-slate-100">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => setSelectedDocForViewer(doc)}
+                                                                                    className="px-2 py-1 bg-primary/10 hover:bg-primary text-primary hover:text-white rounded-md text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all"
+                                                                                    title="Ver archivo"
+                                                                                >
+                                                                                    <span className="material-symbols-outlined text-[13px]">visibility</span>
+                                                                                    Ver
+                                                                                </button>
+                                                                                
                                                                                 <a
-                                                                                    key={i}
-                                                                                    href={docUrl}
+                                                                                    href={docStreamUrl}
                                                                                     target="_blank"
                                                                                     rel="noopener noreferrer"
-                                                                                    className="flex items-center gap-2 bg-white border border-slate-150 rounded p-1.5 hover:border-primary hover:shadow-sm transition-all group relative overflow-hidden"
+                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
+                                                                                    title="Abrir en pestaña nueva"
                                                                                 >
-                                                                                    {/* Accent Left Bar */}
-                                                                                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${doc.isPdf ? 'bg-red-500' : doc.isImage ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                                                                                    
-                                                                                    <span className={`material-symbols-outlined shrink-0 text-[16px] ${doc.isPdf ? 'text-red-500' : doc.isImage ? 'text-blue-500' : 'text-slate-400'} pl-0.5`}>
-                                                                                        {doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description'}
-                                                                                    </span>
-                                                                                    
-                                                                                    <div className="flex-1 min-w-0 pr-1">
-                                                                                        <p className="text-[9px] font-bold text-slate-800 group-hover:text-primary leading-tight truncate">
-                                                                                            {doc.friendlyName}
-                                                                                        </p>
-                                                                                        <p className="text-[7.5px] text-slate-400 font-mono truncate select-all mt-0.5">
-                                                                                            {doc.filename}
-                                                                                        </p>
-                                                                                    </div>
-                                                                                    
-                                                                                    <div className="flex items-center gap-1 shrink-0">
-                                                                                        <span className={`text-[7.5px] font-black px-1 py-0.2 rounded uppercase tracking-wider ${
-                                                                                            doc.isPdf 
-                                                                                                ? 'bg-red-50 text-red-600 border border-red-100' 
-                                                                                                : doc.isImage 
-                                                                                                    ? 'bg-blue-50 text-blue-600 border border-blue-100' 
-                                                                                                    : 'bg-slate-50 text-slate-600 border border-slate-100'
-                                                                                        }`}>
-                                                                                            {doc.ext}
-                                                                                        </span>
-                                                                                        <span className="material-symbols-outlined text-transparent group-hover:text-primary text-[12px] transition-all">
-                                                                                            open_in_new
-                                                                                        </span>
-                                                                                    </div>
+                                                                                    <span className="material-symbols-outlined text-[13px]">open_in_new</span>
                                                                                 </a>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                )}
+                                                                                
+                                                                                <a
+                                                                                    href={docStreamUrl}
+                                                                                    download={doc.filename}
+                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
+                                                                                    title="Descargar archivo"
+                                                                                >
+                                                                                    <span className="material-symbols-outlined text-[13px]">download</span>
+                                                                                </a>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
                                                             </div>
-                                                        );
-                                                    })}
-                                            </div>
-                                        ) : (
-                                            <p className="text-[10px] font-bold text-slate-500">No hay documentos registrados.</p>
-                                        )}
-                                    </div>
-                                )}
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="p-4 text-center bg-white rounded-xl border border-slate-200">
+                                            <span className="material-symbols-outlined text-slate-300 text-3xl mb-1">folder_open</span>
+                                            <p className="text-[10px] font-bold text-slate-500">No se encontraron documentos digitalizados.</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1408,6 +1634,9 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                         <div className="flex flex-wrap gap-2 justify-end">
                              {batchResults.length > 0 && (
                                  <>
+                                     <button onClick={handleExportCruceCC} className="px-5 h-12 bg-blue-50 text-blue-600 rounded-xl text-xs font-black uppercase hover:bg-blue-100 transition-colors flex items-center gap-2">
+                                         <span className="material-symbols-outlined text-sm">laptop_mac</span> Reporte CC
+                                     </button>
                                      <button onClick={handleExportCruceExcel} className="px-5 h-12 bg-green-50 text-green-600 rounded-xl text-xs font-black uppercase hover:bg-green-100 transition-colors flex items-center gap-2">
                                          <span className="material-symbols-outlined text-sm">table_view</span> Excel
                                      </button>
@@ -1425,6 +1654,17 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                     </div>
                 </div>
                 <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                    {isProcessingBatch && (
+                         <div className="p-4 border-b border-slate-100 bg-blue-50/50">
+                             <div className="flex justify-between items-center mb-2">
+                                 <p className="text-xs font-bold text-blue-800">{batchStatusText}</p>
+                                 <p className="text-xs font-black text-blue-900">{batchProgress}%</p>
+                             </div>
+                             <div className="w-full bg-blue-100 h-2 rounded-full overflow-hidden">
+                                 <div className="bg-blue-600 h-full transition-all duration-300 ease-out" style={{ width: `${batchProgress}%` }}></div>
+                             </div>
+                         </div>
+                    )}
                     <div className="flex-1 overflow-auto">
                         <table className="w-full text-left border-collapse">
                             <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10 shadow-sm">
@@ -1544,6 +1784,28 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             </div>
         )}
       </div>
+
+      {/* File Gateway Settings Modal */}
+      <FileGatewayModal
+        isOpen={isGatewayModalOpen}
+        onClose={() => setIsGatewayModalOpen(false)}
+        onGatewayUpdated={(newUrl) => {
+          setGatewayUrl(newUrl);
+          checkGateway(newUrl);
+          if (studentHistory.length > 0) {
+            fetchExtraInfo(studentHistory);
+          }
+        }}
+      />
+
+      {/* Document In-App Viewer Modal */}
+      {selectedDocForViewer && (
+        <DocumentViewerModal
+          document={selectedDocForViewer}
+          streamUrl={getDocumentStreamUrl(selectedDocForViewer.path, gatewayUrl)}
+          onClose={() => setSelectedDocForViewer(null)}
+        />
+      )}
     </div>
   );
 };

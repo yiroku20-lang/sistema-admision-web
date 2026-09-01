@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabaseClient';
 import { User, ToastMessage, CVEscuela, CVCuadroAnual, CVModalidad, CVVacante } from '../types';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 
 import { VacancyAnalytics } from '../components/VacancyAnalytics';
@@ -233,12 +235,13 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
         for (let i = 1; i < lines.length; i++) {
             if (!lines[i].trim()) continue;
             const cols = lines[i].split(',').map(c => c.trim());
-            // Expected: 1. Nombre | 2. Codigo | 3. Area | 4. Filial
+            // Expected: 1. Nombre | 2. Codigo | 3. Area | 4. Filial | 5. Siglas
             results.push({
                 nombre: cols[0] || '',
                 codigo_carrera: cols[1] || '',
                 area: cols[2] || '',
-                filial: cols[3] || 'CUSCO'
+                filial: cols[3] || 'CUSCO',
+                siglas: cols[4] || null
             });
         }
         setCsvPreview(results);
@@ -336,6 +339,19 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
       await supabase.from('cv_escuelas').update({ alias: newAlias }).eq('id', escuelaId);
     } catch (err) {
       console.error('Error saving alias:', err);
+    }
+  };
+
+  const handleSiglasChange = (escuelaId: string, newCodigo: string) => {
+    setAllEscuelas(prev => prev.map(esc => esc.id === escuelaId ? { ...esc, siglas: newCodigo } : esc));
+  };
+
+  const saveSiglas = async (escuelaId: string, newCodigo: string) => {
+    try {
+      await supabase.from('cv_escuelas').update({ siglas: newCodigo }).eq('id', escuelaId);
+      setEscuelas(prev => prev.map(esc => esc.id === escuelaId ? { ...esc, siglas: newCodigo } : esc));
+    } catch (err) {
+      console.error('Error saving siglas:', err);
     }
   };
 
@@ -509,22 +525,6 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
     }
   };
 
-  const handleExportExcel = () => {
-    if (!selectedCuadro) return;
-    
-    // Create a simple worksheet from the table
-    const table = document.querySelector('.exportable-table') || document.querySelector('table');
-    if (!table) return;
-    
-    const wb = XLSX.utils.table_to_book(table, { sheet: "Cuadro Vacantes" });
-    XLSX.writeFile(wb, `Cuadro_Vacantes_${selectedCuadro.anio}.xlsx`);
-  };
-
-  const handleExportPDF = () => {
-    window.print();
-    
-  };
-
   // Calculations
   const getRowTotal = (escuelaId: string, semestre?: string, mods = modalidades) => {
     let total = 0;
@@ -589,6 +589,361 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
   const pdfPages: string[][] = [];
   if (page1Areas.length > 0) pdfPages.push(page1Areas);
   if (page2Areas.length > 0) pdfPages.push(page2Areas);
+
+  const handleExportExcel = () => {
+    if (!selectedCuadro) return;
+    
+    try {
+      const aoa: any[][] = [];
+      
+      // Header Titles
+      aoa.push([`UNIVERSIDAD NACIONAL DE SAN ANTONIO ABAD DEL CUSCO`]);
+      aoa.push([`DIRECCIÓN DE ADMISIÓN - CUADRO DE VACANTES PROCESO ${selectedCuadro.anio}`]);
+      aoa.push([`Fecha de emisión: ${new Date().toLocaleDateString('es-PE')}`]);
+      aoa.push([]); // Espacio
+      
+      // Fila 1 de Encabezados (Semestres)
+      const head1: any[] = ['ESCUELAS PROFESIONALES'];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        head1.push(sem);
+        for (let i = 0; i < modsInSem.length; i++) {
+          head1.push('');
+        }
+      });
+      head1.push('TOTAL GENERAL');
+      aoa.push(head1);
+      
+      // Fila 2 de Encabezados (Modalidades)
+      const head2: any[] = [''];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        modsInSem.forEach(m => {
+          head2.push(m.nombre);
+        });
+        head2.push(`TOTAL ${sem}`);
+      });
+      head2.push('');
+      aoa.push(head2);
+      
+      // Contenido por Área
+      filteredAreas.forEach(area => {
+        const escuelasInArea = filteredEscuelas.filter(e => e.area === area);
+        if (escuelasInArea.length === 0) return;
+        
+        aoa.push([`ÁREA ${area}`]);
+        
+        escuelasInArea.forEach(esc => {
+          const row: any[] = [
+            `${esc.alias || esc.nombre}${esc.filial && esc.filial !== 'CUSCO' && esc.filial !== 'Cusco' ? ` (${esc.filial})` : ''}`
+          ];
+          
+          filteredSemestres.forEach(sem => {
+            const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+            modsInSem.forEach(m => {
+              row.push(vacantesMap[`${esc.id}_${m.id}`] || 0);
+            });
+            row.push(getRowTotal(esc.id, sem, filteredModalidades));
+          });
+          
+          row.push(getRowTotal(esc.id, undefined, filteredModalidades));
+          aoa.push(row);
+        });
+        
+        // Subtotal de Área
+        const subtotalRow: any[] = [`TOTAL ÁREA ${area}`];
+        filteredSemestres.forEach(sem => {
+          const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+          modsInSem.forEach(m => {
+            subtotalRow.push(getColTotal(m.id, area, filteredEscuelas));
+          });
+          subtotalRow.push(getAreaTotal(area, sem, filteredEscuelas, filteredModalidades));
+        });
+        subtotalRow.push(getAreaTotal(area, undefined, filteredEscuelas, filteredModalidades));
+        aoa.push(subtotalRow);
+      });
+      
+      // Total General
+      const grandRow: any[] = ['TOTAL GENERAL'];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        modsInSem.forEach(m => {
+          grandRow.push(getColTotal(m.id, undefined, filteredEscuelas));
+        });
+        grandRow.push(getGrandTotal(sem, filteredEscuelas, filteredModalidades));
+      });
+      grandRow.push(getGrandTotal(undefined, filteredEscuelas, filteredModalidades));
+      aoa.push(grandRow);
+      
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      
+      // Anchos de columna
+      const colWidths = [{ wch: 38 }];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        modsInSem.forEach(() => colWidths.push({ wch: 16 }));
+        colWidths.push({ wch: 14 });
+      });
+      colWidths.push({ wch: 16 });
+      ws['!cols'] = colWidths;
+      
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Vacantes_${selectedCuadro.anio}`);
+      XLSX.writeFile(wb, `Cuadro_Vacantes_${selectedCuadro.anio}.xlsx`);
+      notify('Archivo Excel exportado exitosamente', 'success');
+    } catch (err: any) {
+      console.error('Error exportando Excel:', err);
+      notify('Error al generar Excel: ' + err.message, 'error');
+    }
+  };
+
+  const handleExportPDF = () => {
+    if (!selectedCuadro) return;
+    
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      
+      // Encabezado institucional por página
+      const renderPageHeader = (pageNum: number, totalPages: number, pageTitle: string) => {
+        doc.setFillColor(123, 21, 35); // #7b1523
+        doc.rect(0, 0, pageWidth, 4, 'F');
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(123, 21, 35);
+        doc.text('UNIVERSIDAD NACIONAL DE SAN ANTONIO ABAD DEL CUSCO', 14, 10);
+        
+        doc.setFontSize(8.5);
+        doc.setTextColor(70, 70, 70);
+        doc.text(`DIRECCIÓN DE ADMISIÓN  |  CUADRO OFICIAL DE VACANTES - PROCESO ${selectedCuadro.anio}`, 14, 15);
+        
+        doc.setFontSize(8);
+        doc.setTextColor(123, 21, 35);
+        doc.text(pageTitle, 14, 20);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(120, 120, 120);
+        doc.text(`Fecha: ${new Date().toLocaleDateString('es-PE')}`, pageWidth - 50, 10);
+        doc.text(`Página ${pageNum} de ${totalPages}`, pageWidth - 35, 15);
+        
+        doc.setDrawColor(210, 210, 210);
+        doc.setLineWidth(0.3);
+        doc.line(14, 22, pageWidth - 14, 22);
+      };
+      
+      // Encabezados multinivel
+      const headRow1: any[] = [
+        { content: 'ESCUELA PROFESIONAL', rowSpan: 2, styles: { halign: 'left', valign: 'middle', fillColor: [123, 21, 35], textColor: [255, 255, 255], fontStyle: 'bold' } }
+      ];
+      
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        headRow1.push({
+          content: sem,
+          colSpan: modsInSem.length + 1,
+          styles: { halign: 'center', valign: 'middle', fillColor: [155, 25, 45], textColor: [255, 255, 255], fontStyle: 'bold' }
+        });
+      });
+      
+      headRow1.push({
+        content: 'TOTAL GENERAL',
+        rowSpan: 2,
+        styles: { halign: 'center', valign: 'middle', fillColor: [232, 161, 52], textColor: [255, 255, 255], fontStyle: 'bold' }
+      });
+      
+      const headRow2: any[] = [];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        modsInSem.forEach(m => {
+          let shortName = m.nombre
+            .replace(/^CONCURSO DE ADMISI[ÓO]N /i, '')
+            .replace(/^ADMISI[ÓO]N POR /i, '')
+            .replace(/^EXAMEN /i, '')
+            .trim();
+          if (shortName.length > 25) shortName = shortName.substring(0, 22) + '...';
+          
+          headRow2.push({
+            content: shortName,
+            styles: { halign: 'center', valign: 'middle', fillColor: [248, 249, 250], textColor: [123, 21, 35], fontSize: 5, fontStyle: 'bold' }
+          });
+        });
+        
+        headRow2.push({
+          content: `TOTAL ${sem}`,
+          styles: { halign: 'center', valign: 'middle', fillColor: [241, 245, 249], textColor: [155, 25, 45], fontSize: 5.5, fontStyle: 'bold' }
+        });
+      });
+      
+      const tableHead = [headRow1, headRow2];
+      const totalColCount = 1 + filteredModalidades.length + filteredSemestres.length + 1;
+      
+      const buildBodyForAreas = (targetAreas: string[], isLastPage: boolean) => {
+        const body: any[] = [];
+        
+        targetAreas.forEach(area => {
+          const escuelasInArea = filteredEscuelas.filter(e => e.area === area);
+          if (escuelasInArea.length === 0) return;
+          
+          const areaLabels: Record<string, string> = {
+            'A': 'ÁREA A: CIENCIAS BÁSICAS E INGENIERÍAS',
+            'B': 'ÁREA B: CIENCIAS DE LA SALUD',
+            'C': 'ÁREA C: CIENCIAS ADMINISTRATIVAS, CONTABLES Y ECONÓMICAS',
+            'D': 'ÁREA D: CIENCIAS SOCIALES Y HUMANIDADES'
+          };
+          
+          body.push([
+            {
+              content: areaLabels[area] || `ÁREA ${area}`,
+              colSpan: totalColCount,
+              styles: { fillColor: [241, 245, 249], textColor: [123, 21, 35], fontStyle: 'bold', fontSize: 6 }
+            }
+          ]);
+          
+          escuelasInArea.forEach((esc) => {
+            const row: any[] = [
+              {
+                content: `${esc.alias || esc.nombre}${esc.filial && esc.filial !== 'CUSCO' && esc.filial !== 'Cusco' ? ` (${esc.filial})` : ''}`,
+                styles: { fontStyle: 'normal', halign: 'left' }
+              }
+            ];
+            
+            filteredSemestres.forEach(sem => {
+              const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+              modsInSem.forEach(m => {
+                const val = vacantesMap[`${esc.id}_${m.id}`] || 0;
+                row.push({
+                  content: val > 0 ? String(val) : '0',
+                  styles: { halign: 'center', textColor: val > 0 ? [0, 0, 0] : [160, 160, 160] }
+                });
+              });
+              
+              row.push({
+                content: String(getRowTotal(esc.id, sem, filteredModalidades)),
+                styles: { halign: 'center', fontStyle: 'bold', textColor: [155, 25, 45], fillColor: [253, 253, 253] }
+              });
+            });
+            
+            row.push({
+              content: String(getRowTotal(esc.id, undefined, filteredModalidades)),
+              styles: { halign: 'center', fontStyle: 'bold', textColor: [123, 21, 35], fillColor: [255, 251, 245] }
+            });
+            
+            body.push(row);
+          });
+          
+          // Subtotal
+          const subtotalRow: any[] = [
+            { content: `TOTAL ÁREA ${area}`, styles: { halign: 'right', fontStyle: 'bold', fillColor: [248, 249, 250], textColor: [123, 21, 35] } }
+          ];
+          
+          filteredSemestres.forEach(sem => {
+            const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+            modsInSem.forEach(m => {
+              subtotalRow.push({
+                content: String(getColTotal(m.id, area, filteredEscuelas)),
+                styles: { halign: 'center', fontStyle: 'bold', fillColor: [248, 249, 250], textColor: [123, 21, 35] }
+              });
+            });
+            
+            subtotalRow.push({
+              content: String(getAreaTotal(area, sem, filteredEscuelas, filteredModalidades)),
+              styles: { halign: 'center', fontStyle: 'bold', fillColor: [241, 245, 249], textColor: [155, 25, 45] }
+            });
+          });
+          
+          subtotalRow.push({
+            content: String(getAreaTotal(area, undefined, filteredEscuelas, filteredModalidades)),
+            styles: { halign: 'center', fontStyle: 'bold', fillColor: [255, 248, 237], textColor: [214, 144, 32] }
+          });
+          
+          body.push(subtotalRow);
+        });
+        
+        if (isLastPage) {
+          const grandRow: any[] = [
+            { content: 'TOTAL GENERAL', styles: { halign: 'right', fontStyle: 'bold', fillColor: [123, 21, 35], textColor: [255, 255, 255], fontSize: 6.5 } }
+          ];
+          
+          filteredSemestres.forEach(sem => {
+            const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+            modsInSem.forEach(m => {
+              grandRow.push({
+                content: String(getColTotal(m.id, undefined, filteredEscuelas)),
+                styles: { halign: 'center', fontStyle: 'bold', fillColor: [155, 25, 45], textColor: [255, 255, 255] }
+              });
+            });
+            
+            grandRow.push({
+              content: String(getGrandTotal(sem, filteredEscuelas, filteredModalidades)),
+              styles: { halign: 'center', fontStyle: 'bold', fillColor: [123, 21, 35], textColor: [255, 255, 255] }
+            });
+          });
+          
+          grandRow.push({
+            content: String(getGrandTotal(undefined, filteredEscuelas, filteredModalidades)),
+            styles: { halign: 'center', fontStyle: 'bold', fillColor: [232, 161, 52], textColor: [255, 255, 255], fontSize: 7 }
+          });
+          
+          body.push(grandRow);
+        }
+        
+        return body;
+      };
+      
+      // PÁGINA 1: ÁREAS A Y B
+      renderPageHeader(1, 2, 'ÁREAS A Y B: CIENCIAS BÁSICAS E INGENIERÍAS / CIENCIAS DE LA SALUD');
+      const bodyPage1 = buildBodyForAreas(['A', 'B'], false);
+      
+      autoTable(doc, {
+        head: tableHead,
+        body: bodyPage1,
+        startY: 24,
+        margin: { left: 8, right: 8, bottom: 6 },
+        theme: 'grid',
+        styles: {
+          fontSize: 5,
+          cellPadding: 0.6,
+          lineColor: [225, 225, 225],
+          lineWidth: 0.1,
+          font: 'helvetica'
+        },
+        columnStyles: {
+          0: { cellWidth: 48 }
+        }
+      });
+      
+      // PÁGINA 2: ÁREAS C Y D + TOTAL GENERAL
+      doc.addPage('a4', 'landscape');
+      renderPageHeader(2, 2, 'ÁREAS C Y D: CIENCIAS ADMINISTRATIVAS, CONTABLES, ECONÓMICAS Y SOCIALES');
+      const bodyPage2 = buildBodyForAreas(['C', 'D'], true);
+      
+      autoTable(doc, {
+        head: tableHead,
+        body: bodyPage2,
+        startY: 24,
+        margin: { left: 8, right: 8, bottom: 6 },
+        theme: 'grid',
+        styles: {
+          fontSize: 5,
+          cellPadding: 0.6,
+          lineColor: [225, 225, 225],
+          lineWidth: 0.1,
+          font: 'helvetica'
+        },
+        columnStyles: {
+          0: { cellWidth: 48 }
+        }
+      });
+      
+      doc.save(`Cuadro_Vacantes_${selectedCuadro.anio}.pdf`);
+      notify('PDF oficial generado y descargado exitosamente (2 hojas)', 'success');
+    } catch (err: any) {
+      console.error('Error exportando PDF:', err);
+      notify('Error al generar PDF: ' + err.message, 'error');
+    }
+  };
 
   return (
     <div className="w-full max-w-[1600px] mx-auto flex flex-col gap-6 p-4 md:p-8 h-full overflow-hidden">
@@ -1418,8 +1773,8 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                   <div className="flex-1 flex flex-col gap-4 border-r border-slate-100 pr-6">
                     <h4 className="font-bold text-slate-700 uppercase tracking-widest text-xs">Importar Nuevas Escuelas</h4>
                     <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                        <p className="text-xs text-blue-800 font-bold mb-2">Formato CSV requerido (4 columnas):</p>
-                        <p className="text-[10px] text-blue-700 font-mono bg-blue-100/50 p-2 rounded-lg">1. Nombre | 2. Código | 3. Área (A,B,C,D) | 4. Filial (CUSCO, SICUANI...)</p>
+                        <p className="text-xs text-blue-800 font-bold mb-2">Formato CSV (hasta 5 columnas):</p>
+                        <p className="text-[10px] text-blue-700 font-mono bg-blue-100/50 p-2 rounded-lg">1. Nombre | 2. Código | 3. Área | 4. Filial | 5. Código CP (Ej. AE)</p>
                     </div>
 
                     <div 
@@ -1470,6 +1825,7 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                         <thead className="bg-slate-50 sticky top-0 z-10">
                           <tr>
                             <th className="p-2 font-bold text-slate-500 uppercase">Código</th>
+                            <th className="p-2 font-bold text-slate-500 uppercase text-center w-12" title="Código de Escuela Profesional">CP</th>
                             <th className="p-2 font-bold text-slate-500 uppercase">Nombre</th>
                             <th className="p-2 font-bold text-slate-500 uppercase text-center">Área</th>
                             <th className="p-2 font-bold text-slate-500 uppercase text-center">Acción</th>
@@ -1479,6 +1835,17 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                           {allEscuelas.map(esc => (
                             <tr key={esc.id} className={`hover:bg-slate-50 ${esc.is_hidden ? 'opacity-50' : ''}`}>
                               <td className="p-2 font-mono text-slate-500">{esc.codigo_carrera}</td>
+                              <td className="p-2 text-center">
+                                <input
+                                  type="text"
+                                  maxLength={2}
+                                  value={esc.siglas || ''}
+                                  onChange={(e) => handleSiglasChange(esc.id, e.target.value.toUpperCase())}
+                                  onBlur={(e) => saveSiglas(esc.id, e.target.value.toUpperCase())}
+                                  placeholder="--"
+                                  className="w-10 text-center text-xs font-bold uppercase bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 outline-none text-indigo-700"
+                                />
+                              </td>
                               <td className="p-2 font-bold text-slate-700">
                                 {esc.nombre}
                                 {esc.filial !== 'CUSCO' && <span className="ml-1 text-slate-400">({esc.filial})</span>}

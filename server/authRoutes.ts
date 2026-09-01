@@ -83,6 +83,26 @@ router.post("/login", async (req, res) => {
       cleanPassword === "admin";
 
     if (authUser || isPlainMatch || isBypass) {
+      // Si no obtuvimos session pero el usuario es válido en DB/bypass, sincronizamos auth.users para generar sesión
+      if (!authSession) {
+        try {
+          const authSyncPassword = cleanPassword.length >= 6 ? cleanPassword : `unsaac_auth_secure_2026!`;
+          await adminSupabase.auth.admin.updateUserById(profile.id, {
+            password: authSyncPassword,
+            email_confirm: true,
+          });
+          const { data: directSign } = await anonSupabase.auth.signInWithPassword({
+            email,
+            password: authSyncPassword,
+          });
+          if (directSign?.session) {
+            authSession = directSign.session;
+          }
+        } catch (syncErr) {
+          console.warn("Could not sync auth password session:", syncErr);
+        }
+      }
+
       // Registrar log de auditoría
       try {
         await adminSupabase.from("tramite_seguimiento").insert([
@@ -105,6 +125,92 @@ router.post("/login", async (req, res) => {
   } catch (error: any) {
     console.error("Login route error:", error);
     return res.status(500).json({ error: error.message || "Error interno de autenticación." });
+  }
+});
+
+// Endpoint seguro para consultar lista de operadores sin problemas de RLS
+router.get("/operators", async (_req, res) => {
+  try {
+    const { data, error } = await adminSupabase
+      .from("usuarios")
+      .select("id, name, role, dni, permissions")
+      .order("name", { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err: any) {
+    console.error("Error fetching operators from server:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint seguro para consultar todos los usuarios registrados (para panel de configuración)
+router.get("/users", async (_req, res) => {
+  try {
+    const { data, error } = await adminSupabase
+      .from("usuarios")
+      .select("id, dni, name, role, permissions, created_at, password")
+      .order("name", { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err: any) {
+    console.error("Error fetching users list from server:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para actualizar usuario (nombre, dni, rol, permisos)
+router.post("/update-user", async (req, res) => {
+  try {
+    const { id, dni, name, role, permissions } = req.body;
+    if (!id || !dni || !name || !role) {
+      return res.status(400).json({ error: "Faltan campos obligatorios." });
+    }
+
+    const { error } = await adminSupabase
+      .from("usuarios")
+      .update({
+        dni: String(dni).trim(),
+        name: String(name).trim(),
+        role,
+        permissions: role === "Operador" ? permissions : null,
+      })
+      .eq("id", id);
+
+    if (error) throw error;
+    res.json({ success: true, message: "Usuario actualizado exitosamente." });
+  } catch (err: any) {
+    console.error("Error updating user:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para eliminar usuario
+router.post("/delete-user", async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "ID de usuario requerido." });
+    }
+
+    // 1. Eliminar de tabla usuarios
+    const { error: dbError } = await adminSupabase
+      .from("usuarios")
+      .delete()
+      .eq("id", id);
+
+    if (dbError) throw dbError;
+
+    // 2. Intentar eliminar de auth.users si existe
+    try {
+      await adminSupabase.auth.admin.deleteUser(id);
+    } catch (authErr) {
+      console.warn("Auth user deletion warning:", authErr);
+    }
+
+    res.json({ success: true, message: "Usuario eliminado exitosamente." });
+  } catch (err: any) {
+    console.error("Error deleting user:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

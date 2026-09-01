@@ -183,12 +183,23 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
         const mapped = raw.map(item => {
             const matches = dbMatches?.filter(m => String(m.CODPOSTULANTE).trim() === String(item.code).trim()) || [];
             const match = matches[0];
-            const prevRes = existingReservations?.find(r => String(r.student_code).trim() === String(item.code).trim() && !r.is_withdrawn);
+            const studentReservations = existingReservations?.filter(r => String(r.student_code).trim() === String(item.code).trim() && !r.is_withdrawn) || [];
+            const prevRes = studentReservations[0];
             
             let obs = '';
-            if (prevRes) {
+            if (matches.length > 1) {
+                const multiTexts = matches.map(m => {
+                    const r = studentReservations.find(res => res.carrera === m.CARRERA);
+                    if (r) {
+                        const resNum = (r.batch as any)?.resolution_number || 'TRÁMITE';
+                        return `• ${m.CARRERA} (${m.MODALIDAD}) -> RESERVADO: ${resNum}`;
+                    }
+                    return `• ${m.CARRERA} (${m.MODALIDAD})`;
+                });
+                obs = `MÚLTIPLES INGRESOS:\n${multiTexts.join('\n')}`;
+            } else if (prevRes) {
                 const resNum = (prevRes.batch as any)?.resolution_number || 'TRÁMITE';
-                obs = `RES: ${resNum} / ${prevRes.carrera} (${prevRes.admission_modality})`;
+                obs = `RESERVADO: ${resNum} / ${prevRes.carrera} (${prevRes.admission_modality})`;
             }
 
             return {
@@ -322,7 +333,14 @@ export const VacancyReservation: React.FC<VacancyReservationProps> = ({ user, no
               lineWidth: 0.1
           },
           columnStyles: {
-              0: { cellWidth: 15, halign: 'center' }
+              0: { cellWidth: 10, halign: 'center' },
+              1: { cellWidth: 18 },
+              2: { cellWidth: 40 },
+              3: { cellWidth: 45 },
+              4: { cellWidth: 25 },
+              5: { cellWidth: 15 },
+              6: { cellWidth: 'auto' },
+              7: { cellWidth: 20 }
           },
           didDrawPage: (data) => {
               doc.setFontSize(8);
