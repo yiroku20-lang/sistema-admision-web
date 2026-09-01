@@ -1,6 +1,6 @@
 {
   "name": "sistema-admision-desktop",
-  "version": "1.0.21",
+  "version": "1.0.28",
   "description": "Sistema de Admision UNSAAC - Escritorio con Sincronizacion Oficial al Repositorio sistema-admision-web",
   "main": "main.js",
   "type": "commonjs",

@@ -35,6 +35,7 @@ jobs:
       - name: Publish Electron Desktop Release
         run: |
           cd desktop
+          npm version patch --no-git-tag-version
           npm install --legacy-peer-deps
           npx electron-builder --publish always
         env:
