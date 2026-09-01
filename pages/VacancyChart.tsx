@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabaseClient';
 import { User, ToastMessage, CVEscuela, CVCuadroAnual, CVModalidad, CVVacante } from '../types';
 import * as XLSX from 'xlsx';
-
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 
 import { VacancyAnalytics } from '../components/VacancyAnalytics';
 
@@ -21,6 +23,204 @@ const splitTextIntoLines = (text: string, maxChars: number): string[] => {
   });
   if (currentLine) lines.push(currentLine.trim());
   return lines;
+};
+
+interface VacancyPreviewDocumentProps {
+  cuadroAnio?: number | string;
+  pdfPages: string[][];
+  filteredEscuelas: CVEscuela[];
+  filteredModalidades: CVModalidad[];
+  filteredSemestres: string[];
+  vacantesMap: Record<string, number | ''>;
+  getRowTotal: (escuelaId: string, semestre?: string, mods?: CVModalidad[]) => number;
+  getColTotal: (modalidadId: string, area?: string, escs?: CVEscuela[]) => number;
+  getAreaTotal: (area: string, semestre?: string, escs?: CVEscuela[], mods?: CVModalidad[]) => number;
+  getGrandTotal: (semestre?: string, escs?: CVEscuela[], mods?: CVModalidad[]) => number;
+}
+
+const VacancyPreviewDocument: React.FC<VacancyPreviewDocumentProps> = ({
+  cuadroAnio,
+  pdfPages,
+  filteredEscuelas,
+  filteredModalidades,
+  filteredSemestres,
+  vacantesMap,
+  getRowTotal,
+  getColTotal,
+  getAreaTotal,
+  getGrandTotal,
+}) => {
+  return (
+    <div className="mx-auto w-full" style={{ fontFamily: "'Poppins', sans-serif" }}>
+      {pdfPages.map((pageAreas, pageIndex) => (
+        <div 
+          key={pageIndex} 
+          className={`vacancy-pdf-page bg-white p-2 shadow-sm flex items-stretch border border-slate-200 ${pageIndex > 0 ? 'page-break-row mt-8' : ''}`}
+          style={{ width: '100%', minWidth: '1100px', boxSizing: 'border-box', backgroundColor: '#ffffff' }}
+        >
+          {/* Vertical Header for PDF */}
+          <div className="flex flex-col items-center justify-between border-r-2 pr-2 mr-1.5 w-[68px] shrink-0 pt-3 pb-3" style={{ borderColor: '#7b1523', backgroundColor: '#ffffff' }}>
+            <div className="w-13 h-13 flex items-center justify-center shrink-0">
+              <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" alt="UNSAAC" className="h-full object-contain" crossOrigin="anonymous" />
+            </div>
+            
+            <div className="flex-1 flex flex-col items-center justify-center w-full relative overflow-visible min-h-[460px]">
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 whitespace-nowrap flex flex-col items-center gap-1 w-[700px]">
+                <h1 className="text-[#7b1523] text-[14.5px] font-black tracking-widest uppercase m-0 leading-tight">UNIVERSIDAD NACIONAL DE SAN ANTONIO ABAD DEL CUSCO</h1>
+                <h2 className="text-[#9b192d] text-[11.5px] font-bold tracking-widest uppercase m-0 leading-tight">DIRECCIÓN DE ADMISIÓN</h2>
+                <p className="text-slate-600 text-[10px] font-semibold tracking-widest uppercase m-0 leading-tight">CUADRO DE VACANTES {cuadroAnio}</p>
+              </div>
+            </div>
+
+            <div className="w-13 h-13 flex items-center justify-center shrink-0">
+              <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%201.png" alt="Admisión" className="h-full object-contain" crossOrigin="anonymous" />
+            </div>
+          </div>
+
+          {/* Table Container */}
+          <div className="flex-1 overflow-hidden pl-0.5">
+            <table className="w-full text-left border-collapse text-[10px]" style={{ backgroundColor: 'white', tableLayout: 'auto' }}>
+              <thead>
+                <tr>
+                  <th className="p-1.5 border text-center font-bold" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d', minWidth: '190px', width: '20%' }} rowSpan={2}>
+                    Escuelas Profesionales
+                  </th>
+                  {filteredSemestres.map(sem => {
+                    const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+                    return (
+                      <th key={sem} colSpan={modsInSem.length + 1} className="p-1.5 border text-center font-bold" style={{ backgroundColor: '#9b192d', color: 'white', borderColor: '#7b1523' }}>
+                        {sem}
+                      </th>
+                    );
+                  })}
+                  <th className="p-0 border text-center font-black" style={{ backgroundColor: '#e8a134', color: 'white', borderColor: '#d69020', minWidth: '46px', width: '48px' }} rowSpan={2}>
+                    <div className="relative w-full h-[175px] flex items-center justify-center mx-auto overflow-visible">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[165px] text-center text-[11px] font-black leading-snug tracking-wide uppercase">
+                        Total General
+                      </div>
+                    </div>
+                  </th>
+                </tr>
+                <tr>
+                  {filteredSemestres.map(sem => {
+                    const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+                    return (
+                      <React.Fragment key={`mods-${sem}`}>
+                        {modsInSem.map(m => (
+                          <th key={m.id} className="p-0 border text-center font-medium" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1', height: '175px', verticalAlign: 'middle', minWidth: '34px' }}>
+                            <div className="relative w-full h-[175px] flex items-center justify-center mx-auto overflow-visible">
+                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[165px] text-center text-[9.5px] font-[600] leading-snug tracking-wide">
+                                {m.nombre}
+                              </div>
+                            </div>
+                          </th>
+                        ))}
+                        <th className="p-0 border text-center font-bold" style={{ backgroundColor: '#f1f5f9', color: '#9b192d', borderColor: '#e1e1e1', height: '175px', verticalAlign: 'middle', minWidth: '38px', width: '40px' }}>
+                          <div className="relative w-full h-[175px] flex items-center justify-center mx-auto overflow-visible">
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[165px] text-center text-[10px] font-bold leading-snug tracking-wide">
+                              Total {sem}
+                            </div>
+                          </div>
+                        </th>
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {pageAreas.map(area => {
+                  const escuelasInArea = filteredEscuelas.filter(e => e.area === area);
+                  if (escuelasInArea.length === 0) return null;
+                  
+                  return (
+                    <React.Fragment key={area}>
+                      {/* Area Header */}
+                      <tr>
+                        <td colSpan={1 + filteredModalidades.length + filteredSemestres.length + 1} className="px-2 py-1 border font-black uppercase" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>
+                          Área {area}
+                        </td>
+                      </tr>
+                      {/* Escuelas */}
+                      {escuelasInArea.map((escuela, idx) => (
+                        <tr key={escuela.id} style={{ backgroundColor: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
+                          <td className="px-2 py-1 border font-medium text-slate-700" style={{ borderColor: '#e1e1e1' }}>{escuela.alias || escuela.nombre} {escuela.filial !== 'CUSCO' && escuela.filial !== 'Cusco' ? `(${escuela.filial})` : ''}</td>
+                          {filteredSemestres.map(sem => {
+                            const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+                            return (
+                              <React.Fragment key={`${escuela.id}-${sem}`}>
+                                {modsInSem.map(m => (
+                                  <td key={`${escuela.id}-${m.id}`} className="px-1 py-1 border text-center text-slate-600" style={{ borderColor: '#e1e1e1' }}>
+                                    {vacantesMap[`${escuela.id}_${m.id}`] || 0}
+                                  </td>
+                                ))}
+                                <td className="px-1 py-1 border text-center font-bold" style={{ color: '#9b192d', borderColor: '#e1e1e1', backgroundColor: '#fdfdfd' }}>
+                                  {getRowTotal(escuela.id, sem, filteredModalidades)}
+                                </td>
+                              </React.Fragment>
+                            );
+                          })}
+                          <td className="px-1 py-1 border text-center font-black" style={{ color: '#7b1523', borderColor: '#e1e1e1', backgroundColor: '#fffbf5' }}>
+                            {getRowTotal(escuela.id, undefined, filteredModalidades)}
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Area Totals */}
+                      <tr>
+                        <td className="px-2 py-1 border font-bold text-right" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>Total Área {area}</td>
+                        {filteredSemestres.map(sem => {
+                          const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+                          return (
+                            <React.Fragment key={`total-${area}-${sem}`}>
+                              {modsInSem.map(m => (
+                                <td key={`total-${area}-${m.id}`} className="px-1 py-1 border text-center font-bold" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>
+                                  {getColTotal(m.id, area, filteredEscuelas)}
+                                </td>
+                              ))}
+                              <td className="px-1 py-1 border text-center font-black" style={{ backgroundColor: '#f1f5f9', color: '#9b192d', borderColor: '#e1e1e1' }}>
+                                {getAreaTotal(area, sem, filteredEscuelas, filteredModalidades)}
+                              </td>
+                            </React.Fragment>
+                          );
+                        })}
+                        <td className="px-1 py-1 border text-center font-black" style={{ backgroundColor: '#fff8ed', color: '#d69020', borderColor: '#e1e1e1' }}>
+                          {getAreaTotal(area, undefined, filteredEscuelas, filteredModalidades)}
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+              {pageIndex === pdfPages.length - 1 && (
+                <tfoot>
+                  <tr>
+                    <td className="px-2 py-2 border font-black text-right uppercase" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d' }}>Total General</td>
+                    {filteredSemestres.map(sem => {
+                      const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+                      return (
+                        <React.Fragment key={`grand-${sem}`}>
+                          {modsInSem.map(m => (
+                            <td key={`grand-${m.id}`} className="px-1 py-2 border text-center font-bold" style={{ backgroundColor: '#9b192d', color: 'white', borderColor: '#7b1523' }}>
+                              {getColTotal(m.id, undefined, filteredEscuelas)}
+                            </td>
+                          ))}
+                          <td className="px-1 py-2 border text-center font-black" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d' }}>
+                            {getGrandTotal(sem, filteredEscuelas, filteredModalidades)}
+                          </td>
+                        </React.Fragment>
+                      );
+                    })}
+                    <td className="px-1 py-2 border text-center font-black text-lg" style={{ backgroundColor: '#e8a134', color: 'white', borderColor: '#d69020' }}>
+                      {getGrandTotal(undefined, filteredEscuelas, filteredModalidades)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: ToastMessage['type']) => void }> = ({ user, notify }) => {
@@ -42,6 +242,7 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
   const [filterSemestre, setFilterSemestre] = useState<string>('Todos');
   const [filterModalidades, setFilterModalidades] = useState<string[]>([]);
   const [isModalidadesDropdownOpen, setIsModalidadesDropdownOpen] = useState(false);
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
 
   // Modals
   const [isNewCuadroModalOpen, setIsNewCuadroModalOpen] = useState(false);
@@ -65,6 +266,7 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
   const [cuadroResolutions, setCuadroResolutions] = useState<any[]>([]);
 
   const previewRef = useRef<HTMLDivElement>(null);
+  const hiddenPreviewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchCuadros();
@@ -525,18 +727,227 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
 
   const handleExportExcel = () => {
     if (!selectedCuadro) return;
-    
-    // Create a simple worksheet from the table
-    const table = document.querySelector('.exportable-table') || document.querySelector('table');
-    if (!table) return;
-    
-    const wb = XLSX.utils.table_to_book(table, { sheet: "Cuadro Vacantes" });
-    XLSX.writeFile(wb, `Cuadro_Vacantes_${selectedCuadro.anio}.xlsx`);
+    try {
+      const aoa: any[][] = [];
+      aoa.push([`UNIVERSIDAD NACIONAL DE SAN ANTONIO ABAD DEL CUSCO`]);
+      aoa.push([`DIRECCIÓN DE ADMISIÓN - CUADRO DE VACANTES PROCESO ${selectedCuadro.anio}`]);
+      aoa.push([`Fecha de emisión: ${new Date().toLocaleDateString('es-PE')}`]);
+      aoa.push([]);
+
+      // Encabezados Semestres y Modalidades
+      const head1: any[] = ['ESCUELAS PROFESIONALES'];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        head1.push(sem);
+        for (let i = 0; i < modsInSem.length; i++) head1.push('');
+      });
+      head1.push('TOTAL GENERAL');
+      aoa.push(head1);
+
+      const head2: any[] = [''];
+      filteredSemestres.forEach(sem => {
+        const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
+        modsInSem.forEach(m => head2.push(m.nombre));
+        head2.push(`TOTAL ${sem}`);
+      });
+      head2.push('');
+      aoa.push(head2);
+
+      // Filas por Área y Escuelas
+      filteredAreas.forEach(area => {
+        const escuelasInArea = filteredEscuelas.filter(e => e.area === area);
+        if (escuelasInArea.length === 0) return;
+        aoa.push([`ÁREA ${area}`]);
+        escuelasInArea.forEach(esc => {
+          const row: any[] = [`${esc.alias || esc.nombre}${esc.filial && esc.filial !== 'CUSCO' ? ` (${esc.filial})` : ''}`];
+          filteredSemestres.forEach(sem => {
+            filteredModalidades.filter(m => m.semestre === sem).forEach(m => {
+              row.push(vacantesMap[`${esc.id}_${m.id}`] || 0);
+            });
+            row.push(getRowTotal(esc.id, sem, filteredModalidades));
+          });
+          row.push(getRowTotal(esc.id, undefined, filteredModalidades));
+          aoa.push(row);
+        });
+
+        // Subtotal de Área
+        const subtotalRow: any[] = [`TOTAL ÁREA ${area}`];
+        filteredSemestres.forEach(sem => {
+          filteredModalidades.filter(m => m.semestre === sem).forEach(m => {
+            subtotalRow.push(getColTotal(m.id, area, filteredEscuelas));
+          });
+          subtotalRow.push(getAreaTotal(area, sem, filteredEscuelas, filteredModalidades));
+        });
+        subtotalRow.push(getAreaTotal(area, undefined, filteredEscuelas, filteredModalidades));
+        aoa.push(subtotalRow);
+      });
+
+      // Total General
+      const grandRow: any[] = ['TOTAL GENERAL'];
+      filteredSemestres.forEach(sem => {
+        filteredModalidades.filter(m => m.semestre === sem).forEach(m => {
+          grandRow.push(getColTotal(m.id, undefined, filteredEscuelas));
+        });
+        grandRow.push(getGrandTotal(sem, filteredEscuelas, filteredModalidades));
+      });
+      grandRow.push(getGrandTotal(undefined, filteredEscuelas, filteredModalidades));
+      aoa.push(grandRow);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Vacantes_${selectedCuadro.anio}`);
+      XLSX.writeFile(wb, `Cuadro_Vacantes_${selectedCuadro.anio}.xlsx`);
+      notify('Archivo Excel exportado exitosamente', 'success');
+    } catch (err: any) {
+      notify('Error al generar Excel: ' + err.message, 'error');
+    }
   };
 
-  const handleExportPDF = () => {
-    window.print();
-    
+  const handleExportPDF = async () => {
+    if (!selectedCuadro) {
+      notify('No hay ningún cuadro seleccionado', 'warning');
+      return;
+    }
+
+    setIsExportingPDF(true);
+    try {
+      // Find pages from visible previewRef or hidden off-screen hiddenPreviewRef
+      const container = previewRef.current || hiddenPreviewRef.current;
+      if (!container) {
+        throw new Error('No se encontró el contenedor de vista previa.');
+      }
+
+      const pageElements = container.querySelectorAll<HTMLElement>('.vacancy-pdf-page');
+      if (!pageElements || pageElements.length === 0) {
+        throw new Error('No se encontraron hojas para exportar.');
+      }
+
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+        compress: true
+      });
+
+      const pdfWidth = doc.internal.pageSize.getWidth(); // 297 mm
+      const pdfHeight = doc.internal.pageSize.getHeight(); // 210 mm
+
+      for (let i = 0; i < pageElements.length; i++) {
+        const pageEl = pageElements[i];
+
+        const canvas = await html2canvas(pageEl, {
+          scale: 2.2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          logging: false
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+        if (i > 0) {
+          doc.addPage('a4', 'landscape');
+        }
+
+        const marginX = 2.5; // 2.5mm margin to maximize printable lateral space
+        const marginY = 2.5; // 2.5mm margin
+        const availWidth = pdfWidth - (marginX * 2);
+        const availHeight = pdfHeight - (marginY * 2);
+
+        const canvasRatio = canvas.width / canvas.height;
+        const pageRatio = availWidth / availHeight;
+
+        let renderWidth = availWidth;
+        let renderHeight = availHeight;
+
+        if (canvasRatio > pageRatio) {
+          renderHeight = availWidth / canvasRatio;
+        } else {
+          renderWidth = availHeight * canvasRatio;
+        }
+
+        const posX = (pdfWidth - renderWidth) / 2;
+        const posY = (pdfHeight - renderHeight) / 2;
+
+        doc.addImage(imgData, 'JPEG', posX, posY, renderWidth, renderHeight, undefined, 'FAST');
+      }
+
+      doc.save(`Cuadro_Vacantes_UNSAAC_${selectedCuadro.anio}.pdf`);
+      notify('PDF oficial del Cuadro de Vacantes descargado exitosamente', 'success');
+    } catch (error: any) {
+      console.error('Error exportando PDF con html2canvas:', error);
+      notify('Error al generar el PDF: ' + (error?.message || 'Error desconocido'), 'error');
+    } finally {
+      setIsExportingPDF(false);
+    }
+  };
+
+  const handlePrintDocument = () => {
+    const container = previewRef.current || hiddenPreviewRef.current;
+    if (!container) {
+      window.print();
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const htmlContent = container.innerHTML;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Cuadro de Vacantes ${selectedCuadro?.anio || ''} - UNSAAC</title>
+          <meta charset="utf-8" />
+          <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @page {
+              size: A4 landscape;
+              margin: 4mm;
+            }
+            * {
+              box-sizing: border-box;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            body {
+              font-family: 'Poppins', sans-serif;
+              margin: 0;
+              padding: 0;
+              background: #fff;
+              color: #333;
+            }
+            .page-break-row {
+              page-break-before: always;
+              break-before: page;
+            }
+            .vacancy-pdf-page {
+              box-shadow: none !important;
+              border: 1px solid #ddd !important;
+            }
+          </style>
+        </head>
+        <body>
+          <div style="font-family: 'Poppins', sans-serif;">
+            ${htmlContent}
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.close();
+              }, 600);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   // Calculations
@@ -764,6 +1175,10 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                   }} className="flex items-center gap-2 rounded-xl h-10 px-4 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-amber-200 transition-all active:scale-95">
                     <span className="material-symbols-outlined text-[18px]">edit_note</span>
                     Fe de Erratas
+                  </button>
+                  <button onClick={handleExportPDF} disabled={isExportingPDF} className="flex items-center gap-2 rounded-xl h-10 px-4 bg-[#7b1523] hover:bg-[#9b192d] text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-red-200 transition-all active:scale-95 disabled:opacity-50">
+                    <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+                    {isExportingPDF ? 'Generando...' : 'Exportar PDF'}
                   </button>
                   <button onClick={handleExportExcel} className="flex items-center gap-2 rounded-xl h-10 px-5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-black uppercase tracking-widest shadow-lg transition-all active:scale-95">
                     <span className="material-symbols-outlined text-[18px]">download</span>
@@ -1082,11 +1497,26 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                   </div>
                 </div>
                 <div className="flex items-end gap-2 w-full md:w-auto">
-                  <button onClick={handleExportPDF} className="flex-1 md:flex-none h-10 px-5 bg-[#7b1523] hover:bg-[#9b192d] text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all flex items-center justify-center gap-2">
+                  <button 
+                    onClick={handleExportPDF} 
+                    disabled={isExportingPDF}
+                    className="flex-1 md:flex-none h-10 px-5 bg-[#7b1523] hover:bg-[#9b192d] text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95"
+                  >
                     <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-                    Exportar PDF
+                    {isExportingPDF ? 'Generando PDF...' : 'Exportar PDF'}
                   </button>
-                  <button onClick={handleExportExcel} className="flex-1 md:flex-none h-10 px-5 bg-[#e8a134] hover:bg-[#d69020] text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all flex items-center justify-center gap-2">
+                  <button 
+                    onClick={handlePrintDocument} 
+                    className="flex-1 md:flex-none h-10 px-4 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2 active:scale-95"
+                    title="Imprimir documento oficial en alta resolución"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">print</span>
+                    Imprimir
+                  </button>
+                  <button 
+                    onClick={handleExportExcel} 
+                    className="flex-1 md:flex-none h-10 px-5 bg-[#e8a134] hover:bg-[#d69020] text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-md transition-all flex items-center justify-center gap-2 active:scale-95"
+                  >
                     <span className="material-symbols-outlined text-[18px]">table</span>
                     Exportar Excel
                   </button>
@@ -1095,168 +1525,20 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
 
               {/* Preview Container */}
               <div className="flex-1 overflow-auto bg-slate-100 p-4 md:p-8 rounded-2xl border border-slate-200">
-                <div ref={previewRef} className="mx-auto" style={{ width: 'max-content', minWidth: '100%', fontFamily: "'Poppins', sans-serif" }}>
-                  {pdfPages.map((pageAreas, pageIndex) => (
-                    <div key={pageIndex} className={`bg-white p-2 shadow-sm flex items-stretch ${pageIndex > 0 ? 'page-break-row mt-8' : ''}`}>
-                      {/* Vertical Header for PDF */}
-                      <div className="flex flex-col items-center justify-between border-r-2 pr-4 mr-2 w-[80px] shrink-0 pt-4" style={{ borderColor: '#7b1523' }}>
-                        <div className="w-16 h-16 flex items-center justify-center shrink-0">
-                          <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" alt="UNSAAC" className="h-full object-contain" crossOrigin="anonymous" />
-                        </div>
-                        
-                        <div className="flex-1 flex flex-col items-center justify-center w-full relative overflow-visible min-h-[500px]">
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 whitespace-nowrap flex flex-col items-center gap-1 w-[800px]">
-                            <h1 className="text-[#7b1523] text-lg font-black tracking-widest uppercase m-0 leading-tight">UNIVERSIDAD NACIONAL DE SAN ANTONIO ABAD DEL CUSCO</h1>
-                            <h2 className="text-[#9b192d] text-sm font-bold tracking-widest uppercase m-0 leading-tight">DIRECCIÓN DE ADMISIÓN</h2>
-                            <p className="text-slate-600 text-[11px] font-medium tracking-widest uppercase m-0 leading-tight">CUADRO DE VACANTES {selectedCuadro?.anio}</p>
-                          </div>
-                        </div>
-
-                        <div className="w-16 h-16 flex items-center justify-center shrink-0 mb-4">
-                          <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%201.png" alt="Admisión" className="h-full object-contain" crossOrigin="anonymous" />
-                        </div>
-                      </div>
-
-                      {/* Table Container */}
-                      <div className="flex-1 overflow-hidden pl-1">
-                        <table className="w-full text-left border-collapse text-[10px]" style={{ backgroundColor: 'white' }}>
-                          <thead>
-                            <tr>
-                              <th className="p-1 border" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d', width: '190px', minWidth: '190px', maxWidth: '190px' }} rowSpan={2}>Escuelas Profesionales</th>
-                            {filteredSemestres.map(sem => {
-                              const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
-                              return (
-                                <th key={sem} colSpan={modsInSem.length + 1} className="p-1 border text-center font-bold" style={{ backgroundColor: '#9b192d', color: 'white', borderColor: '#7b1523' }}>
-                                  {sem}
-                                </th>
-                              );
-                            })}
-                            <th className="p-0 border text-center font-black" style={{ backgroundColor: '#e8a134', color: 'white', borderColor: '#d69020', width: '50px', minWidth: '50px', maxWidth: '50px' }} rowSpan={2}>
-                              <div className="relative w-[50px] h-[180px] flex items-center justify-center mx-auto overflow-visible">
-                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[170px] text-center text-[12px] font-black leading-snug tracking-wide uppercase">
-                                  Total General
-                                </div>
-                              </div>
-                            </th>
-                          </tr>
-                          <tr>
-                            {filteredSemestres.map(sem => {
-                              const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
-                              return (
-                                <React.Fragment key={`mods-${sem}`}>
-                                  {modsInSem.map(m => (
-                                    <th key={m.id} className="p-0 border text-center font-medium" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1', height: '180px', verticalAlign: 'middle', minWidth: '38px', width: '38px' }}>
-                                      <div className="relative w-[38px] h-[180px] flex items-center justify-center mx-auto overflow-visible">
-                                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[170px] text-center text-[10px] font-[600] leading-snug tracking-wide">
-                                          {m.nombre}
-                                        </div>
-                                      </div>
-                                    </th>
-                                  ))}
-                                  <th className="p-0 border text-center font-bold" style={{ backgroundColor: '#f1f5f9', color: '#9b192d', borderColor: '#e1e1e1', height: '180px', verticalAlign: 'middle', minWidth: '40px', width: '40px' }}>
-                                    <div className="relative w-[40px] h-[180px] flex items-center justify-center mx-auto overflow-visible">
-                                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90 w-[170px] text-center text-[11px] font-bold leading-snug tracking-wide">
-                                        Total {sem}
-                                      </div>
-                                    </div>
-                                  </th>
-                                </React.Fragment>
-                              );
-                            })}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pageAreas.map(area => {
-                            const escuelasInArea = filteredEscuelas.filter(e => e.area === area);
-                            if (escuelasInArea.length === 0) return null;
-                            
-                            return (
-                              <React.Fragment key={area}>
-                                {/* Area Header */}
-                                <tr>
-                                  <td colSpan={1 + filteredModalidades.length + filteredSemestres.length + 1} className="px-2 py-1 border font-black uppercase" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>
-                                    Área {area}
-                                  </td>
-                                </tr>
-                                {/* Escuelas */}
-                                {escuelasInArea.map((escuela, idx) => (
-                                  <tr key={escuela.id} style={{ backgroundColor: idx % 2 === 0 ? 'white' : '#fcfcfc' }}>
-                                    <td className="px-2 py-1 border font-medium text-slate-700" style={{ borderColor: '#e1e1e1' }}>{escuela.alias || escuela.nombre} {escuela.filial !== 'CUSCO' && escuela.filial !== 'Cusco' ? `(${escuela.filial})` : ''}</td>
-                                    {filteredSemestres.map(sem => {
-                                      const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
-                                      return (
-                                        <React.Fragment key={`${escuela.id}-${sem}`}>
-                                          {modsInSem.map(m => (
-                                            <td key={`${escuela.id}-${m.id}`} className="px-2 py-1 border text-center text-slate-600" style={{ borderColor: '#e1e1e1' }}>
-                                              {vacantesMap[`${escuela.id}_${m.id}`] || 0}
-                                            </td>
-                                          ))}
-                                          <td className="px-2 py-1 border text-center font-bold" style={{ color: '#9b192d', borderColor: '#e1e1e1', backgroundColor: '#fdfdfd' }}>
-                                            {getRowTotal(escuela.id, sem, filteredModalidades)}
-                                          </td>
-                                        </React.Fragment>
-                                      );
-                                    })}
-                                    <td className="px-2 py-1 border text-center font-black" style={{ color: '#7b1523', borderColor: '#e1e1e1', backgroundColor: '#fffbf5' }}>
-                                      {getRowTotal(escuela.id, undefined, filteredModalidades)}
-                                    </td>
-                                  </tr>
-                                ))}
-                                {/* Area Totals */}
-                                <tr>
-                                  <td className="px-2 py-1 border font-bold text-right" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>Total Área {area}</td>
-                                  {filteredSemestres.map(sem => {
-                                    const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
-                                    return (
-                                      <React.Fragment key={`total-${area}-${sem}`}>
-                                        {modsInSem.map(m => (
-                                          <td key={`total-${area}-${m.id}`} className="px-2 py-1 border text-center font-bold" style={{ backgroundColor: '#f8f9fa', color: '#7b1523', borderColor: '#e1e1e1' }}>
-                                            {getColTotal(m.id, area, filteredEscuelas)}
-                                          </td>
-                                        ))}
-                                        <td className="px-2 py-1 border text-center font-black" style={{ backgroundColor: '#f1f5f9', color: '#9b192d', borderColor: '#e1e1e1' }}>
-                                          {getAreaTotal(area, sem, filteredEscuelas, filteredModalidades)}
-                                        </td>
-                                      </React.Fragment>
-                                    );
-                                  })}
-                                  <td className="px-2 py-1 border text-center font-black" style={{ backgroundColor: '#fff8ed', color: '#d69020', borderColor: '#e1e1e1' }}>
-                                    {getAreaTotal(area, undefined, filteredEscuelas, filteredModalidades)}
-                                  </td>
-                                </tr>
-                              </React.Fragment>
-                            );
-                          })}
-                        </tbody>
-                        {pageIndex === pdfPages.length - 1 && (
-                          <tfoot>
-                            <tr>
-                              <td className="px-2 py-2 border font-black text-right uppercase" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d' }}>Total General</td>
-                              {filteredSemestres.map(sem => {
-                                const modsInSem = filteredModalidades.filter(m => m.semestre === sem);
-                                return (
-                                  <React.Fragment key={`grand-${sem}`}>
-                                    {modsInSem.map(m => (
-                                      <td key={`grand-${m.id}`} className="px-2 py-2 border text-center font-bold" style={{ backgroundColor: '#9b192d', color: 'white', borderColor: '#7b1523' }}>
-                                        {getColTotal(m.id, undefined, filteredEscuelas)}
-                                      </td>
-                                    ))}
-                                    <td className="px-2 py-2 border text-center font-black" style={{ backgroundColor: '#7b1523', color: 'white', borderColor: '#9b192d' }}>
-                                      {getGrandTotal(sem, filteredEscuelas, filteredModalidades)}
-                                    </td>
-                                  </React.Fragment>
-                                );
-                              })}
-                              <td className="px-2 py-2 border text-center font-black text-lg" style={{ backgroundColor: '#e8a134', color: 'white', borderColor: '#d69020' }}>
-                                {getGrandTotal(undefined, filteredEscuelas, filteredModalidades)}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        )}
-                      </table>
-                    </div>
-                  </div>
-                ))}
+                <div ref={previewRef}>
+                  <VacancyPreviewDocument
+                    cuadroAnio={selectedCuadro?.anio}
+                    pdfPages={pdfPages}
+                    filteredEscuelas={filteredEscuelas}
+                    filteredModalidades={filteredModalidades}
+                    filteredSemestres={filteredSemestres}
+                    vacantesMap={vacantesMap}
+                    getRowTotal={getRowTotal}
+                    getColTotal={getColTotal}
+                    getAreaTotal={getAreaTotal}
+                    getGrandTotal={getGrandTotal}
+                  />
+                </div>
               </div>
                 
                 {/* Hidden table for Excel export */}
@@ -1359,7 +1641,6 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
                     </tr>
                   </tfoot>
                 </table>
-              </div>
             </>
           );
 
@@ -1671,6 +1952,27 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
               </div>
           </div>
       )}
+
+      {/* Hidden Offscreen Container for PDF Export and Print */}
+      <div 
+        ref={hiddenPreviewRef} 
+        aria-hidden="true" 
+        className="fixed -left-[99999px] top-0 opacity-0 pointer-events-none z-[-100] bg-white"
+        style={{ width: '1300px' }}
+      >
+        <VacancyPreviewDocument
+          cuadroAnio={selectedCuadro?.anio}
+          pdfPages={pdfPages}
+          filteredEscuelas={filteredEscuelas}
+          filteredModalidades={filteredModalidades}
+          filteredSemestres={filteredSemestres}
+          vacantesMap={vacantesMap}
+          getRowTotal={getRowTotal}
+          getColTotal={getColTotal}
+          getAreaTotal={getAreaTotal}
+          getGrandTotal={getGrandTotal}
+        />
+      </div>
     </div>
   );
 };
