@@ -11,7 +11,7 @@ export const getPreRevisiones = async (): Promise<PreRevisionArchivo[]> => {
   try {
     const { data, error } = await supabase
       .from('pre_revision_archivos')
-      .select('id, modalidad_id');
+      .select('id, modalidad_id, created_at');
     if (error) {
       console.error('Error cargando pre-revisiones de Supabase:', error);
       return [];

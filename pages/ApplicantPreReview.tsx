@@ -337,9 +337,24 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [pagosData, setPagosData] = useState<any[]>([]);
   const [validacionesData, setValidacionesData] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  
   const [activeTab, setActiveTab] = useState<'Cobertura' | 'Lista' | 'Ranking' | 'Dashboard' | 'ExamenAnulado'>('Cobertura');
+  
+  // Estados para Auditoría de Examen Anulado (Res. CU-224-2022)
+  const [anuladoFilterMode, setAnuladoFilterMode] = useState<
+    'todos' | 
+    'ingresantes_definitivos' | 
+    'solo_medicina' | 
+    'nuevos_medicina' | 
+    'ratificado_medicina' | 
+    'segunda_opcion' | 
+    'admisiones_anuladas' | 
+    'no_ingresantes'
+  >('todos');
   const [anuladoSearchTerm, setAnuladoSearchTerm] = useState('');
-  const [anuladoFilterCondition, setAnuladoFilterCondition] = useState<'todos' | 'ingresantes' | 'anulados_no_ingreso' | 'medicina'>('todos');
+  const [anuladoPage, setAnuladoPage] = useState(1);
+  const [showGuiaInterpretacion, setShowGuiaInterpretacion] = useState(true);
+  
   const [coberturaFilterStatus, setCoberturaFilterStatus] = useState('Todos los Estados');
   const [coberturaFilterArea, setCoberturaFilterArea] = useState('Todas las Áreas');
   const [coberturaSearchQuery, setCoberturaSearchQuery] = useState('');
@@ -978,86 +993,6 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     return mergedRows;
   }, [csvData, escuelas, adjudicadosList]);
 
-  // --- Detección y filtrado de postulantes con exámenes anulados / reprogramados ---
-  const hasExamenAnulado = useMemo(() => {
-    return (csvData || []).some(row => row.tiene_examen_anulado || row.examen_anulado || row.nota_examen_anulado);
-  }, [csvData]);
-
-  const postulantesAnuladosList = useMemo(() => {
-    if (!hasExamenAnulado) return [];
-    return (csvData || []).filter(row => row.tiene_examen_anulado || row.examen_anulado || row.nota_examen_anulado);
-  }, [csvData, hasExamenAnulado]);
-
-  const filteredAnulados = useMemo(() => {
-    let list = postulantesAnuladosList;
-    if (anuladoSearchTerm.trim()) {
-      const q = anuladoSearchTerm.toLowerCase().trim();
-      list = list.filter(r => 
-        String(r.alumno || r.DNI || r.NroDocumento || '').toLowerCase().includes(q) ||
-        String(r.nombre || r.POSTULANTE || '').toLowerCase().includes(q)
-      );
-    }
-    if (anuladoFilterCondition === 'ingresantes') {
-      list = list.filter(r => r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE'));
-    } else if (anuladoFilterCondition === 'anulados_no_ingreso') {
-      list = list.filter(r => {
-        const ex = r.examen_anulado || {};
-        const ing1 = ex.ingresante_anulado === 1 || r.ingresante_examen_anulado === 1;
-        const ing2 = r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE');
-        return ing1 && !ing2;
-      });
-    } else if (anuladoFilterCondition === 'medicina') {
-      list = list.filter(r => {
-        const carrIng = String(r.carrera_ingreso_nombre || r.CarreraIngreso || '').toUpperCase();
-        return carrIng.includes('MEDICINA') && (r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE'));
-      });
-    }
-    return list;
-  }, [postulantesAnuladosList, anuladoSearchTerm, anuladoFilterCondition]);
-
-  const exportAnuladosExcel = () => {
-    if (!postulantesAnuladosList || postulantesAnuladosList.length === 0) return;
-    try {
-      const exportData = postulantesAnuladosList.map((r, idx) => {
-        const ex = r.examen_anulado || {};
-        const ingDefinitivo = r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE');
-        const ing1 = ex.ingresante_anulado === 1 || r.ingresante_examen_anulado === 1;
-        
-        let condicion = 'NO INGRESO';
-        if (ingDefinitivo) {
-          condicion = `INGRESANTE (${r.carrera_ingreso_nombre || 'MEDICINA HUMANA'})`;
-        } else if (ing1) {
-          condicion = 'ADMISIÓN ANULADA (Res. CU-224-2022)';
-        }
-
-        return {
-          'N°': idx + 1,
-          'DNI': String(r.alumno || r.DNI || '').trim(),
-          'POSTULANTE': String(r.nombre || '').trim(),
-          '1ER EXAMEN (NOTA)': ex.nota_anulada || r.nota_examen_anulado || '--',
-          '1ER EXAMEN (MÉRITO)': ex.pos_anulada || r.pos_examen_anulado || '--',
-          '1ER EXAMEN (CONDICIÓN)': ing1 ? 'SUPUESTO INGRESANTE' : 'NO INGRESO',
-          '2DO EXAMEN (NOTA DEFINITIVA)': r.notavigesimal || r.Nota || '--',
-          '2DO EXAMEN (MÉRITO DEFINITIVO)': r.POS || '--',
-          '2DO EXAMEN (CARRERA ASIGNADA)': r.carrera_ingreso_nombre || (ingDefinitivo ? 'MEDICINA HUMANA' : '--'),
-          'CONDICIÓN DEFINITIVA': condicion,
-          'RESOLUCIÓN': ex.resolucion || 'CU-224-2022-UNSAAC',
-          'FECHA 1ER EXAMEN': ex.fecha_anulada || '17/09/2022',
-          'FECHA 2DO EXAMEN': ex.fecha_reprogramada || '29/09/2022'
-        };
-      });
-
-      const ws = XLSX.utils.json_to_sheet(exportData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Examen Anulado Medicina 2022');
-      XLSX.writeFile(wb, 'reporte_auditoria_examen_anulado_2022.xlsx');
-      notify?.('Reporte de auditoría de examen anulado descargado correctamente.', 'success');
-    } catch (e: any) {
-      console.error('Error al exportar Excel de examen anulado:', e);
-      notify?.(`Error al exportar: ${e.message}`, 'error');
-    }
-  };
-
   // Mapas de consulta cruzada rápida por DNI
   const pagosMap = useMemo(() => {
     const map = new Map<string, any>();
@@ -1138,6 +1073,282 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     });
     return count;
   }, [validacionesMap]);
+
+  // =========================================================================
+  // MÓDULO DE AUDITORÍA: EXAMEN ANULADO Y REPROGRAMADO (Res. CU-224-2022)
+  // =========================================================================
+  const anuladosList = useMemo(() => {
+    if (!csvData || !Array.isArray(csvData)) return [];
+    return csvData.filter(p => p && (p.tiene_examen_anulado || p.examen_anulado || (p.nota_examen_anulado !== undefined && p.nota_examen_anulado !== null)));
+  }, [csvData]);
+
+  const hasExamenAnulado = anuladosList.length > 0;
+
+  // Helpers de clasificación precisos para trazabilidad dual
+  const getCarreraAnuladaInfo = (p: any) => {
+    if (!p) return null;
+    const isIng1 = p.ingresante_examen_anulado == 1 || p.examen_anulado?.ingresante_anulado == 1;
+    if (!isIng1) return null;
+
+    const rawCode = p.examen_anulado?.carrera_ingreso_anulada || p.carrera_ingreso_anulada || p.CarreraIngreso;
+    const cleanCode = String(rawCode || '').split('.')[0].trim();
+    
+    const knownMap: Record<string, string> = {
+      '201': 'AGRONOMÍA',
+      '202': 'BIOLOGÍA',
+      '203': 'ENFERMERÍA',
+      '204': 'FARMACIA Y BIOQUÍMICA',
+      '205': 'MEDICINA HUMANA',
+      '206': 'ODONTOLOGÍA',
+      '207': 'ZOOTECNIA'
+    };
+
+    let nombre = knownMap[cleanCode];
+    if (!nombre && cleanCode && Array.isArray(escuelas)) {
+      const found = escuelas.find(e => String(e.codigo_carrera).trim() === cleanCode);
+      if (found) nombre = found.nombre;
+    }
+    if (!nombre) {
+      nombre = p.carrera_nombre || 'MEDICINA HUMANA';
+    }
+
+    const esPrimeraOpcion = cleanCode === '205' || nombre.toUpperCase().includes('MEDICINA');
+
+    return {
+      codigo: cleanCode,
+      nombre,
+      esPrimeraOpcion,
+      tipoOpcion: esPrimeraOpcion ? '1ra Opción' : '2da Opción'
+    };
+  };
+
+  const isMedicinaHumanaIngreso = (p: any) => {
+    const isIng2 = p.Ingresante == 1 || p.examen_anulado?.ingresante_reprogramado == 1;
+    if (!isIng2) return false;
+    const c = (p.carrera_ingreso_nombre || p.CarreraIngreso || p.examen_anulado?.carrera_ingreso_reprogramada || '').toString().toUpperCase();
+    return c.includes('MEDICINA') || p.CarreraIngreso === '205' || p.CarreraIngreso === '205.0';
+  };
+
+  const isIngresante1 = (p: any) => p.ingresante_examen_anulado == 1 || p.examen_anulado?.ingresante_anulado == 1;
+  const isIngresante2 = (p: any) => p.Ingresante == 1 || p.examen_anulado?.ingresante_reprogramado == 1;
+
+  const getTipoAuditoria = (p: any) => {
+    const ing1 = isIngresante1(p);
+    const ing2 = isIngresante2(p);
+    const isMed = isMedicinaHumanaIngreso(p);
+    const c1 = getCarreraAnuladaInfo(p);
+
+    if (isMed) {
+      if (ing1) {
+        return {
+          key: 'ratificado_medicina',
+          badge: '⭐ Ratificado en Medicina',
+          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+          desc: 'Ingresó a Medicina en ambos exámenes (1er y 2do)',
+          tipoOpcion: '1RA OPCIÓN: MEDICINA HUMANA',
+          carreraLabel: 'MEDICINA HUMANA',
+          carreraBadgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 font-black',
+          carrera1era: c1
+        };
+      } else {
+        return {
+          key: 'nuevo_medicina',
+          badge: '🏆 Ingreso Legítimo (Medicina)',
+          badgeClass: 'bg-teal-100 text-teal-800 border-teal-300',
+          desc: 'Recuperó su vacante legítima tras anulación del examen fraudulento',
+          tipoOpcion: '1RA OPCIÓN: MEDICINA HUMANA',
+          carreraLabel: 'MEDICINA HUMANA',
+          carreraBadgeClass: 'bg-teal-50 text-teal-800 border-teal-300 font-black',
+          carrera1era: c1
+        };
+      }
+    }
+
+    if (ing2) {
+      const cNom = (p.carrera_ingreso_nombre || p.CarreraIngreso || 'SEGUNDA OPCIÓN').toString().toUpperCase();
+      return {
+        key: 'segunda_opcion',
+        badge: '🔄 Ingresó por 2da Opción',
+        badgeClass: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+        desc: `No alcanzó Medicina, pero cubrió vacante en ${cNom}`,
+        tipoOpcion: `2DA OPCIÓN: ${cNom}`,
+        carreraLabel: cNom,
+        carreraBadgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-300 font-black',
+        carrera1era: c1
+      };
+    }
+
+    if (ing1 && !ing2) {
+      const nomC1 = c1?.nombre || 'VACANTE PREVIA';
+      const opC1 = c1?.tipoOpcion || '1er Examen';
+      return {
+        key: 'admision_anulada',
+        badge: '🚨 Admisión Anulada',
+        badgeClass: 'bg-rose-100 text-rose-800 border-rose-300',
+        desc: `Figuraba con ingreso a ${nomC1} (${opC1}) en 1er examen; reprobó o no alcanzó vacante en el definitivo`,
+        tipoOpcion: `REVOCADA: ${nomC1}`,
+        carreraLabel: `REVOCADA: ${nomC1}`,
+        carreraBadgeClass: 'bg-rose-50 text-rose-700 border-rose-200 line-through font-bold',
+        carrera1era: c1
+      };
+    }
+
+    return {
+      key: 'no_ingresante',
+      badge: '⚪ No Ingresó',
+      badgeClass: 'bg-slate-100 text-slate-500 border-slate-200',
+      desc: 'Puntaje insuficiente en ambos exámenes',
+      tipoOpcion: 'NO ALCANZÓ VACANTE',
+      carreraLabel: '--',
+      carreraBadgeClass: 'text-slate-400 font-mono',
+      carrera1era: null
+    };
+  };
+
+  const metricsAnulado = useMemo(() => {
+    const totalEvaluados = anuladosList.length;
+    const ingresantesDefinitivos = anuladosList.filter(isIngresante2);
+    const soloMedicina = anuladosList.filter(isMedicinaHumanaIngreso);
+    const nuevosMedicina = soloMedicina.filter(p => !isIngresante1(p));
+    const ratificadoMedicina = soloMedicina.filter(isIngresante1);
+    const segundaOpcion = ingresantesDefinitivos.filter(p => !isMedicinaHumanaIngreso(p));
+    const admisionesAnuladas = anuladosList.filter(p => isIngresante1(p) && !isIngresante2(p));
+    const noIngresaron = anuladosList.filter(p => !isIngresante1(p) && !isIngresante2(p));
+
+    const admisionesAnuladasBreakdown: Record<string, number> = {};
+    admisionesAnuladas.forEach(p => {
+      const c = getCarreraAnuladaInfo(p);
+      const name = c ? `${c.nombre} (${c.tipoOpcion})` : 'Otras';
+      admisionesAnuladasBreakdown[name] = (admisionesAnuladasBreakdown[name] || 0) + 1;
+    });
+
+    return {
+      totalEvaluados,
+      ingresantesDefinitivosCount: ingresantesDefinitivos.length,
+      soloMedicinaCount: soloMedicina.length,
+      nuevosMedicinaCount: nuevosMedicina.length,
+      ratificadoMedicinaCount: ratificadoMedicina.length,
+      segundaOpcionCount: segundaOpcion.length,
+      admisionesAnuladasCount: admisionesAnuladas.length,
+      noIngresaronCount: noIngresaron.length,
+      admisionesAnuladasBreakdown
+    };
+  }, [anuladosList, escuelas]);
+
+  const filteredAnulados = useMemo(() => {
+    let list = anuladosList;
+
+    if (anuladoFilterMode === 'ingresantes_definitivos') {
+      list = list.filter(isIngresante2);
+    } else if (anuladoFilterMode === 'solo_medicina') {
+      list = list.filter(isMedicinaHumanaIngreso);
+    } else if (anuladoFilterMode === 'nuevos_medicina') {
+      list = list.filter(p => isMedicinaHumanaIngreso(p) && !isIngresante1(p));
+    } else if (anuladoFilterMode === 'ratificado_medicina') {
+      list = list.filter(p => isMedicinaHumanaIngreso(p) && isIngresante1(p));
+    } else if (anuladoFilterMode === 'segunda_opcion') {
+      list = list.filter(p => isIngresante2(p) && !isMedicinaHumanaIngreso(p));
+    } else if (anuladoFilterMode === 'admisiones_anuladas') {
+      list = list.filter(p => isIngresante1(p) && !isIngresante2(p));
+    } else if (anuladoFilterMode === 'no_ingresantes') {
+      list = list.filter(p => !isIngresante1(p) && !isIngresante2(p));
+    }
+
+    if (anuladoSearchTerm.trim()) {
+      const q = normalizeText(anuladoSearchTerm);
+      list = list.filter(p => {
+        const dni = String(p.alumno || p.NroDocumento || '').toLowerCase();
+        const nom = normalizeText(p.nombre || '');
+        const carr = normalizeText(p.carrera_ingreso_nombre || p.CarreraIngreso || '');
+        return dni.includes(q) || nom.includes(q) || carr.includes(q);
+      });
+    }
+
+    return list;
+  }, [anuladosList, anuladoFilterMode, anuladoSearchTerm]);
+
+  const anuladosPageSize = 50;
+  const totalAnuladoPages = Math.ceil(filteredAnulados.length / anuladosPageSize) || 1;
+  const paginatedAnulados = useMemo(() => {
+    const start = (anuladoPage - 1) * anuladosPageSize;
+    return filteredAnulados.slice(start, start + anuladosPageSize);
+  }, [filteredAnulados, anuladoPage]);
+
+  const handleExportAnuladosExcel = () => {
+    try {
+      const rows = filteredAnulados.map((p, idx) => {
+        const audit = getTipoAuditoria(p);
+        const isIng1 = isIngresante1(p);
+        const isIng2 = isIngresante2(p);
+
+        const pos1Num = parseInt(p.pos_examen_anulado || p.examen_anulado?.pos_anulada, 10);
+        const pos2Num = parseInt(p.POS || p.examen_anulado?.pos_reprogramada, 10);
+        let variacionPuesto = '--';
+        if (!isNaN(pos1Num) && !isNaN(pos2Num)) {
+          const diff = pos1Num - pos2Num;
+          if (diff > 0) variacionPuesto = `Subió ${diff} puestos (Pto ${pos1Num} ➔ ${pos2Num})`;
+          else if (diff < 0) variacionPuesto = `Bajó ${Math.abs(diff)} puestos (Pto ${pos1Num} ➔ ${pos2Num})`;
+          else variacionPuesto = `Mantuvo puesto (${pos1Num})`;
+        }
+
+        const carreraFinal = isIng2 
+          ? (p.carrera_ingreso_nombre || p.CarreraIngreso || 'MEDICINA HUMANA') 
+          : '--';
+
+        const c1 = audit.carrera1era || getCarreraAnuladaInfo(p);
+        const carrera1eraTexto = isIng1 
+          ? `${c1?.nombre || 'MEDICINA HUMANA'} (${c1?.tipoOpcion || '1er Examen'})` 
+          : 'NO INGRESÓ';
+
+        return {
+          'N°': idx + 1,
+          'DNI / Alumno': p.alumno || p.NroDocumento || '',
+          'Apellidos y Nombres': p.nombre || '',
+          'Carrera Postulada': p.carrera_nombre || 'MEDICINA HUMANA',
+          'Nota 1er Examen (17/09 Anulado)': p.nota_examen_anulado || p.examen_anulado?.nota_anulada || '--',
+          'Puesto 1er Examen': p.pos_examen_anulado || p.examen_anulado?.pos_anulada || '--',
+          'Condición 1er Examen': isIng1 ? 'INGRESÓ' : 'NO INGRESÓ',
+          'Carrera Ingreso 1er Examen (Anulado)': carrera1eraTexto,
+          'Nota 2do Examen (29/09 Definitivo)': p.notavigesimal || p.examen_anulado?.nota_reprogramada || p.Nota || '--',
+          'Puesto 2do Examen': p.POS || p.examen_anulado?.pos_reprogramada || '--',
+          'Condición 2do Examen': isIng2 ? 'INGRESÓ' : 'NO INGRESÓ',
+          'Variación de Puesto': variacionPuesto,
+          'Tipo de Asignación 2do Examen': audit.tipoOpcion,
+          'Carrera Definitiva Asignada': carreraFinal,
+          'Dictamen de Auditoría': audit.badge.replace(/[^\w\s\(\)áéíóúÁÉÍÓÚñÑ]/gi, '').trim(),
+          'Detalle y Justificación': audit.desc,
+          'Resolución de Anulación': p.resolucion_anulacion || 'CU-224-2022-UNSAAC'
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [
+        { wch: 6 },
+        { wch: 15 },
+        { wch: 38 },
+        { wch: 22 },
+        { wch: 28 },
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 30 },
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 26 },
+        { wch: 30 },
+        { wch: 28 },
+        { wch: 32 },
+        { wch: 45 },
+        { wch: 24 }
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Auditoría Res CU-224-2022');
+      XLSX.writeFile(wb, `Auditoria_Examen_Anulado_Medicina_2022-II_${new Date().getTime()}.xlsx`);
+      notify?.('Auditoría Excel descargada exitosamente.', 'success');
+    } catch (err: any) {
+      console.error('Error al exportar auditoría Excel:', err);
+      notify?.(`Error al exportar: ${err.message}`, 'error');
+    }
+  };
 
   useEffect(() => {
     const fetchUbigeoMappings = async () => {
@@ -3526,18 +3737,18 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                 </button>
                 {hasExamenAnulado && (
                   <button 
-                    onClick={() => setActiveTab('ExamenAnulado')}
-                    className={`px-4 py-2 rounded-xl text-sm font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${
-                      activeTab === 'ExamenAnulado' 
-                        ? 'bg-amber-600 text-white shadow-md' 
-                        : 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                    onClick={() => {
+                      setActiveTab('ExamenAnulado');
+                      setAnuladoPage(1);
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-bold uppercase tracking-wider transition-all flex items-center gap-2 border ${
+                      activeTab === 'ExamenAnulado'
+                        ? 'bg-rose-600 text-white shadow-md shadow-rose-200 border-rose-600'
+                        : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
                     }`}
                   >
-                    <span className="material-symbols-outlined text-[18px]">gavel</span>
-                    Examen Anulado (Res. CU-224-2022)
-                    <span className="ml-1 px-2 py-0.5 text-xs rounded-full bg-amber-200 text-amber-950 font-black">
-                      {postulantesAnuladosList.length}
-                    </span>
+                    <span>🚨</span>
+                    <span>Examen Anulado (Res. CU-224-2022) - {anuladosList.length}</span>
                   </button>
                 )}
               </div>
@@ -5056,224 +5267,609 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
               </div>
             )}
 
-            {/* Examen Anulado Tab */}
+            {/* VISTA DE AUDITORÍA: EXAMEN ANULADO Y REPROGRAMADO */}
             {activeTab === 'ExamenAnulado' && (
-              <div className="space-y-6">
-                {/* Banner Informativo y Resolución */}
-                <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent p-6 rounded-2xl border border-amber-300/80 shadow-sm relative overflow-hidden">
-                  <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="space-y-6 animate-in fade-in duration-200">
+                
+                {/* Banner de Resolución y Contexto Legal */}
+                <div className="bg-gradient-to-r from-slate-900 via-rose-950 to-slate-900 text-white p-6 rounded-2xl shadow-md border border-rose-900/50 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-2 max-w-3xl">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-600 text-white tracking-wider uppercase shadow-xs">
+                        Resolución N° CU-224-2022-UNSAAC
+                      </span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-white/10 text-rose-200 border border-white/10">
+                        Medicina Humana (Examen Extraordinario)
+                      </span>
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-white/10 text-slate-200 border border-white/10">
+                        Proceso Ordinario 2022-II
+                      </span>
+                    </div>
+                    <h3 className="text-xl md:text-2xl font-black text-white tracking-tight">
+                      Auditoría Forense y Trazabilidad de Exámenes
+                    </h3>
+                    <p className="text-xs md:text-sm text-slate-300 leading-relaxed">
+                      Por disposición del Consejo Universitario, se anularon los resultados del primer examen (17/09/2022) exclusivamente para la carrera de Medicina Humana debido a irregularidades y filtraciones detectadas. La prueba definitiva se llevó a cabo el 29/09/2022. Esta vista contrasta ambos registros para transparentar la asignación de vacantes y segundas opciones.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 shrink-0">
+                    <button
+                      onClick={() => setShowGuiaInterpretacion(prev => !prev)}
+                      className="px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-bold text-xs uppercase tracking-wider border border-slate-700 transition-all flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-base text-amber-400">help</span>
+                      <span>{showGuiaInterpretacion ? 'Ocultar Guía' : '¿Cómo Interpretar?'}</span>
+                    </button>
+                    <button
+                      onClick={handleExportAnuladosExcel}
+                      className="px-5 py-3 rounded-xl bg-white text-slate-900 hover:bg-rose-50 font-black text-xs uppercase tracking-wider shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-rose-600 text-base">download</span>
+                      <span>Exportar Auditoría Excel</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Guía Forense de Interpretación */}
+                {showGuiaInterpretacion && (
+                  <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-5 shadow-xs animate-in fade-in duration-150">
                     <div className="flex items-start gap-3">
-                      <div className="p-3 bg-amber-500 text-white rounded-xl shadow-sm shrink-0">
-                        <span className="material-symbols-outlined text-2xl">gavel</span>
+                      <div className="size-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="material-symbols-outlined text-xl">info</span>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-lg font-black text-slate-900 tracking-tight">
-                            Auditoría Forense: Examen de Admisión Anulado y Reprogramado
-                          </h3>
-                          <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-200 text-amber-900 border border-amber-300">
-                            Res. CU-224-2022-UNSAAC
-                          </span>
+                      <div className="space-y-3 flex-1 text-xs text-amber-950">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-black text-sm text-amber-900 uppercase tracking-tight">
+                            Guía para comprender los resultados y variaciones de notas
+                          </h4>
+                          <button
+                            onClick={() => setShowGuiaInterpretacion(false)}
+                            className="text-amber-700 hover:text-amber-900 font-bold"
+                          >
+                            Entendido ✕
+                          </button>
                         </div>
-                        <p className="text-xs text-slate-600 mt-1 max-w-4xl leading-relaxed">
-                          Por disposición del Consejo Universitario, se anuló la evaluación del <strong>17/09/2022</strong> para los postulantes que tuvieron como primera opción la <strong>Escuela Profesional de Medicina Humana</strong> debido a filtraciones detectadas. El <strong>segundo examen definitivo</strong> se realizó el <strong>29/09/2022</strong>. Esta vista conserva la evidencia histórica comparativa de ambos exámenes para fines de auditoría institucional.
-                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-slate-700">
+                          <div className="bg-white p-3.5 rounded-xl border border-amber-200/60 space-y-1.5 shadow-2xs">
+                            <span className="font-black text-teal-800 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                              <span>🏆</span> ¿Por qué con 17.1 no ingresó y con 14.5 sí?
+                            </span>
+                            <p className="text-[11px] leading-relaxed text-slate-600">
+                              En el 1er examen hubo filtración; los 8 cupos de Medicina se coparon con notas anómalas de 18 a 20. Una nota honesta de 17.1 quedó en puesto 33. Al repetirse con seguridad, las notas fraudulentas cayeron a 0.0 y una nota real de 14.5 alcanzó el <strong>Puesto 8</strong>, ganando legítimamente la vacante (caso Ríos-Guzmán y 6 compañeros más).
+                            </p>
+                          </div>
+                          <div className="bg-white p-3.5 rounded-xl border border-amber-200/60 space-y-1.5 shadow-2xs">
+                            <span className="font-black text-indigo-800 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                              <span>🔄</span> Ingresos por Segunda Opción (20 postulantes)
+                            </span>
+                            <p className="text-[11px] leading-relaxed text-slate-600">
+                              En admisión UNSAAC, los postulantes a Medicina tienen derecho a <strong>Segunda Opción</strong> en carreras afines. Quienes no alcanzaron las 8 vacantes de Medicina en el 2do examen, pero tuvieron puntaje aprobatorio suficiente, cubrieron cupos en <strong>Biología (12), Enfermería (4), Farmacia (3) y Zootecnia (1)</strong>.
+                            </p>
+                          </div>
+                          <div className="bg-white p-3.5 rounded-xl border border-amber-200/60 space-y-1.5 shadow-2xs">
+                            <span className="font-black text-rose-800 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                              <span>🚨</span> Admisiones Anuladas (39 postulantes)
+                            </span>
+                            <p className="text-[11px] leading-relaxed text-slate-600">
+                              Postulantes que en el 1er examen figuraban con vacante (con notas de 19.5 y 20.0), pero en el 2do examen reprogramado obtuvieron 0.0 o notas insuficientes para cualquier carrera. Por ordenanza institucional, <strong>no figuran en el padrón oficial de ingresantes</strong>.
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* 5 Tarjetas de Métricas Forenses */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                  {/* Card 1: Total Evaluados */}
+                  <div 
+                    onClick={() => { setAnuladoFilterMode('todos'); setAnuladoPage(1); }}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+                      anuladoFilterMode === 'todos' ? 'bg-blue-50/80 border-blue-400 ring-2 ring-blue-500/20' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Evaluados</span>
+                      <div className="size-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-base">groups</span>
+                      </div>
+                    </div>
+                    <span className="text-2xl font-black text-slate-800 block mt-2">
+                      {metricsAnulado.totalEvaluados}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block font-medium mt-0.5">
+                      Rindieron el 2do examen
+                    </span>
+                  </div>
+
+                  {/* Card 2: Medicina Humana */}
+                  <div 
+                    onClick={() => { setAnuladoFilterMode('solo_medicina'); setAnuladoPage(1); }}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+                      anuladoFilterMode === 'solo_medicina' || anuladoFilterMode === 'nuevos_medicina' || anuladoFilterMode === 'ratificado_medicina' 
+                        ? 'bg-teal-50/80 border-teal-400 ring-2 ring-teal-500/20' 
+                        : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-teal-700 uppercase tracking-wider">Medicina Humana</span>
+                      <div className="size-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-base">medical_services</span>
+                      </div>
+                    </div>
+                    <span className="text-2xl font-black text-teal-800 block mt-2">
+                      {metricsAnulado.soloMedicinaCount}
+                    </span>
+                    <span className="text-[10px] text-teal-600 block font-medium mt-0.5">
+                      {metricsAnulado.nuevosMedicinaCount} legítimos + {metricsAnulado.ratificadoMedicinaCount} ratificado
+                    </span>
+                  </div>
+
+                  {/* Card 3: Segunda Opción */}
+                  <div 
+                    onClick={() => { setAnuladoFilterMode('segunda_opcion'); setAnuladoPage(1); }}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+                      anuladoFilterMode === 'segunda_opcion' ? 'bg-indigo-50/80 border-indigo-400 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-indigo-700 uppercase tracking-wider">Segunda Opción</span>
+                      <div className="size-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-base">alt_route</span>
+                      </div>
+                    </div>
+                    <span className="text-2xl font-black text-indigo-800 block mt-2">
+                      {metricsAnulado.segundaOpcionCount}
+                    </span>
+                    <span className="text-[10px] text-indigo-600 block font-medium mt-0.5">
+                      Biol(12), Enf(4), Farm(3), Zoot(1)
+                    </span>
+                  </div>
+
+                  {/* Card 4: Total Ingresantes Definitivos */}
+                  <div 
+                    onClick={() => { setAnuladoFilterMode('ingresantes_definitivos'); setAnuladoPage(1); }}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+                      anuladoFilterMode === 'ingresantes_definitivos' ? 'bg-emerald-50/80 border-emerald-400 ring-2 ring-emerald-500/20' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">Ingresantes Definitivos</span>
+                      <div className="size-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-base">verified</span>
+                      </div>
+                    </div>
+                    <span className="text-2xl font-black text-emerald-800 block mt-2">
+                      {metricsAnulado.ingresantesDefinitivosCount}
+                    </span>
+                    <span className="text-[10px] text-emerald-600 block font-medium mt-0.5">
+                      Padrón oficial válido
+                    </span>
+                  </div>
+
+                  {/* Card 5: Admisiones Anuladas */}
+                  <div 
+                    onClick={() => { setAnuladoFilterMode('admisiones_anuladas'); setAnuladoPage(1); }}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs ${
+                      anuladoFilterMode === 'admisiones_anuladas' ? 'bg-rose-50/80 border-rose-400 ring-2 ring-rose-500/20' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider">Admisiones Anuladas</span>
+                      <div className="size-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center">
+                        <span className="material-symbols-outlined text-base">cancel</span>
+                      </div>
+                    </div>
+                    <span className="text-2xl font-black text-rose-700 block mt-2">
+                      {metricsAnulado.admisionesAnuladasCount}
+                    </span>
+                    <span className="text-[10px] text-rose-600 block font-medium mt-0.5">
+                      Perdieron vacante previa
+                    </span>
+                  </div>
+                </div>
+
+                {/* Barra de Filtros Intuitivos y Buscador */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Pills de Filtrado */}
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
-                      onClick={exportAnuladosExcel}
-                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-sm transition-all flex items-center gap-2 shrink-0"
+                      onClick={() => {
+                        setAnuladoFilterMode('todos');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'todos'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
                     >
-                      <span className="material-symbols-outlined text-lg">download</span>
-                      Exportar Auditoría Excel
+                      Todos ({metricsAnulado.totalEvaluados})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('solo_medicina');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'solo_medicina'
+                          ? 'bg-teal-700 text-white shadow-xs'
+                          : 'bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200'
+                      }`}
+                    >
+                      Medicina Humana ({metricsAnulado.soloMedicinaCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('nuevos_medicina');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'nuevos_medicina'
+                          ? 'bg-teal-600 text-white shadow-xs'
+                          : 'bg-teal-50/70 text-teal-700 hover:bg-teal-100 border border-teal-200'
+                      }`}
+                      title="Postulantes legítimos que no habían ingresado en el 1er examen y ganaron vacante en el 2do (ej. Ríos-Guzmán)"
+                    >
+                      Nuevos en Medicina ({metricsAnulado.nuevosMedicinaCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('ratificado_medicina');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'ratificado_medicina'
+                          ? 'bg-emerald-700 text-white shadow-xs'
+                          : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                      }`}
+                    >
+                      Ratificado Medicina ({metricsAnulado.ratificadoMedicinaCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('segunda_opcion');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'segunda_opcion'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                      }`}
+                    >
+                      Segunda Opción ({metricsAnulado.segundaOpcionCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('ingresantes_definitivos');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'ingresantes_definitivos'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                      }`}
+                    >
+                      Todos Ingresantes ({metricsAnulado.ingresantesDefinitivosCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('admisiones_anuladas');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'admisiones_anuladas'
+                          ? 'bg-rose-600 text-white shadow-xs'
+                          : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                      }`}
+                    >
+                      Admisiones Anuladas ({metricsAnulado.admisionesAnuladasCount})
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setAnuladoFilterMode('no_ingresantes');
+                        setAnuladoPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        anuladoFilterMode === 'no_ingresantes'
+                          ? 'bg-slate-700 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'
+                      }`}
+                    >
+                      No Ingresaron ({metricsAnulado.noIngresaronCount})
                     </button>
                   </div>
-                </div>
 
-                {/* Métricas de Contingencia */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Postulantes Evaluados</span>
-                    <p className="text-3xl font-black text-slate-800 mt-1">{postulantesAnuladosList.length}</p>
-                    <span className="text-[11px] text-slate-500 font-medium">Postularon a Medicina Humana</span>
-                  </div>
-                  <div className="bg-white p-5 rounded-2xl border border-amber-200 bg-amber-50/20 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700">1er Examen (Supuestos Ingresantes)</span>
-                    <p className="text-3xl font-black text-amber-600 mt-1">
-                      {postulantesAnuladosList.filter(r => (r.examen_anulado?.ingresante_anulado === 1 || r.ingresante_examen_anulado === 1)).length}
-                    </p>
-                    <span className="text-[11px] text-amber-700 font-medium">Anulados por Res. CU-224-2022</span>
-                  </div>
-                  <div className="bg-white p-5 rounded-2xl border border-emerald-200 bg-emerald-50/20 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Ingresantes Definitivos (2do Examen)</span>
-                    <p className="text-3xl font-black text-emerald-600 mt-1">
-                      {postulantesAnuladosList.filter(r => r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE')).length}
-                    </p>
-                    <span className="text-[11px] text-emerald-700 font-medium">8 Medicina + 20 Segundas opciones</span>
-                  </div>
-                  <div className="bg-white p-5 rounded-2xl border border-rose-200 bg-rose-50/20 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-rose-700">Admisiones No Ratificadas</span>
-                    <p className="text-3xl font-black text-rose-600 mt-1">
-                      {postulantesAnuladosList.filter(r => {
-                        const ing1 = (r.examen_anulado?.ingresante_anulado === 1 || r.ingresante_examen_anulado === 1);
-                        const ing2 = r.Ingresante === 1 || String(r.OBSERVACION || '').toUpperCase().includes('INGRESANTE');
-                        return ing1 && !ing2;
-                      }).length}
-                    </p>
-                    <span className="text-[11px] text-rose-700 font-medium">Sacaron nota de ingreso en 1ro y no en 2do</span>
-                  </div>
-                </div>
-
-                {/* Filtros de Auditoría */}
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="relative w-full md:w-80">
-                    <span className="material-symbols-outlined absolute left-3 top-2.5 text-slate-400 text-lg">search</span>
+                  {/* Buscador por DNI o Nombres */}
+                  <div className="relative w-full lg:w-72 shrink-0">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                      search
+                    </span>
                     <input
                       type="text"
-                      placeholder="Buscar por DNI o Nombres..."
                       value={anuladoSearchTerm}
-                      onChange={(e) => setAnuladoSearchTerm(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      onChange={(e) => {
+                        setAnuladoSearchTerm(e.target.value);
+                        setAnuladoPage(1);
+                      }}
+                      placeholder="Buscar por DNI o apellidos..."
+                      className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-500"
                     />
-                  </div>
-                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                    <button
-                      onClick={() => setAnuladoFilterCondition('todos')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${anuladoFilterCondition === 'todos' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    >
-                      Todos ({postulantesAnuladosList.length})
-                    </button>
-                    <button
-                      onClick={() => setAnuladoFilterCondition('ingresantes')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${anuladoFilterCondition === 'ingresantes' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}
-                    >
-                      Ingresantes Definitivos (28)
-                    </button>
-                    <button
-                      onClick={() => setAnuladoFilterCondition('medicina')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${anuladoFilterCondition === 'medicina' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}
-                    >
-                      Solo Medicina (8)
-                    </button>
-                    <button
-                      onClick={() => setAnuladoFilterCondition('anulados_no_ingreso')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${anuladoFilterCondition === 'anulados_no_ingreso' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}`}
-                    >
-                      Admisiones Anuladas (39)
-                    </button>
+                    {anuladoSearchTerm && (
+                      <button
+                        onClick={() => {
+                          setAnuladoSearchTerm('');
+                          setAnuladoPage(1);
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                      >
+                        <span className="material-symbols-outlined text-sm">close</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* Tabla Comparativa de Doble Examen */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Resumen Especial para Subpestaña Admisiones Anuladas */}
+                {anuladoFilterMode === 'admisiones_anuladas' && (
+                  <div className="bg-rose-50/90 border border-rose-200 rounded-2xl p-4 shadow-xs">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-rose-100 border border-rose-200 flex items-center justify-center text-rose-700 shrink-0 mt-0.5">
+                          <span className="material-symbols-outlined text-lg">gavel</span>
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-rose-950 uppercase tracking-tight flex items-center gap-2">
+                            <span>Escuelas donde figuraban con ingreso en el 1er Examen Anulado ({metricsAnulado.admisionesAnuladasCount} Postulantes)</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-200/80 text-rose-900 border border-rose-300 font-black">
+                              Res. CU-224-2022
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-rose-800/90 font-medium mt-0.5 leading-snug">
+                            Postulantes que habían obtenido vacante el 17/09/2022 y cuya admisión fue formalmente revocada al no alcanzar vacante en la prueba definitiva:
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                        <span className="px-2.5 py-1 rounded-xl bg-white border border-rose-300 text-rose-900 text-xs font-black shadow-2xs flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-rose-600 inline-block"></span>
+                          Medicina Humana (8)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-xl bg-white border border-indigo-300 text-indigo-900 text-xs font-black shadow-2xs flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-indigo-600 inline-block"></span>
+                          Enfermería [2da Op.] (24)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-xl bg-white border border-amber-300 text-amber-900 text-xs font-black shadow-2xs flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-600 inline-block"></span>
+                          Agronomía [2da Op.] (3)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-xl bg-white border border-teal-300 text-teal-900 text-xs font-black shadow-2xs flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-teal-600 inline-block"></span>
+                          Biología [2da Op.] (2)
+                        </span>
+                        <span className="px-2.5 py-1 rounded-xl bg-white border border-purple-300 text-purple-900 text-xs font-black shadow-2xs flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-purple-600 inline-block"></span>
+                          Farmacia y Bioquímica [2da Op.] (2)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tabla Comparativa Forense */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
-                          <th className="p-3 text-center w-12">#</th>
-                          <th className="p-3">DNI</th>
-                          <th className="p-3">Postulante</th>
-                          <th className="p-3 bg-amber-50/60 text-amber-900 border-l border-amber-200/60 text-center">1er Examen (17/09) Nota</th>
-                          <th className="p-3 bg-amber-50/60 text-amber-900 text-center">Mérito 1</th>
-                          <th className="p-3 bg-amber-50/60 text-amber-900 text-center">Estado 1</th>
-                          <th className="p-3 bg-emerald-50/60 text-emerald-900 border-l border-emerald-200/60 text-center">2do Examen (29/09) Nota</th>
-                          <th className="p-3 bg-emerald-50/60 text-emerald-900 text-center">Mérito 2</th>
-                          <th className="p-3 bg-emerald-50/60 text-emerald-900">Carrera Adjudicada</th>
-                          <th className="p-3 text-center border-l border-slate-200">Condición Definitiva</th>
+                        {/* Fila de Encabezados Agrupados */}
+                        <tr className="border-b border-slate-200 text-[11px] font-black uppercase tracking-wider">
+                          <th colSpan={3} className="p-3 bg-slate-100 text-slate-700 border-r border-slate-200">
+                            Datos del Postulante
+                          </th>
+                          <th colSpan={3} className="p-3 bg-amber-50 text-amber-900 border-r border-amber-200 text-center">
+                            1er Examen (17/09/2022 - Anulado)
+                          </th>
+                          <th colSpan={3} className="p-3 bg-emerald-50 text-emerald-900 border-r border-emerald-200 text-center">
+                            2do Examen (29/09/2022 - Definitivo)
+                          </th>
+                          <th colSpan={3} className="p-3 bg-slate-100 text-slate-700 text-center">
+                            Resolución Final y Auditoría
+                          </th>
+                        </tr>
+                        {/* Fila de Columnas Individuales */}
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                          <th className="py-2.5 px-3 w-12 text-center">N°</th>
+                          <th className="py-2.5 px-3 w-24 font-mono">DNI</th>
+                          <th className="py-2.5 px-3 border-r border-slate-200 min-w-[200px]">Apellidos y Nombres</th>
+                          
+                          {/* 1er Examen */}
+                          <th className="py-2.5 px-3 w-16 text-center bg-amber-50/50">Nota</th>
+                          <th className="py-2.5 px-3 w-16 text-center bg-amber-50/50">Puesto</th>
+                          <th className="py-2.5 px-3 w-36 text-center bg-amber-50/50 border-r border-amber-200">Condición / Escuela</th>
+                          
+                          {/* 2do Examen */}
+                          <th className="py-2.5 px-3 w-16 text-center bg-emerald-50/50">Nota</th>
+                          <th className="py-2.5 px-3 w-16 text-center bg-emerald-50/50">Puesto</th>
+                          <th className="py-2.5 px-3 w-28 text-center bg-emerald-50/50 border-r border-emerald-200">Condición</th>
+                          
+                          {/* Auditoría */}
+                          <th className="py-2.5 px-3 w-36 text-center">Variación</th>
+                          <th className="py-2.5 px-3 min-w-[190px]">Carrera Asignada</th>
+                          <th className="py-2.5 px-3 min-w-[210px] text-center">Dictamen y Contexto</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium">
-                        {filteredAnulados.length === 0 ? (
+                      <tbody className="divide-y divide-slate-100">
+                        {paginatedAnulados.length === 0 ? (
                           <tr>
-                            <td colSpan={10} className="p-8 text-center text-slate-400">
-                              No se encontraron registros con los filtros seleccionados.
+                            <td colSpan={12} className="py-12 text-center text-slate-400 font-medium">
+                              No se encontraron registros que coincidan con el filtro seleccionado.
                             </td>
                           </tr>
                         ) : (
-                          filteredAnulados.map((row, idx) => {
-                            const ex = row.examen_anulado || {};
-                            const ingDefinitivo = row.Ingresante === 1 || String(row.OBSERVACION || '').toUpperCase().includes('INGRESANTE');
-                            const ing1 = ex.ingresante_anulado === 1 || row.ingresante_examen_anulado === 1;
-                            const nota1 = ex.nota_anulada || row.nota_examen_anulado || '--';
-                            const nota2 = row.notavigesimal || row.Nota || '--';
-                            const pos1 = ex.pos_anulada || row.pos_examen_anulado || '--';
-                            const pos2 = row.POS || '--';
-                            const carrIngreso = row.carrera_ingreso_nombre || (ingDefinitivo ? 'MEDICINA HUMANA' : '--');
-                            const isMedicina = carrIngreso.toUpperCase().includes('MEDICINA');
-                            const isDescartado = ing1 && !ingDefinitivo;
+                          paginatedAnulados.map((p, idx) => {
+                            const rowNumber = (anuladoPage - 1) * anuladosPageSize + idx + 1;
+                            const isIng1 = isIngresante1(p);
+                            const isIng2 = isIngresante2(p);
+                            const audit = getTipoAuditoria(p);
+                            const c1 = audit.carrera1era || getCarreraAnuladaInfo(p);
+
+                            const nota1 = p.nota_examen_anulado || p.examen_anulado?.nota_anulada || '--';
+                            const pos1 = p.pos_examen_anulado || p.examen_anulado?.pos_anulada || '--';
+                            const nota2 = p.notavigesimal || p.examen_anulado?.nota_reprogramada || p.Nota || '--';
+                            const pos2 = p.POS || p.examen_anulado?.pos_reprogramada || '--';
+
+                            const pos1Num = parseInt(pos1, 10);
+                            const pos2Num = parseInt(pos2, 10);
+                            let deltaPuesto: { text: string; bg: string; textCol: string } | null = null;
+                            if (!isNaN(pos1Num) && !isNaN(pos2Num)) {
+                              const diff = pos1Num - pos2Num;
+                              if (diff > 0) {
+                                deltaPuesto = { text: `▲ +${diff} (Pto ${pos1Num}➔${pos2Num})`, bg: 'bg-emerald-50 border-emerald-200', textCol: 'text-emerald-700' };
+                              } else if (diff < 0) {
+                                deltaPuesto = { text: `▼ ${diff} (Pto ${pos1Num}➔${pos2Num})`, bg: 'bg-rose-50 border-rose-200', textCol: 'text-rose-700' };
+                              } else {
+                                deltaPuesto = { text: `= (Pto ${pos1Num})`, bg: 'bg-slate-50 border-slate-200', textCol: 'text-slate-600' };
+                              }
+                            }
+
+                            const carreraFinal = isIng2 
+                              ? (p.carrera_ingreso_nombre || p.CarreraIngreso || 'MEDICINA HUMANA') 
+                              : '--';
 
                             return (
-                              <tr 
-                                key={row.alumno || idx}
-                                className={`transition-colors ${
-                                  isMedicina ? 'bg-emerald-50/40 hover:bg-emerald-50' : 
-                                  ingDefinitivo ? 'bg-blue-50/30 hover:bg-blue-50' : 
-                                  isDescartado ? 'bg-rose-50/30 hover:bg-rose-50' : 'hover:bg-slate-50/80'
+                              <tr
+                                key={idx}
+                                className={`transition-colors hover:bg-slate-50/80 ${
+                                  audit.key === 'admision_anulada'
+                                    ? 'bg-rose-50/20'
+                                    : audit.key === 'nuevo_medicina'
+                                    ? 'bg-teal-50/20'
+                                    : audit.key === 'ratificado_medicina'
+                                    ? 'bg-emerald-50/20'
+                                    : audit.key === 'segunda_opcion'
+                                    ? 'bg-indigo-50/20'
+                                    : ''
                                 }`}
                               >
-                                <td className="p-3 text-center text-slate-400 font-bold">{idx + 1}</td>
-                                <td className="p-3 font-mono font-bold text-slate-700">{row.alumno || row.DNI}</td>
-                                <td className="p-3">
-                                  <div className="font-bold text-slate-800">{row.nombre}</div>
-                                  <div className="text-[10px] text-slate-400">1ra opción: Medicina Humana</div>
+                                <td className="py-2.5 px-3 text-center font-bold text-slate-400 text-[11px]">
+                                  {rowNumber}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-bold text-slate-700 text-[11px]">
+                                  {p.alumno || p.NroDocumento}
+                                </td>
+                                <td className="py-2.5 px-3 border-r border-slate-200">
+                                  <span className="font-black text-slate-800 uppercase tracking-tight block text-[11px]">
+                                    {p.nombre}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-medium">
+                                    Postuló a: {p.carrera_nombre || 'MEDICINA HUMANA'}
+                                  </span>
                                 </td>
                                 
                                 {/* 1er Examen */}
-                                <td className="p-3 bg-amber-50/30 border-l border-amber-200/40 text-center font-bold text-amber-900 font-mono text-sm">
+                                <td className="py-2.5 px-3 text-center font-black text-amber-950 bg-amber-50/30">
                                   {nota1}
                                 </td>
-                                <td className="p-3 bg-amber-50/30 text-center font-bold text-slate-600 font-mono">
-                                  {pos1 ? `#${pos1}` : '--'}
+                                <td className="py-2.5 px-3 text-center font-bold text-slate-600 bg-amber-50/30">
+                                  {pos1}
                                 </td>
-                                <td className="p-3 bg-amber-50/30 text-center">
-                                  {ing1 ? (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 line-through">
-                                      Ingresante 1er Ex.
-                                    </span>
+                                <td className="py-2.5 px-3 text-center bg-amber-50/30 border-r border-amber-200">
+                                  {isIng1 ? (
+                                    <div className="flex flex-col items-center">
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-200/90 text-amber-900 border border-amber-300">
+                                        INGRESÓ
+                                      </span>
+                                      <span className="text-[10px] font-black text-amber-950 uppercase tracking-tight block mt-1 leading-tight">
+                                        {c1?.nombre || 'MEDICINA HUMANA'}
+                                      </span>
+                                      <span className="text-[9px] font-bold text-amber-800 block">
+                                        ({c1?.tipoOpcion || '1er Examen'})
+                                      </span>
+                                    </div>
                                   ) : (
-                                    <span className="text-[11px] text-slate-400">No ingresó</span>
+                                    <span className="text-[10px] font-medium text-slate-400">
+                                      No Ingresó
+                                    </span>
                                   )}
                                 </td>
 
                                 {/* 2do Examen */}
-                                <td className="p-3 bg-emerald-50/30 border-l border-emerald-200/40 text-center font-bold font-mono text-sm text-emerald-800">
+                                <td className="py-2.5 px-3 text-center font-black text-emerald-950 bg-emerald-50/30">
                                   {nota2}
                                 </td>
-                                <td className="p-3 bg-emerald-50/30 text-center font-bold text-slate-700 font-mono">
-                                  {pos2 ? `#${pos2}` : '--'}
+                                <td className="py-2.5 px-3 text-center font-bold text-slate-600 bg-emerald-50/30">
+                                  {pos2}
                                 </td>
-                                <td className="p-3 bg-emerald-50/30">
-                                  {ingDefinitivo ? (
-                                    <span className={`px-2 py-0.5 rounded text-xs font-black ${isMedicina ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}`}>
-                                      {carrIngreso}
+                                <td className="py-2.5 px-3 text-center bg-emerald-50/30 border-r border-emerald-200">
+                                  {isIng2 ? (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-200/90 text-emerald-900 border border-emerald-300">
+                                      INGRESÓ
                                     </span>
                                   ) : (
-                                    <span className="text-slate-400">--</span>
+                                    <span className="text-[10px] font-medium text-slate-400">
+                                      No Ingresó
+                                    </span>
                                   )}
                                 </td>
 
-                                {/* Condición Final */}
-                                <td className="p-3 text-center border-l border-slate-200">
-                                  {isMedicina ? (
-                                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 justify-center">
-                                      <span className="material-symbols-outlined text-[14px]">verified</span>
-                                      INGRESANTE MEDICINA
-                                    </span>
-                                  ) : ingDefinitivo ? (
-                                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-300 flex items-center gap-1 justify-center">
-                                      <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                                      INGRESANTE (2DA OPCIÓN)
-                                    </span>
-                                  ) : isDescartado ? (
-                                    <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1 justify-center" title="Alcanzó vacante en el 1er examen anulado pero no en el 2do examen">
-                                      <span className="material-symbols-outlined text-[14px]">cancel</span>
-                                      ADMISIÓN ANULADA
+                                {/* Variación de Puestos */}
+                                <td className="py-2.5 px-3 text-center">
+                                  {deltaPuesto ? (
+                                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-black border ${deltaPuesto.bg} ${deltaPuesto.textCol}`}>
+                                      {deltaPuesto.text}
                                     </span>
                                   ) : (
-                                    <span className="px-2 py-0.5 rounded text-xs font-semibold text-slate-400">
-                                      NO INGRESO
-                                    </span>
+                                    <span className="text-slate-400 text-xs">--</span>
                                   )}
+                                </td>
+
+                                {/* Carrera Asignada */}
+                                <td className="py-2.5 px-3">
+                                  {isIng2 ? (
+                                    <div>
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] uppercase tracking-tight border ${audit.carreraBadgeClass}`}>
+                                        {audit.carreraLabel}
+                                      </span>
+                                      <span className="text-[9px] text-slate-400 block mt-0.5 font-bold">
+                                        {audit.tipoOpcion}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      {isIng1 ? (
+                                        <div className="space-y-0.5">
+                                          <span className="text-[10px] font-black text-rose-700 uppercase tracking-tight block line-through">
+                                            {c1 ? c1.nombre : 'VACANTE ANULADA'}
+                                          </span>
+                                          <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                            {c1 ? `Revocada: ${c1.nombre} (${c1.tipoOpcion})` : 'Vacante revocada'}
+                                          </span>
+                                          <span className="text-[9px] text-slate-400 block font-medium">
+                                            Sin vacante en 2do examen
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-[10px] text-slate-400 font-mono">--</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+
+                                {/* Dictamen y Contexto */}
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[10px] font-black border shadow-2xs ${audit.badgeClass}`}>
+                                    {audit.badge}
+                                  </span>
+                                  <span className="block text-[9px] text-slate-500 font-medium mt-0.5 max-w-[220px] mx-auto leading-tight">
+                                    {audit.desc}
+                                  </span>
                                 </td>
                               </tr>
                             );
@@ -5282,7 +5878,38 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Paginador y Resumen */}
+                  <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <span className="text-slate-500 font-bold">
+                      Mostrando {filteredAnulados.length === 0 ? 0 : (anuladoPage - 1) * anuladosPageSize + 1} -{' '}
+                      {Math.min(anuladoPage * anuladosPageSize, filteredAnulados.length)} de {filteredAnulados.length} postulantes
+                    </span>
+
+                    {totalAnuladoPages > 1 && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          disabled={anuladoPage === 1}
+                          onClick={() => setAnuladoPage(p => Math.max(1, p - 1))}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+                        >
+                          Anterior
+                        </button>
+                        <span className="font-bold text-slate-700 px-2">
+                          Página {anuladoPage} de {totalAnuladoPages}
+                        </span>
+                        <button
+                          disabled={anuladoPage === totalAnuladoPages}
+                          onClick={() => setAnuladoPage(p => Math.min(totalAnuladoPages, p + 1))}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+                        >
+                          Siguiente
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
               </div>
             )}
 
