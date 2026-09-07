@@ -1,6 +1,6 @@
 {
   "name": "sistema-admision-desktop",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "Sistema de Admision UNSAAC - Version Oficial con Flujo de Pagos, Rechazos y Asistencia Mejorada",
   "main": "main.js",
   "type": "commonjs",
