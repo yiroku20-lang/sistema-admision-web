@@ -259,6 +259,15 @@ export interface Participant {
   OMERITO: string;      
   FECHAINGRESO: string;     
   created_at: string;
+  telefono?: string | null;
+  email?: string | null;
+  direccion?: string | null;
+  colegio?: string | null;
+  promedio_colegio?: string | null;
+  ubigeo?: string | null;
+  fecha_nacimiento?: string | null;
+  sexo?: string | null;
+  discapacidad?: string | null;
 }
 
 export interface AttendanceRecord {
@@ -302,6 +311,7 @@ export interface VacancyReservationDetail {
     withdrawal_resolution_date?: string;
     withdrawal_resolution_pdf?: string;
     batch?: VacancyReservationBatch;
+    admission_options?: Participant[];
 }
 
 export interface CalendarEvent {

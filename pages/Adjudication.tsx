@@ -1850,6 +1850,17 @@ export default function Adjudication() {
             careerMaxPos[schoolName] = Math.max(careerMaxPos[schoolName] || 0, orderNum);
             careerDirectCount[schoolName] = (careerDirectCount[schoolName] || 0) + 1;
           }
+          // Extraer datos enriquecidos de contacto y procedencia del CSV
+          const tel = getRowValue(row, ['telefono', 'Telefono', 'TELEFONO', 'celular', 'Celular', 'CELULAR', 'phone', 'Phone', 'TELEFONO_APODERADO']);
+          const email = getRowValue(row, ['email', 'Email', 'EMAIL', 'correo', 'Correo', 'CORREO', 'email_postulante']);
+          const dir = getRowValue(row, ['direccion', 'Direccion', 'DIRECCION', 'Direccion_1', 'domicilio', 'Domicilio', 'DOMICILIO', 'DIR_POSTULANTE']);
+          const col = getRowValue(row, ['colegio', 'Colegio', 'COLEGIO', 'nombrecolegio', 'colegio_procedencia', 'COLEGIO_PROCEDENCIA', 'NOM_COLEGIO']);
+          const prom = getRowValue(row, ['promedio_colegio', 'PromedioColegio', 'PROMEDIO_COLEGIO', 'promedio', 'Promedio', 'PROMEDIO', 'POND_COLEGIO']);
+          const ubi = getRowValue(row, ['ubigeo', 'Ubigeo', 'UBIGEO', 'Ubigeo_Domicilio_Actual', 'LugarNacimiento', 'lugar_nacimiento', 'LUGAR_NACIMIENTO', 'distrito', 'DISTRITO']);
+          const fecnac = getRowValue(row, ['fecha_nacimiento', 'FechaNacimiento', 'FECHA_NACIMIENTO', 'fecnac', 'FECNAC', 'FECHA_NAC', 'FEC_NACIMIENTO']);
+          const sexo = getRowValue(row, ['sexo', 'Sexo', 'SEXO', 'genero', 'Genero', 'GENERO']);
+          const disc = getRowValue(row, ['discapacidad', 'Discapacidad', 'DISCAPACIDAD']);
+
           directIngresantes.push({
             CODPOSTULANTE: dni,
             NOMBRE: nombre,
@@ -1861,12 +1872,29 @@ export default function Adjudication() {
             ANIO: anio,
             NOTA: nota,
             OMERITO: pos || "—",
-            FECHAINGRESO: fechaIngresoValida
+            FECHAINGRESO: fechaIngresoValida,
+            telefono: tel || null,
+            email: email || null,
+            direccion: dir || null,
+            colegio: col || null,
+            promedio_colegio: prom || null,
+            ubigeo: ubi || null,
+            fecha_nacimiento: fecnac || null,
+            sexo: sexo || null,
+            discapacidad: disc || null
           });
         }
       });
       // 4. Obtener estudiantes adjudicados usando la búsqueda robusta
       const adjRanking = await getAdjudicatedRanking(activeProcessName);
+
+      // Mapear datos enriquecidos de los postulantes originales en csvRows para los adjudicados
+      const csvStudentLookup: Record<string, any> = {};
+      csvRows.forEach(r => {
+        const d = getRowValue(r, ['NroDocumento', 'nroDocumento', 'NRODOCUMENTO', 'DNI', 'dni', 'Documento', 'documento', 'alumno', 'ALUMNO', 'CODPOSTULANTE', 'codpostulante']);
+        if (d) csvStudentLookup[d.trim()] = r;
+      });
+
       const adjStudentsBySchool: Record<string, any[]> = {};
       if (adjRanking && adjRanking.length > 0) {
         adjRanking.forEach(student => {
@@ -1891,6 +1919,19 @@ export default function Adjudication() {
           const schCode = schoolCodeMap[schName] || (schObj ? schObj.codigo_carrera : null);
           const filial = schoolFilialMap[schName] || (schObj ? (schObj.filial || "CUSCO") : "CUSCO");
           const newMerit = baseMerit + index + 1;
+
+          // Buscar datos de contacto y procedencia del estudiante
+          const originalRow = student.dni ? csvStudentLookup[String(student.dni).trim()] : null;
+          const tel = originalRow ? getRowValue(originalRow, ['telefono', 'Telefono', 'TELEFONO', 'celular', 'Celular', 'CELULAR', 'phone', 'Phone', 'TELEFONO_APODERADO']) : (student.telefono || null);
+          const email = originalRow ? getRowValue(originalRow, ['email', 'Email', 'EMAIL', 'correo', 'Correo', 'CORREO', 'email_postulante']) : (student.email || null);
+          const dir = originalRow ? getRowValue(originalRow, ['direccion', 'Direccion', 'DIRECCION', 'Direccion_1', 'domicilio', 'Domicilio', 'DOMICILIO', 'DIR_POSTULANTE']) : (student.direccion || null);
+          const col = originalRow ? getRowValue(originalRow, ['colegio', 'Colegio', 'COLEGIO', 'nombrecolegio', 'colegio_procedencia', 'COLEGIO_PROCEDENCIA', 'NOM_COLEGIO']) : (student.colegio || null);
+          const prom = originalRow ? getRowValue(originalRow, ['promedio_colegio', 'PromedioColegio', 'PROMEDIO_COLEGIO', 'promedio', 'Promedio', 'PROMEDIO', 'POND_COLEGIO']) : (student.promedio_colegio || null);
+          const ubi = originalRow ? getRowValue(originalRow, ['ubigeo', 'Ubigeo', 'UBIGEO', 'Ubigeo_Domicilio_Actual', 'LugarNacimiento', 'lugar_nacimiento', 'LUGAR_NACIMIENTO', 'distrito', 'DISTRITO']) : (student.ubigeo || null);
+          const fecnac = originalRow ? getRowValue(originalRow, ['fecha_nacimiento', 'FechaNacimiento', 'FECHA_NACIMIENTO', 'fecnac', 'FECNAC', 'FECHA_NAC', 'FEC_NACIMIENTO']) : (student.fecha_nacimiento || null);
+          const sexo = originalRow ? getRowValue(originalRow, ['sexo', 'Sexo', 'SEXO', 'genero', 'Genero', 'GENERO']) : (student.sexo || null);
+          const disc = originalRow ? getRowValue(originalRow, ['discapacidad', 'Discapacidad', 'DISCAPACIDAD']) : (student.discapacidad || null);
+
           adjudicatedIngresantes.push({
             CODPOSTULANTE: student.dni,
             NOMBRE: student.nombre,
@@ -1903,7 +1944,16 @@ export default function Adjudication() {
             NOTA: String(student.nota),
             OMERITO: String(newMerit),
             FECHAINGRESO: fechaIngresoValida,
-            OBSERVACION: "INGRESANTE ADJUDICACIÓN"
+            OBSERVACION: "INGRESANTE ADJUDICACIÓN",
+            telefono: tel || null,
+            email: email || null,
+            direccion: dir || null,
+            colegio: col || null,
+            promedio_colegio: prom || null,
+            ubigeo: ubi || null,
+            fecha_nacimiento: fecnac || null,
+            sexo: sexo || null,
+            discapacidad: disc || null
           });
 
           // Actualizar orden de mérito correlativo en la tabla de adjudicación

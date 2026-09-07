@@ -127,13 +127,14 @@ Dirección de Admisión`);
 
   const fetchProspects = async () => {
     setLoading(true);
+    // Ordenar primero por fecha_actualizacion si existe en la BD, o fallback en memoria por fecha_actualizacion / fecha_registro
     let { data, error } = await supabase
       .from('prospectos_vocacionales')
       .select('*')
       .order('fecha_actualizacion', { ascending: false, nullsFirst: false });
 
-    // Fallback if fecha_actualizacion does not exist yet
-    if (error) {
+    // Si la columna fecha_actualizacion no existiera en la BD para el sort directo, intentar con fecha_registro
+    if (error && error.message?.includes('fecha_actualizacion')) {
       const fallback = await supabase
         .from('prospectos_vocacionales')
         .select('*')
@@ -149,7 +150,13 @@ Dirección de Admisión`);
         notify(`Error al cargar prospectos: ${error.message}`, 'error');
       }
     } else {
-      const prospectsData = data || [];
+      let prospectsData = data || [];
+      // Ordenamiento robusto en cliente: fecha_actualizacion || fecha_registro desc
+      prospectsData = [...prospectsData].sort((a, b) => {
+        const dateA = new Date(a.fecha_actualizacion || a.fecha_registro || 0).getTime();
+        const dateB = new Date(b.fecha_actualizacion || b.fecha_registro || 0).getTime();
+        return dateB - dateA;
+      });
       setProspects(prospectsData);
       
       const dnis = [...new Set(prospectsData.map(p => p.dni))].filter(d => d && d.trim().length >= 8).slice(0, 500);
@@ -847,29 +854,24 @@ _Dirección de Admisión UNSAAC_`;
                            {p.estado_contacto}
                          </span>
                        </td>
-                        <td className="px-6 py-3">
-                          <div className="text-[11px] font-bold text-slate-700">
-                            {format(new Date(p.fecha_actualizacion || p.fecha_registro), 'dd MMM yyyy', { locale: es })}
-                          </div>
-                          {p.resultados_test && p.resultados_test.length > 1 ? (
-                            <span className="inline-flex items-center gap-1 mt-1 bg-amber-100 text-amber-800 text-[9px] font-black uppercase px-2 py-0.5 rounded-md tracking-wider">
-                              <span className="material-symbols-outlined text-[11px]">update</span>
-                              {p.resultados_test.length} Tests
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
-                              1er Registro
-                            </span>
-                          )}
-                        </td>
+                       <td className="px-6 py-3">
+                         <div className="text-[11px] font-bold text-slate-600">{format(new Date(p.fecha_registro), 'dd MMM yyyy', { locale: es })}</div>
+                       </td>
                        <td className="px-6 py-3 text-right">
                          <div className="flex items-center justify-end gap-1">
                            <button onClick={() => handleWhatsAppSend(p)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Enviar WhatsApp">
                              <span className="material-symbols-outlined text-[18px]">chat</span>
                            </button>
                            {p.resultados_test && p.resultados_test.length > 0 && (
-                             <button onClick={() => setViewingTests(p)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="Ver Resultados de Test">
+                             <button 
+                               onClick={() => setViewingTests(p)} 
+                               className="relative p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center justify-center" 
+                               title={`Ver Resultados (${p.resultados_test.length} ${p.resultados_test.length === 1 ? 'test' : 'tests'} realizados)`}
+                             >
                                <span className="material-symbols-outlined text-[18px]">assignment</span>
+                               <span className="absolute -top-1 -right-1 bg-indigo-600 text-white text-[9px] font-black rounded-full px-1 min-w-[14px] h-3.5 flex items-center justify-center shadow-xs">
+                                 {p.resultados_test.length}
+                               </span>
                              </button>
                            )}
                            <button onClick={() => toggleSuscripcion(p)} className={`p-2 rounded-lg transition-colors ${p.suscrito === false ? 'text-emerald-500 hover:bg-emerald-50' : 'text-slate-400 hover:bg-slate-100'}`} title={p.suscrito === false ? "Volver a Suscribir" : "Dar de baja"}>

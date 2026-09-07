@@ -16,16 +16,358 @@ import {
 } from '../lib/fileGateway';
 import { FileGatewayModal } from '../components/FileGatewayModal';
 import { DocumentViewerModal } from '../components/DocumentViewerModal';
+import { 
+  IntegratedStudentModal, 
+  IntegratedStudentData, 
+  ApplicantApplicationRecord 
+} from '../components/IntegratedStudentModal';
+import { parseBatchResolution } from './VacancyReservation';
 
 type SearchMode = 'individual' | 'batch' | 'import';
 
 interface BatchResult {
     originalCode: string;
     originalName: string;
+    studentCode?: string;
     found: boolean;
     status: 'EXACT' | 'PROBABLE' | 'NOT_FOUND';
     allMatches: Participant[];
 }
+
+// Helpers for decoding and value parsing
+export const fixEncoding = (text: string | undefined | null) => {
+    if (!text) return '';
+    let fixed = String(text);
+    fixed = fixed.replace(/INGENIER[\uFFFD?]A/g, 'INGENIERÍA'); 
+    fixed = fixed.replace(/EL[\uFFFD?]CTRICA/g, 'ELÉCTRICA');   
+    fixed = fixed.replace(/MEC[\uFFFD?]NICA/g, 'MECÁNICA');
+    fixed = fixed.replace(/INFORM[\uFFFD?]TICA/g, 'INFORMÁTICA');
+    fixed = fixed.replace(/MATEM[\uFFFD?]TICA/g, 'MATEMÁTICA');
+    fixed = fixed.replace(/EDUCACI[\uFFFD?]N/g, 'EDUCACIÓN');
+    fixed = fixed.replace(/COMUNICACI[\uFFFD?]N/g, 'COMUNICACIÓN');
+    fixed = fixed.replace(/ADMINISTRACI[\uFFFD?]N/g, 'ADMINISTRACIÓN');
+    fixed = fixed.replace(/BIOLOG[\uFFFD?]A/g, 'BIOLOGÍA');
+    fixed = fixed.replace(/ARQUEOLOG[\uFFFD?]A/g, 'ARQUEOLOGÍA');
+    fixed = fixed.replace(/ANTROPOLOG[\uFFFD?]A/g, 'ANTROPOLOGÍA');
+    fixed = fixed.replace(/PSICOLOG[\uFFFD?]A/g, 'PSICOLOGÍA');
+    fixed = fixed.replace(/OBSTETRICI[\uFFFD?]A/g, 'OBSTETRICIA');
+    fixed = fixed.replace(/ENFERMER[\uFFFD?]A/g, 'ENFERMERÍA');
+    fixed = fixed.replace(/NU[\uFFFD?]EZ/g, 'NUÑEZ').replace(/MU[\uFFFD?]OZ/g, 'MUÑOZ').replace(/ZU[\uFFFD?]IGA/g, 'ZUÑIGA');
+    return fixed;
+};
+
+// Diccionario y Mapeo Oficial de Códigos de Carreras de la UNSAAC
+export const CAREER_CODE_MAP: Record<string, string> = {
+    // Área A - Ingeniería y Ciencias Básicas
+    '101': 'ARQUITECTURA',
+    '102': 'INGENIERÍA ELÉCTRICA',
+    '103': 'INGENIERÍA GEOLÓGICA',
+    '104': 'INGENIERÍA METALÚRGICA',
+    '105': 'INGENIERÍA DE MINAS',
+    '106': 'INGENIERÍA MECÁNICA',
+    '107': 'INGENIERÍA QUÍMICA',
+    '108': 'INGENIERÍA CIVIL',
+    '109': 'QUÍMICA',
+    '110': 'FÍSICA',
+    '111': 'MATEMÁTICA',
+    '112': 'INGENIERÍA ELECTRÓNICA',
+    '113': 'INGENIERÍA INFORMÁTICA Y DE SISTEMAS',
+    '114': 'INGENIERÍA PETROQUÍMICA',
+    '115': 'INGENIERÍA AGROINDUSTRIAL',
+    '116': 'INGENIERÍA FORESTAL',
+    '117': 'MATEMÁTICA CON MENCIÓN EN ESTADÍSTICA',
+    '118': 'INGENIERÍA AGROAMBIENTAL',
+    '119': 'INGENIERÍA AGROPECUARIA',
+    '120': 'INGENIERÍA CIVIL',
+
+    // Área B - Ciencias de la Salud y Biológicas
+    '201': 'AGRONOMÍA',
+    '202': 'BIOLOGÍA',
+    '203': 'ENFERMERÍA',
+    '204': 'FARMACIA Y BIOQUÍMICA',
+    '205': 'MEDICINA HUMANA',
+    '206': 'ZOOTECNIA',
+    '207': 'ODONTOLOGÍA',
+    '208': 'INGENIERÍA FORESTAL',
+    '209': 'INGENIERÍA AGROAMBIENTAL',
+    '210': 'MEDICINA VETERINARIA',
+    '211': 'OBSTETRICIA',
+    '212': 'ENFERMERÍA',
+
+    // Área C - Ciencias Económicas y Empresariales
+    '301': 'CIENCIAS ADMINISTRATIVAS',
+    '302': 'CONTABILIDAD',
+    '303': 'ECONOMÍA',
+    '304': 'TURISMO',
+    '305': 'CIENCIAS ADMINISTRATIVAS',
+    '306': 'CONTABILIDAD',
+
+    // Área D - Ciencias Sociales y Humanidades
+    '401': 'ANTROPOLOGÍA',
+    '402': 'ARQUEOLOGÍA',
+    '403': 'DERECHO',
+    '404': 'HISTORIA',
+    '405': 'CIENCIAS DE LA COMUNICACIÓN',
+    '406': 'PSICOLOGÍA',
+    '407': 'FILOSOFÍA',
+    '408': 'EDUCACIÓN INICIAL',
+    '409': 'EDUCACIÓN PRIMARIA',
+    '410': 'EDUCACIÓN SECUNDARIA: MATEMÁTICA Y FÍSICA',
+    '411': 'EDUCACIÓN SECUNDARIA: CIENCIAS NATURALES',
+    '412': 'EDUCACIÓN SECUNDARIA: LENGUA Y LITERATURA',
+    '413': 'EDUCACIÓN SECUNDARIA: CIENCIAS SOCIALES',
+    '414': 'EDUCACIÓN SECUNDARIA: EDUCACIÓN FÍSICA',
+    '415': 'EDUCACIÓN SECUNDARIA: LENGUAS EXTRANJERAS',
+    '416': 'EDUCACIÓN SECUNDARIA: FILOSOFÍA Y CIENCIAS SOCIALES'
+};
+
+export const fixCareerName = (codeOrName: string | undefined | null): string => {
+    if (!codeOrName) return '';
+    const str = String(codeOrName).trim();
+    if (!str) return '';
+
+    // Si es puramente numérico (ej. "117", "0117", "204")
+    if (/^\d+$/.test(str)) {
+        const unpadded = str.replace(/^0+/, '');
+        if (CAREER_CODE_MAP[unpadded]) return CAREER_CODE_MAP[unpadded];
+        if (CAREER_CODE_MAP[str]) return CAREER_CODE_MAP[str];
+        return ''; // Nunca devolver código numérico crudo
+    }
+
+    // Si viene con formato "117 - NOMBRE" o "117: NOMBRE"
+    const codeMatch = str.match(/^(\d{2,4})\s*[-–—:]\s*(.*)$/);
+    if (codeMatch) {
+        const code = codeMatch[1].replace(/^0+/, '');
+        const rest = codeMatch[2].trim();
+        if (CAREER_CODE_MAP[code]) return CAREER_CODE_MAP[code];
+        if (rest) return fixEncoding(rest);
+    }
+
+    return fixEncoding(str);
+};
+
+export function normalizeProcessKey(modalidad: string = '', semestre: string = '', anio: string | number = '', rawRow?: any): string {
+    let combined = `${modalidad} ${semestre} ${anio}`;
+    if (rawRow && typeof rawRow === 'object') {
+        const extra = `${rawRow._modalidadNombre || ''} ${rawRow.nombremodalidad || ''} ${rawRow.Modalidad || ''} ${rawRow.modalidad || ''} ${rawRow.proceso || ''} ${rawRow.Proceso || ''} ${rawRow.archivo || ''} ${rawRow.filename || ''} ${rawRow._anio || ''} ${rawRow.Anio || ''} ${rawRow.anio || ''} ${rawRow._semestre || ''} ${rawRow.Semestre || ''} ${rawRow.semestre || ''} ${rawRow._modalidadId || ''}`;
+        combined += ` ${extra}`;
+    }
+    const text = combined.toUpperCase();
+    
+    // 1. Extraer Año (ej. 2024, 2025, 2026)
+    const yearMatch = text.match(/\b(202\d|20\d\d)\b/);
+    const year = yearMatch ? yearMatch[1] : (String(anio).match(/\b(202\d|20\d\d)\b/) ? String(anio).match(/\b(202\d|20\d\d)\b/)![1] : '2026');
+    
+    // 2. Extraer Semestre (I, II o PO)
+    let sem = 'I';
+    if (
+        text.includes('2026-II') || 
+        text.includes('2025-II') || 
+        text.includes('2024-II') || 
+        text.includes('2023-II') || 
+        text.includes('-II') || 
+        /\bII\b/.test(text) || 
+        text.includes('SEGUNDA OPORTUNIDAD') || 
+        text.includes('SEGUNDO EXAMEN') || 
+        text.includes('SEMESTRE: II') || 
+        text.includes('SEMESTRE II') || 
+        text.includes('SEM II')
+    ) {
+        sem = 'II';
+    } else if (
+        text.includes('PO') || 
+        text.includes('PRIMERA OPORTUNIDAD') || 
+        text.includes('PRIMERA OP') || 
+        text.includes('1RA OPORTUNIDAD') || 
+        text.includes('1ERA OPORTUNIDAD')
+    ) {
+        sem = 'I'; // Primera Oportunidad 2026 corresponde al periodo 2026-I
+    }
+    
+    // 3. Extraer Tipo de Examen Principal (Homologación Dirimencia / Exonerados 1er y 2do puesto)
+    let type = 'ORDINARIO';
+    if (
+        text.includes('DIRIMENCIA') || 
+        text.includes('DIRIM') ||
+        text.includes('EXONERACION') || 
+        text.includes('EXONERACIÓN') || 
+        text.includes('1ER Y 2DO') || 
+        text.includes('1RO Y 2DO') || 
+        text.includes('1ER Y 2DO PUESTO') || 
+        text.includes('PRIMER Y SEGUNDO') ||
+        text.includes('PRIMEROS PUESTOS') ||
+        text.includes('PRIMER PUESTO')
+    ) {
+        type = 'DIRIMENCIA';
+        if (!text.includes('2026-II') && !text.includes('2025-II') && !text.includes('-II') && !/\bII\b/.test(text) && !text.includes('SEGUNDA')) {
+            sem = 'I'; // Dirimencia 2026 pertenece a 2026-I
+        }
+    } else if (text.includes('FILIAL') || text.includes('SEDES') || text.includes('SEDE') || text.includes('CANCHIS') || text.includes('ESPINAR') || text.includes('ANDAHUAYLAS') || text.includes('SICUANI') || text.includes('SANTO TOMAS') || text.includes('PUERTO MALDONADO')) {
+        type = 'FILIALES';
+    } else if (text.includes('CEPRU') && (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP') || text.includes('1RA OPORTUNIDAD'))) {
+        type = 'CEPRU_PO';
+    } else if (text.includes('PRIMERA OPORTUNIDAD') || text.includes('PO') || text.includes('PRIMERA OP') || text.includes('1RA OPORTUNIDAD')) {
+        type = 'PO';
+    } else if (text.includes('CEPRU')) {
+        type = 'CEPRU';
+    } else if (text.includes('GRADUADOS') || text.includes('TITULADOS')) {
+        type = 'GRADUADOS';
+    } else if (text.includes('TRASLADO') || text.includes('EXTERNO') || text.includes('INTERNO')) {
+        type = 'TRASLADOS';
+    } else if (text.includes('DEPORTISTA') || text.includes('PROMETEDOR') || text.includes('CALIFICADO')) {
+        type = 'DEPORTISTAS';
+    } else if (text.includes('VICTIMA') || text.includes('PIR') || text.includes('TERRORISMO')) {
+        type = 'VICTIMAS';
+    } else if (text.includes('PERSONAS CON DISCAPACIDAD') || text.includes('DISCAPACIDAD') || text.includes('CONADIS')) {
+        type = 'DISCAPACIDAD';
+    }
+    
+    return `${year}-${sem}_${type}`;
+}
+
+export interface TimelineItem {
+    id: string;
+    tipo: 'INGRESO' | 'POSTULACION';
+    carrera: string;
+    modalidad: string;
+    anio: string | number;
+    semestre: string;
+    puntaje?: string | number;
+    puesto?: string | number;
+    grupo?: string;
+    sede?: string;
+    fecha?: string;
+    carpetaDocs?: string;
+    documentosCount?: number;
+    condicion?: string;
+    rawAdm?: Participant;
+    rawApp?: ApplicantApplicationRecord;
+}
+
+// Global cache for pre-revision files to avoid re-downloading on every keystroke
+let preRevisionCache: { data: any[]; timestamp: number } | null = null;
+
+export function getModalityAndSemesterFromPath(docPath: string): { label: string; year?: string; semester?: string; modality?: string } {
+    if (!docPath) return { label: 'PROCESO DE ADMISIÓN' };
+    
+    const parts = docPath.replace(/\\/g, '/').split('/').filter(Boolean);
+    let folderName = parts.length > 1 ? parts[parts.length - 2] : parts[0] || '';
+    folderName = folderName.replace(/^[A-Za-z]:\/?/g, '').replace(/_/g, ' ').trim();
+    if (!folderName || folderName.toLowerCase() === 'h:') {
+        folderName = 'EXPEDIENTE DIGITAL';
+    }
+    
+    let year = '';
+    const yMatch = folderName.match(/\b(20\d\d)\b/);
+    if (yMatch) year = yMatch[1];
+    
+    let semester = 'I';
+    const upper = folderName.toUpperCase();
+    if (
+        upper.includes('2026-II') || 
+        upper.includes('2025-II') || 
+        upper.includes('2024-II') || 
+        upper.includes('-II') || 
+        /\bII\b/.test(upper) || 
+        upper.includes('SEGUNDA OPORTUNIDAD') || 
+        upper.includes('SEGUNDO EXAMEN') ||
+        upper.includes('SEMESTRE: II') || 
+        upper.includes('SEMESTRE II')
+    ) {
+        semester = 'II';
+    } else if (upper.includes('PO') || upper.includes('PRIMERA OP') || upper.includes('PRIMERA')) {
+        semester = 'I';
+    } else if (upper.includes('DIRIMENCIA') || upper.includes('DIRIM') || upper.includes('1ER Y 2DO') || upper.includes('EXONERACION') || upper.includes('EXONERACIÓN')) {
+        semester = 'I';
+    }
+
+    return {
+        label: folderName,
+        year,
+        semester,
+        modality: folderName
+    };
+}
+
+export function getGroupedDocuments(documents: StudentDocument[] = []): Record<string, StudentDocument[]> {
+    const groups: Record<string, StudentDocument[]> = {};
+    documents.forEach(doc => {
+        const rawPath = doc.relativePath || doc.path || '';
+        const { label } = getModalityAndSemesterFromPath(rawPath);
+        if (!groups[label]) groups[label] = [];
+        groups[label].push(doc);
+    });
+    return groups;
+}
+
+const getPreRevisionRecords = async (): Promise<any[]> => {
+    const now = Date.now();
+    if (preRevisionCache && (now - preRevisionCache.timestamp) < 5 * 60 * 1000) {
+        return preRevisionCache.data;
+    }
+    try {
+        let rawData: any[] | null = null;
+        let queryErr: any = null;
+        
+        try {
+            const res = await supabase
+                .from('pre_revision_archivos')
+                .select('id, modalidad_id, cv_modalidades(nombre, semestre, cv_cuadros_anuales(anio)), csv_data');
+            rawData = res.data;
+            queryErr = res.error;
+        } catch (joinErr) {
+            queryErr = joinErr;
+        }
+
+        if (queryErr || !rawData) {
+            const fallbackRes = await supabase
+                .from('pre_revision_archivos')
+                .select('id, modalidad_id, csv_data');
+            rawData = fallbackRes.data;
+        }
+
+        if (!rawData) return preRevisionCache?.data || [];
+        
+        const allRows: any[] = [];
+        for (const item of rawData) {
+            let parsed = item.csv_data;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch (e) { parsed = []; }
+            }
+            let rows: any[] = [];
+            if (Array.isArray(parsed)) {
+                rows = parsed;
+            } else if (parsed && typeof parsed === 'object') {
+                if (Array.isArray(parsed.postulantes)) rows = parsed.postulantes;
+                else if (Array.isArray(parsed.data)) rows = parsed.data;
+                else if (Array.isArray(parsed.rows)) rows = parsed.rows;
+            }
+
+            const modObj = item.cv_modalidades as any;
+            const modalidadNombre = modObj?.nombre || '';
+            const modSemestre = modObj?.semestre || '';
+            const modAnio = modObj?.cv_cuadros_anuales?.anio || '';
+
+            rows.forEach((r: any) => {
+                if (r && typeof r === 'object') {
+                    allRows.push({ 
+                        ...r, 
+                        _preRevisionId: item.id, 
+                        _modalidadId: item.modalidad_id,
+                        _modalidadNombre: modalidadNombre,
+                        _semestre: modSemestre,
+                        _anio: modAnio
+                    });
+                }
+            });
+        }
+        preRevisionCache = { data: allRows, timestamp: now };
+        return allRows;
+    } catch (err) {
+        console.error('Error fetching pre_revision_archivos:', err);
+        return preRevisionCache?.data || [];
+    }
+};
 
 export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
@@ -45,17 +387,20 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   });
   const [isGatewayModalOpen, setIsGatewayModalOpen] = useState(false);
   const [selectedDocForViewer, setSelectedDocForViewer] = useState<StudentDocument | null>(null);
+  const [isFichaModalOpen, setIsFichaModalOpen] = useState(false);
   
   // State for toggling individual folders in local documents
   const [expandedFolders, setExpandedFolders] = useState<{[key: string]: boolean}>({});
 
-  // Individual Search State
+  // Search State
   const [searchQuery, setSearchQuery] = useState('');
-  const [studentHistory, setStudentHistory] = useState<Participant[]>([]);
-  const [candidates, setCandidates] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<React.ReactNode | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  
+  // Candidate list & selected unified profile
+  const [candidatesList, setCandidatesList] = useState<IntegratedStudentData[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<IntegratedStudentData | null>(null);
 
   // Batch Search State
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
@@ -73,6 +418,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   // Modal State for Batch Detail
   const [selectedBatchHistory, setSelectedBatchHistory] = useState<Participant[] | null>(null);
 
+  // Edit / Add Ingreso Records
   const [isEditing, setIsEditing] = useState(false);
   const [editingRecord, setEditingRecord] = useState<Participant | null>(null);
   const [editForm, setEditForm] = useState<Partial<Participant>>({});
@@ -80,12 +426,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
 
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newStudentForm, setNewStudentForm] = useState<Partial<Participant>>({});
-
-  const [renuncias, setRenuncias] = useState<any[]>([]);
-  const [reservas, setReservas] = useState<any[]>([]);
   
   // Local Documents State
-  const [localDocuments, setLocalDocuments] = useState<StudentDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
 
@@ -125,71 +467,93 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     };
   }, [checkGateway]);
 
-  const fetchExtraInfo = async (history: Participant[]) => {
+  // Fetch full details, school, gateway docs, renuncias and reservas for a profile
+  const fetchProfileExtraInfo = async (profile: IntegratedStudentData) => {
       setExpandedFolders({});
-      const studentCodes = Array.from(new Set(history.map(s => s.CODPOSTULANTE).filter(Boolean)));
-      if (studentCodes.length === 0) {
-          setRenuncias([]);
-          setReservas([]);
-          setLocalDocuments([]);
-          return;
-      }
-      
-      // Auto-fetch local documents from Gateway
       setLoadingDocs(true);
       setDocsError(null);
+
+      const dni = profile.dni;
+      let updatedSchoolInfo = profile.schoolInfo;
+      let updatedDocuments: StudentDocument[] = [];
+      let updatedPhoto: StudentDocument | null = null;
+      let updatedRenuncias: any[] = [];
+      let updatedReservas: any[] = [];
+
+      // 1. Fetch Gateway Documents from port 5000
       try {
-          const resDocs = await fetchStudentDocumentsFromGateway(studentCodes[0], gatewayUrl);
+          const resDocs = await fetchStudentDocumentsFromGateway(dni, gatewayUrl);
           if (!resDocs.ok) {
-              setLocalDocuments([]);
               setDocsError(resDocs.error || 'No se pudo consultar el servidor de archivos.');
               setGatewayStatus(prev => ({ ...prev, connected: false }));
           } else {
-              setLocalDocuments(resDocs.documents || []);
-              if (resDocs.documents.length > 0) {
+              updatedDocuments = resDocs.documents || [];
+              if (updatedDocuments.length > 0) {
                   setGatewayStatus(prev => ({ ...prev, connected: true }));
+                  // Find photo doc (e.g. 1_1_{dni}.jpg or image)
+                  const photoMatch = updatedDocuments.find(d => 
+                      d.isImage || (d.filename && d.filename.toLowerCase().startsWith(`1_1_${dni.toLowerCase()}`))
+                  );
+                  if (photoMatch) updatedPhoto = photoMatch;
               }
           }
       } catch (err: any) {
           setDocsError(err.message || 'Servidor de archivos fuera de línea');
-          setLocalDocuments([]);
           setGatewayStatus(prev => ({ ...prev, connected: false }));
       } finally {
           setLoadingDocs(false);
       }
 
+      // 2. Fetch Colegio details if schoolCode exists
+      if (profile.schoolCode) {
+          try {
+              const rawCode = profile.schoolCode.trim();
+              const unpadded = rawCode.replace(/^0+/, '');
+              const padded7 = rawCode.padStart(7, '0');
+              const { data: cols } = await supabase
+                  .from('colegios')
+                  .select('*')
+                  .or(`codigo_modular.eq.${rawCode},codigo_modular.eq.${unpadded},codigo_modular.eq.${padded7}`)
+                  .limit(1);
+              if (cols && cols.length > 0) {
+                  updatedSchoolInfo = cols[0];
+              }
+          } catch (e) {
+              console.error('Error fetching colegio:', e);
+          }
+      }
+
+      // 3. Fetch Renuncias and Reservas
       try {
           const [renReq, resReq] = await Promise.all([
-              supabase.from('renuncias').select('*').in('student_code', studentCodes).eq('status', 'Finalizado'),
-              supabase.from('reserva_vacantes_detalles').select('*, batch:reserva_vacantes_bloques(*)').in('student_code', studentCodes)
+              supabase.from('renuncias').select('*').eq('student_code', dni).eq('status', 'Finalizado'),
+              supabase.from('reserva_vacantes_detalles').select('*, batch:reserva_vacantes_bloques(*)').eq('student_code', dni)
           ]);
-          setRenuncias(renReq.data || []);
-          setReservas(resReq.data || []);
+          updatedRenuncias = renReq.data || [];
+          updatedReservas = resReq.data || [];
       } catch (err) {
-          console.error("Error fetching extra info:", err);
+          console.error("Error fetching renuncias/reservas:", err);
       }
-  };
 
+      // Set complete profile
+      const hasRen = updatedRenuncias.length > 0;
+      const hasRes = updatedReservas.length > 0;
+      const hasRet = updatedReservas.some(r => r.is_withdrawn);
 
-  const fixEncoding = (text: string | undefined | null) => {
-      if (!text) return '';
-      let fixed = text;
-      fixed = fixed.replace(/INGENIER[\uFFFD?]A/g, 'INGENIERÍA'); 
-      fixed = fixed.replace(/EL[\uFFFD?]CTRICA/g, 'ELÉCTRICA');   
-      fixed = fixed.replace(/MEC[\uFFFD?]NICA/g, 'MECÁNICA');
-      fixed = fixed.replace(/INFORM[\uFFFD?]TICA/g, 'INFORMÁTICA');
-      fixed = fixed.replace(/MATEM[\uFFFD?]TICA/g, 'MATEMÁTICA');
-      fixed = fixed.replace(/EDUCACI[\uFFFD?]N/g, 'EDUCACIÓN');
-      fixed = fixed.replace(/COMUNICACI[\uFFFD?]N/g, 'COMUNICACIÓN');
-      fixed = fixed.replace(/ADMINISTRACI[\uFFFD?]N/g, 'ADMINISTRACIÓN');
-      fixed = fixed.replace(/BIOLOG[\uFFFD?]A/g, 'BIOLOGÍA');
-      fixed = fixed.replace(/ARQUEOLOG[\uFFFD?]A/g, 'ARQUEOLOGÍA');
-      fixed = fixed.replace(/ANTROPOLOG[\uFFFD?]A/g, 'ANTROPOLOGÍA');
-      fixed = fixed.replace(/PSICOLOG[\uFFFD?]A/g, 'PSICOLOGÍA');
-      fixed = fixed.replace(/OBSTETRICI[\uFFFD?]A/g, 'OBSTETRICIA');
-      fixed = fixed.replace(/ENFERMER[\uFFFD?]A/g, 'ENFERMERÍA');
-      fixed = fixed.replace(/NU[\uFFFD?]EZ/g, 'NUÑEZ').replace(/MU[\uFFFD?]OZ/g, 'MUÑOZ').replace(/ZU[\uFFFD?]IGA/g, 'ZUÑIGA');
-      return fixed;
+      setSelectedProfile(prev => {
+          if (!prev || prev.dni !== dni) return prev;
+          return {
+              ...prev,
+              schoolInfo: updatedSchoolInfo,
+              documents: updatedDocuments,
+              photoDoc: updatedPhoto,
+              renuncias: updatedRenuncias,
+              reservas: updatedReservas,
+              hasRenuncia: hasRen,
+              hasReserva: hasRes,
+              hasRetiroReserva: hasRet
+          };
+      });
   };
 
   const getModalityAndSemesterFromPath = (pathStr: string | undefined | null) => {
@@ -199,12 +563,10 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       const segments = pathStr.split(/[\/\\]/).map(s => s.trim()).filter(Boolean);
       let targetFolder = '';
       
-      // Look back starting from the parent of the filename (segments.length - 2)
       for (let i = segments.length - 2; i >= 0; i--) {
           const seg = segments[i];
           const isNumeric = /^\d+$/.test(seg);
           const isDrive = /^[a-zA-Z]:$/.test(seg);
-          // Ignore parent folders of the whole structure that are generic
           const isGenericRoot = seg.toUpperCase() === 'FOTOS_ARCHIVOS_ADMISION_CEPRU' || seg.toUpperCase() === 'FOTOS_ARCHIVOS_ADMISION';
           const isSystem = ['API', 'FILES', 'STUDENT-DOCUMENTS', 'STUDENT_DOCUMENTS'].includes(seg.toUpperCase());
           
@@ -223,8 +585,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       }
       
       let displayName = targetFolder.toUpperCase().replace(/_/g, ' ').trim();
-      
-      // Strip out common verbose prefix phrases so folder looks clean and professional
       displayName = displayName
           .replace(/^DOCUMENTOS ADMISION DE EL /g, '')
           .replace(/^DOCUMENTOS ADMISION DE LA /g, '')
@@ -235,7 +595,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           .replace(/^ARCHIVOS ADMISION /g, '')
           .trim();
           
-      // Ensure we format the year-semester code with a hyphen elegantly (e.g. 2023 I -> 2023-I, 2024 II -> 2024-II, 2025_II -> 2025-II)
       displayName = displayName.replace(/(\d{4})\s+(I+|X+)/g, "$1-$2");
       displayName = displayName.replace(/(\d{4})-(I+|X+)/g, "$1-$2");
       
@@ -254,9 +613,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           if (rawPath.includes('?path=')) {
               try {
                   const match = rawPath.match(/[?&]path=([^&]+)/);
-                  if (match) {
-                      cleanPath = decodeURIComponent(match[1]);
-                  }
+                  if (match) cleanPath = decodeURIComponent(match[1]);
               } catch (e) {
                   console.error("Error decoding path parameter:", e);
               }
@@ -273,83 +630,201 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       });
 
       Object.keys(groups).forEach(groupLabel => {
-          // Sort documents inside this folder alphabetically to guarantee sequential ordering of files (e.g., 1_1_*, 2_1_*, 3_1_*)
           groups[groupLabel].sort((a, b) => (a.filename || '').localeCompare(b.filename || ''));
       });
       
       return groups;
   };
 
+  // MULTI-LAYER UNIVERSAL SEARCH
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-    setLoading(true); setError(null); setStudentHistory([]); setCandidates([]); setHasSearched(true);
-    setRenuncias([]); setReservas([]);
+    setLoading(true); 
+    setError(null); 
+    setSelectedProfile(null);
+    setCandidatesList([]); 
+    setHasSearched(true);
+    
     try {
       const term = searchQuery.trim();
       const isNumeric = /^\d+$/.test(term);
       
-      let query = supabase.from('participantes').select('*');
+      // 1. Layer 1: Query 'participantes' (Ingresantes oficiales)
+      let partQuery = supabase.from('participantes').select('*');
       if (isNumeric) {
-          query = query.eq('CODPOSTULANTE', term);
+          partQuery = partQuery.eq('CODPOSTULANTE', term);
       } else {
-          // Split by spaces, commas, hyphens and slashes to support any order/separators (like hyphenated names in the DB)
           const words = term.split(/[\s,\-/]+/).filter(Boolean);
           words.forEach(word => {
-            // Replace vowels with '_' to be completely accent-insensitive and spelling-forgiving
             const agnostic = word.replace(/[aeiouáéíóúüAEIOUÁÉÍÓÚÜ]/g, '_');
-            query = query.ilike('NOMBRE', `%${agnostic}%`);
+            partQuery = partQuery.ilike('NOMBRE', `%${agnostic}%`);
           });
       }
       
-      const { data, error: err } = await query.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false });
-      
-      if (err) throw err;
-      
-      if (data && data.length > 0) {
-          const uniqueNames = Array.from(new Set(data.map(d => d.NOMBRE)));
-          if (uniqueNames.length === 1) {
-              setStudentHistory(data);
-              fetchExtraInfo(data);
+      const [partRes, preRows] = await Promise.all([
+          partQuery.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false }),
+          getPreRevisionRecords()
+      ]);
+
+      if (partRes.error) throw partRes.error;
+      const partData = partRes.data || [];
+
+      // 2. Layer 2: Filter pre_revision_archivos
+      const preMatches: any[] = [];
+      const searchLower = term.toLowerCase();
+      const searchWords = searchLower.split(/[\s,\-/]+/).filter(Boolean);
+
+      preRows.forEach(row => {
+          const dni = String(row.NroDocumento || row.alumno || row.dni || row.DNI || row.CODPOSTULANTE || row.DOCUMENTO || '').trim();
+          const name = String(row.nombre || row.Nombre || row.NOMBRE || row.POSTULANTE || '').toUpperCase();
+          
+          if (isNumeric) {
+              if (dni === term) {
+                  preMatches.push(row);
+              }
           } else {
-              const seen = new Set();
-              const uniqueCandidates = data.filter(item => {
-                  const key = item.NOMBRE;
-                  return seen.has(key) ? false : seen.add(key);
+              // Word match
+              const allWordsMatch = searchWords.every(w => {
+                  const wNorm = w.replace(/[aeiouáéíóúü]/g, '');
+                  const nameNorm = name.toLowerCase().replace(/[aeiouáéíóúü]/g, '');
+                  return nameNorm.includes(wNorm) || name.toLowerCase().includes(w);
               });
-              setCandidates(uniqueCandidates);
+              if (allWordsMatch) {
+                  preMatches.push(row);
+              }
           }
+      });
+
+      // 3. Assemble Unified Person Map
+      const personMap = new Map<string, IntegratedStudentData>();
+
+      // Populate from participantes (Admissions)
+      partData.forEach(p => {
+          const dni = String(p.CODPOSTULANTE).trim();
+          if (!dni) return;
+          if (!personMap.has(dni)) {
+              personMap.set(dni, {
+                  dni,
+                  fullName: fixEncoding(p.NOMBRE),
+                  isIngresanteOficial: true,
+                  isSoloPostulante: false,
+                  hasRenuncia: false,
+                  hasReserva: false,
+                  hasRetiroReserva: false,
+                  admissions: [],
+                  applications: [],
+                  documents: [],
+                  renuncias: [],
+                  reservas: []
+              });
+          }
+          const profile = personMap.get(dni)!;
+          profile.admissions.push(p);
+      });
+
+      // Populate & Enrich from pre_revision_archivos
+      preMatches.forEach(r => {
+          const dni = String(r.NroDocumento || r.alumno || r.dni || r.DNI || r.CODPOSTULANTE || r.DOCUMENTO || '').trim();
+          if (!dni) return;
+          
+          const rawName = String(r.nombre || r.Nombre || r.NOMBRE || r.POSTULANTE || '').trim();
+          const obs = String(r.OBSERVACION || r.observacion || r.Condicion || r.condicion || r.ESTADO || '').toUpperCase();
+          const isAdmittedInProcess = obs.includes('INGRESA') || obs.includes('INGRESO') || obs.includes('ADMITIDO') || obs === 'SI';
+
+          if (!personMap.has(dni)) {
+              personMap.set(dni, {
+                  dni,
+                  fullName: fixEncoding(rawName) || `POSTULANTE DNI ${dni}`,
+                  isIngresanteOficial: isAdmittedInProcess,
+                  isSoloPostulante: !isAdmittedInProcess,
+                  hasRenuncia: false,
+                  hasReserva: false,
+                  hasRetiroReserva: false,
+                  admissions: [],
+                  applications: [],
+                  documents: [],
+                  renuncias: [],
+                  reservas: []
+              });
+          }
+
+          const profile = personMap.get(dni)!;
+          if (isAdmittedInProcess) {
+              profile.isIngresanteOficial = true;
+              profile.isSoloPostulante = false;
+          }
+
+          // Contact details
+          if (!profile.phone && (r.telefono || r.Telefono || r.celular)) profile.phone = String(r.telefono || r.Telefono || r.celular).trim();
+          if (!profile.email && (r.email || r.Email || r.CorreoPersonal)) profile.email = String(r.email || r.Email || r.CorreoPersonal).trim();
+          if (!profile.address && (r.Direccion || r.Direccion_1 || r.direccion)) profile.address = String(r.Direccion || r.Direccion_1 || r.direccion).trim();
+          if (!profile.birthDate && r.FechaNacimiento) profile.birthDate = String(r.FechaNacimiento).trim();
+          if (!profile.birthPlace && r.LugarNacimiento) profile.birthPlace = String(r.LugarNacimiento).trim();
+          if (!profile.currentUbigeo && (r.Ubigeo_Domicilio_Actual || r.Ubigeo)) profile.currentUbigeo = String(r.Ubigeo_Domicilio_Actual || r.Ubigeo).trim();
+          if (!profile.gender && (r.Sexo || r.sexo)) profile.gender = String(r.Sexo || r.sexo).trim();
+          if (!profile.disability && r.Discapacidad) profile.disability = String(r.Discapacidad).trim();
+          if (!profile.nationality && r.Nacionalidad) profile.nationality = String(r.Nacionalidad).trim();
+
+          // School
+          if (!profile.schoolCode && (r.colegio || r.Colegio)) profile.schoolCode = String(r.colegio || r.Colegio).trim();
+          if (!profile.schoolName && (r.nombrecolegio || r.nombreColegio)) profile.schoolName = String(r.nombrecolegio || r.nombreColegio).trim();
+
+          // Application Record
+          const rawCarrera1 = r.carrera_nombre || r['Carrera 1'] || r.Carrera1 || r.carrera1 || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera || r.COD_CARRERA || r.codigo_carrera || r.CARRERA || r.ESCUELA || r.escuela;
+          const rawCarrera2 = r['Carrera 2'] || r.Carrera2 || r.carrera2 || r.Escuela2 || r.escuela2;
+          const rawCarreraIngreso = r.carrera_ingreso_nombre || r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso || r.CARRERA_INGRESO || r.ESCUELA_INGRESO || r.escuelaIngreso || r.escuela_ingreso || r.carrera_admitida || r.CarreraAdmitida;
+          const modName = r._modalidadNombre || r.nombremodalidad || r.Modalidad || r.modalidad || r.proceso || 'PROCESO DE ADMISIÓN';
+          const rawNota = r.notavigesimal || r.Nota || r.nota || r.PUNTAJE || r.puntaje || r.NOTA || '';
+          const rawPuesto = r.POS || r.pos || r.PUESTO || r.puesto || r.OMERITO || r.omerito || '';
+
+          const appRec: ApplicantApplicationRecord = {
+              id: `${dni}-${profile.applications.length}`,
+              modalidad: String(modName).toUpperCase(),
+              carrera1: fixCareerName(rawCarrera1),
+              carrera2: fixCareerName(rawCarrera2),
+              carreraIngreso: fixCareerName(rawCarreraIngreso),
+              nota: String(rawNota).trim(),
+              puesto: String(rawPuesto).trim(),
+              condicion: obs || (isAdmittedInProcess ? 'INGRESANTE' : 'PARTICIPANTE'),
+              grupo: String(r.grupo || r.Grupo || '').trim(),
+              aula: String(r.aula || r.Aula || '').trim(),
+              rawRow: r
+          };
+          profile.applications.push(appRec);
+      });
+
+      const uniqueList = Array.from(personMap.values());
+
+      if (uniqueList.length === 1) {
+          const single = uniqueList[0];
+          setSelectedProfile(single);
+          setCandidatesList([]);
+          fetchProfileExtraInfo(single);
+      } else if (uniqueList.length > 1) {
+          setCandidatesList(uniqueList);
+          setSelectedProfile(null);
+      } else {
+          setCandidatesList([]);
+          setSelectedProfile(null);
       }
     } catch (err: any) {
-      setError(err.code === 'PGRST205' ? 'Tabla no configurada.' : 'Error al buscar.');
-    } finally { setLoading(false); }
+      console.error(err);
+      setError('Error al consultar las bases de datos de postulantes e ingresantes.');
+    } finally { 
+      setLoading(false); 
+    }
   };
 
-  const selectCandidate = async (candidate: Participant) => {
-      setLoading(true);
-      setRenuncias([]); setReservas([]);
-      try {
-          const { data } = await supabase
-            .from('participantes')
-            .select('*')
-            .eq('NOMBRE', candidate.NOMBRE)
-            .order('ANIO', { ascending: false })
-            .order('SEMESTRE', { ascending: false });
-          if (data) {
-              setStudentHistory(data);
-              fetchExtraInfo(data);
-          }
-      } catch (err) {
-          console.error(err);
-      } finally {
-          setLoading(false);
-      }
+  const handleSelectCandidate = (candidate: IntegratedStudentData) => {
+      setSelectedProfile(candidate);
+      setCandidatesList([]);
+      fetchProfileExtraInfo(candidate);
   };
 
   const handleUpdateRecord = async (syncName: boolean = false) => {
-    if (!editingRecord || !editForm.NOMBRE?.trim()) return;
+    if (!editingRecord || !editForm.NOMBRE?.trim() || !selectedProfile) return;
     setLoading(true);
     try {
-      // 1. Update the specific record by ID
       const { error } = await supabase
         .from('participantes')
         .update({
@@ -368,7 +843,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       
       if (error) throw error;
 
-      // 2. If syncName is requested, update all records that had the original name
       if (syncName && editingRecord.NOMBRE !== editForm.NOMBRE.toUpperCase()) {
           await supabase
             .from('participantes')
@@ -376,12 +850,24 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
             .eq('NOMBRE', editingRecord.NOMBRE);
       }
       
-      // Update local state
-      if (syncName) {
-          setStudentHistory(prev => prev.map(s => s.NOMBRE === editingRecord.NOMBRE ? { ...s, ...editForm, NOMBRE: editForm.NOMBRE!.toUpperCase() } : s));
-      } else {
-          setStudentHistory(prev => prev.map(s => s.id === editingRecord.id ? { ...s, ...editForm, NOMBRE: editForm.NOMBRE!.toUpperCase() } : s));
-      }
+      // Update state
+      setSelectedProfile(prev => {
+          if (!prev) return prev;
+          const updatedAdms = prev.admissions.map(s => {
+              if (syncName && s.NOMBRE === editingRecord.NOMBRE) {
+                  return { ...s, ...editForm, NOMBRE: editForm.NOMBRE!.toUpperCase() } as Participant;
+              }
+              if (s.id === editingRecord.id) {
+                  return { ...s, ...editForm, NOMBRE: editForm.NOMBRE!.toUpperCase() } as Participant;
+              }
+              return s;
+          });
+          return {
+              ...prev,
+              fullName: syncName ? editForm.NOMBRE!.toUpperCase() : prev.fullName,
+              admissions: updatedAdms
+          };
+      });
       
       setIsEditing(false);
       setEditingRecord(null);
@@ -418,9 +904,10 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       alert('Estudiante agregado con éxito');
       setIsAddingNew(false);
       setNewStudentForm({});
-      // Optionally search for the newly added student
       setSearchQuery(data.CODPOSTULANTE);
-      // Let the user click search, or we could trigger handleSearch
+      setTimeout(() => {
+          handleSearch();
+      }, 100);
     } catch (err: any) {
       alert('Error al agregar estudiante: ' + err.message);
     } finally {
@@ -428,76 +915,124 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  // Batch Processing
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
+      
+      const fileName = file.name.toLowerCase();
+      const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
       const reader = new FileReader();
+
       reader.onload = async (evt) => {
-          const content = evt.target?.result as string;
-          const lines = content.split(/\r?\n/).filter(line => line.trim());
-          if (lines.length <= 1) return;
-
-          setIsProcessingBatch(true);
-          setBatchProgress(0);
-          setBatchStatusText('Analizando archivo CSV...');
-
-          const firstLine = lines[0];
-          const delimiter = firstLine.includes(';') ? ';' : ',';
-
-          const rawData = lines.slice(1).map(line => {
-              const parts = line.split(delimiter).map(p => p.trim().replace(/^"|"$/g, ''));
-              return { code: parts[0] || '', name: (parts[1] || '').toUpperCase() };
-          }).filter(item => item.code !== '' || item.name !== '');
-
-          const exactCodes = Array.from(new Set(rawData.map(d => d.code).filter(Boolean)));
-          const exactNames = Array.from(new Set(rawData.map(d => d.name).filter(Boolean)));
-          
           try {
+              let rows: any[][] = [];
+
+              if (isExcel) {
+                  const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+                  const workbook = XLSX.read(data, { type: 'array' });
+                  const firstSheetName = workbook.SheetNames[0];
+                  const worksheet = workbook.Sheets[firstSheetName];
+                  const rawExcelRows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+                  rows = rawExcelRows.filter(r => r && r.some(cell => String(cell ?? '').trim() !== ''));
+              } else {
+                  const content = evt.target?.result as string;
+                  const lines = content.split(/\r?\n/).filter(line => line.trim());
+                  if (lines.length === 0) return;
+
+                  const firstLine = lines[0];
+                  let delimiter = ',';
+                  if (firstLine.includes(';') && (firstLine.split(';').length >= firstLine.split(',').length)) {
+                      delimiter = ';';
+                  } else if (firstLine.includes('\t')) {
+                      delimiter = '\t';
+                  }
+
+                  rows = lines.map(line => {
+                      return line.split(delimiter).map(p => p.trim().replace(/^"|"$/g, ''));
+                  }).filter(r => r && r.some(cell => String(cell ?? '').trim() !== ''));
+              }
+
+              if (rows.length === 0) {
+                  alert("El archivo no contiene registros válidos.");
+                  return;
+              }
+
+              setIsProcessingBatch(true);
+              setBatchProgress(0);
+              setBatchStatusText('Analizando archivo...');
+
+              const firstRow = rows[0].map(c => String(c ?? '').trim().toUpperCase());
+              const isHeader = firstRow.some(c => 
+                  c.includes('DNI') || c.includes('NOMBRE') || c.includes('POSTULANTE') || 
+                  c.includes('ESTUD') || c.includes('ALUM') || c.includes('CODIGO')
+              );
+
+              let codeIdx = 0;
+              let nameIdx = 1;
+              let studentCodeIdx = -1;
+              let dataStartIndex = isHeader ? 1 : 0;
+
+              if (isHeader) {
+                  const sIdx = firstRow.findIndex(c => 
+                      c.includes('ESTUD') || c.includes('ALUM') || c.includes('MATRICULA')
+                  );
+                  if (sIdx !== -1) studentCodeIdx = sIdx;
+
+                  const dIdx = firstRow.findIndex((c, idx) => 
+                      idx !== studentCodeIdx && (c.includes('DNI') || c.includes('DOC') || c.includes('POSTULANTE') || c.includes('CODIGO'))
+                  );
+                  if (dIdx !== -1) codeIdx = dIdx;
+
+                  const nIdx = firstRow.findIndex((c, idx) => 
+                      idx !== studentCodeIdx && idx !== codeIdx && (c.includes('NOMBRE') || c.includes('APELLIDO'))
+                  );
+                  if (nIdx !== -1) nameIdx = nIdx;
+              }
+
+              const rawData = rows.slice(dataStartIndex).map(parts => {
+                  const code = String(parts[codeIdx] ?? '').trim();
+                  const name = String(parts[nameIdx] ?? '').trim().toUpperCase();
+                  const studentCode = studentCodeIdx >= 0 ? String(parts[studentCodeIdx] ?? '').trim() : '';
+                  return { code, name, studentCode };
+              }).filter(item => item.code !== '' || item.name !== '');
+
+              const exactCodes = Array.from(new Set(rawData.map(d => d.code).filter(Boolean)));
+              const exactNames = Array.from(new Set(rawData.map(d => d.name).filter(Boolean)));
+              
               let dbMatches: any[] = [];
               const chunkSize = 200;
               
-              setBatchStatusText('Consultando base de datos por DNI...');
-              const totalCodeChunks = Math.ceil(exactCodes.length / chunkSize);
+              setBatchStatusText('Consultando base de datos oficial...');
               for (let i = 0; i < exactCodes.length; i += chunkSize) {
                   const chunk = exactCodes.slice(i, i + chunkSize);
-                  const { data, error } = await supabase
+                  const { data } = await supabase
                       .from('participantes')
                       .select('*')
                       .in('CODPOSTULANTE', chunk);
-                  if (error) throw error;
                   if (data) dbMatches = dbMatches.concat(data);
-                  
-                  const currentChunk = Math.floor(i / chunkSize) + 1;
-                  setBatchProgress(Math.round((currentChunk / (totalCodeChunks || 1)) * 40));
+                  setBatchProgress(Math.round(((i + chunkSize) / (exactCodes.length || 1)) * 50));
               }
 
-              setBatchStatusText('Consultando base de datos por Nombres...');
-              const totalNameChunks = Math.ceil(exactNames.length / chunkSize);
               for (let i = 0; i < exactNames.length; i += chunkSize) {
                   const chunk = exactNames.slice(i, i + chunkSize);
-                  const { data, error } = await supabase
+                  const { data } = await supabase
                       .from('participantes')
                       .select('*')
                       .in('NOMBRE', chunk);
-                  if (error) throw error;
                   if (data) {
                       const newMatches = data.filter(d => !dbMatches.some(dm => dm.id === d.id));
                       dbMatches = dbMatches.concat(newMatches);
                   }
-                  
-                  const currentChunk = Math.floor(i / chunkSize) + 1;
-                  setBatchProgress(40 + Math.round((currentChunk / (totalNameChunks || 1)) * 40));
+                  setBatchProgress(50 + Math.round(((i + chunkSize) / (exactNames.length || 1)) * 40));
               }
 
-              setBatchStatusText('Cruzando información...');
-              
               const codeMap = new Map<string, Participant[]>();
               const nameMap = new Map<string, Participant[]>();
 
               dbMatches.forEach(m => {
                   const codeKey = String(m.CODPOSTULANTE).trim();
                   const nameKey = String(m.NOMBRE).trim();
-
                   if (codeKey) {
                       if (!codeMap.has(codeKey)) codeMap.set(codeKey, []);
                       codeMap.get(codeKey)!.push(m);
@@ -508,242 +1043,104 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                   }
               });
 
-              const results: BatchResult[] = [];
-              const batchProcessingSize = 500;
-              
-              for (let i = 0; i < rawData.length; i += batchProcessingSize) {
-                  const chunk = rawData.slice(i, i + batchProcessingSize);
+              const results: BatchResult[] = rawData.map(item => {
+                  const codeMatches = item.code ? (codeMap.get(item.code) || []) : [];
+                  const nameMatches = item.name ? (nameMap.get(item.name) || []) : [];
                   
-                  chunk.forEach(item => {
-                      const targetCode = String(item.code || '').trim();
-                      const targetName = String(item.name || '').trim();
+                  let exactMatches: Participant[] = [];
+                  let probableMatches: Participant[] = [];
 
-                      const codeMatches = targetCode ? (codeMap.get(targetCode) || []) : [];
-                      const nameMatches = targetName ? (nameMap.get(targetName) || []) : [];
-                      
-                      let exactMatches: Participant[] = [];
-                      let probableMatches: Participant[] = [];
-
-                      const hasCodeStr = !!targetCode;
-                      const hasNameStr = !!targetName;
-
-                      const seenIds = new Set<string>();
-
-                      if (hasCodeStr && hasNameStr) {
-                          const nameMatchesSet = new Set(nameMatches.map(m => m.id));
-                          codeMatches.forEach(m => {
-                              if (nameMatchesSet.has(m.id)) {
-                                  exactMatches.push(m);
-                              } else {
-                                  probableMatches.push(m);
-                              }
-                              seenIds.add(m.id);
-                          });
-                          
-                          nameMatches.forEach(m => {
-                              if (!seenIds.has(m.id)) {
-                                  probableMatches.push(m);
-                                  seenIds.add(m.id);
-                              }
-                          });
-
-                      } else if (hasNameStr) {
-                          exactMatches = nameMatches;
-                      } else if (hasCodeStr) {
-                          exactMatches = codeMatches;
-                      }
-
-                      const finalMatches = exactMatches.length > 0 ? exactMatches : probableMatches;
-                      let s: 'EXACT' | 'PROBABLE' | 'NOT_FOUND' = 'NOT_FOUND';
-                      if (exactMatches.length > 0) s = 'EXACT';
-                      else if (probableMatches.length > 0) s = 'PROBABLE';
-
-                      results.push({
-                          originalCode: item.code,
-                          originalName: item.name,
-                          found: finalMatches.length > 0,
-                          status: s,
-                          allMatches: finalMatches
+                  if (item.code && item.name) {
+                      const nameMatchesSet = new Set(nameMatches.map(m => m.id));
+                      codeMatches.forEach(m => {
+                          if (nameMatchesSet.has(m.id)) exactMatches.push(m);
+                          else probableMatches.push(m);
                       });
-                  });
+                      nameMatches.forEach(m => {
+                          if (!probableMatches.some(pm => pm.id === m.id) && !exactMatches.some(em => em.id === m.id)) {
+                              probableMatches.push(m);
+                          }
+                      });
+                  } else if (item.name) {
+                      exactMatches = nameMatches;
+                  } else if (item.code) {
+                      exactMatches = codeMatches;
+                  }
 
-                  setBatchProgress(80 + Math.round(((i + chunk.length) / rawData.length) * 20));
-                  await new Promise(r => setTimeout(r, 0));
-              }
+                  const finalMatches = exactMatches.length > 0 ? exactMatches : probableMatches;
+                  let s: 'EXACT' | 'PROBABLE' | 'NOT_FOUND' = 'NOT_FOUND';
+                  if (exactMatches.length > 0) s = 'EXACT';
+                  else if (probableMatches.length > 0) s = 'PROBABLE';
+
+                  return {
+                      originalCode: item.code,
+                      originalName: item.name,
+                      studentCode: item.studentCode,
+                      found: finalMatches.length > 0,
+                      status: s,
+                      allMatches: finalMatches
+                  };
+              });
 
               setBatchResults(results);
-          } catch (error: any) {
-              console.error("Batch Error:", error);
-              alert("Error al consultar la base de datos: " + error.message);
-          } finally {
-              setIsProcessingBatch(false);
               setBatchProgress(100);
-              setBatchStatusText('');
-              if (e.target) e.target.value = '';
+              setIsProcessingBatch(false);
+          } catch (err: any) {
+              alert("Error al procesar archivo: " + err.message);
+              setIsProcessingBatch(false);
           }
       };
-      reader.readAsText(file);
-  };
 
-  const handleExportCruceCC = async () => {
-      if (batchResults.length === 0) return;
-      setIsProcessingBatch(true);
-      setBatchStatusText('Generando Reporte CC...');
-      setBatchProgress(10);
-      
-      try {
-          const { data: escuelas, error } = await supabase.from('cv_escuelas').select('*');
-          if (error) throw error;
-          
-          const escuelasMap = new Map<string, any>();
-          escuelas?.forEach(e => {
-              escuelasMap.set(e.nombre.toUpperCase(), e);
-              if (e.alias) escuelasMap.set(e.alias.toUpperCase(), e);
-          });
-          
-          setBatchProgress(50);
-          
-          const formattedData: any[] = [];
-          
-          batchResults.forEach(res => {
-              if (res.allMatches.length > 0) {
-                  const sortedMatches = [...res.allMatches].sort((a, b) => {
-                      const anioA = parseInt(a.ANIO || '0');
-                      const anioB = parseInt(b.ANIO || '0');
-                      if (anioA !== anioB) return anioB - anioA;
-                      return (b.SEMESTRE || '').localeCompare(a.SEMESTRE || '');
-                  });
-
-                  sortedMatches.forEach(match => {
-                      const carreraStr = (match.CARRERA || '').toUpperCase();
-                      let escuela = escuelasMap.get(carreraStr);
-                      if (!escuela) {
-                          const found = escuelas?.find(e => carreraStr.includes(e.nombre.toUpperCase()) || (e.alias && carreraStr.includes(e.alias.toUpperCase())));
-                          if (found) escuela = found;
-                      }
-                      
-                      formattedData.push({
-                          'DNI': match.CODPOSTULANTE || res.originalCode,
-                          'NOMBRE': match.NOMBRE || res.originalName,
-                          'SIGLA': escuela?.siglas || '--',
-                          'CÓDIGO DE ESCUELA': escuela?.codigo_carrera || '--',
-                          'CARRERA': match.CARRERA,
-                          'MODALIDAD': match.MODALIDAD,
-                          'PROCESO': `${match.SEMESTRE || ''}-${match.ANIO || ''}`
-                      });
-                  });
-              } else {
-                  formattedData.push({
-                      'DNI': res.originalCode,
-                      'NOMBRE': res.originalName,
-                      'SIGLA': 'NO ENCONTRADO',
-                      'CÓDIGO DE ESCUELA': '--',
-                      'CARRERA': '--',
-                      'MODALIDAD': '--',
-                      'PROCESO': '--'
-                  });
-              }
-          });
-          
-          setBatchProgress(90);
-          
-          const worksheet = XLSX.utils.json_to_sheet(formattedData);
-          const workbook = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte_CC');
-          XLSX.writeFile(workbook, `Reporte_CC_${new Date().getTime()}.xlsx`);
-          
-      } catch (err: any) {
-          console.error(err);
-          alert("Error al generar reporte CC: " + err.message);
-      } finally {
-          setIsProcessingBatch(false);
-          setBatchStatusText('');
-          setBatchProgress(0);
-      }
+      if (isExcel) reader.readAsArrayBuffer(file);
+      else reader.readAsText(file);
   };
 
   const handleExportCruceExcel = () => {
       if (batchResults.length === 0) return;
-      
-      const formattedData = batchResults.map(res => {
-          const statusMap = { 'EXACT': 'CONFIRMADO', 'PROBABLE': 'PROBABLE', 'NOT_FOUND': 'NO ENCONTRADO' };
-          const found = statusMap[res.status];
-          let detail = '';
-          if (res.allMatches.length === 1) {
-              detail = `${res.allMatches[0].CARRERA} - ${res.allMatches[0].SEMESTRE || res.allMatches[0].ANIO || 'N/A'} - MODALIDAD: ${res.allMatches[0].MODALIDAD || 'N/A'}`;
-          } else if (res.allMatches.length > 1) {
-              detail = `Múltiples ingresos (${res.allMatches.length})`;
-          }
-          
-          return {
-              'Código/DNI Original': res.originalCode,
-              'Nombre Original': res.originalName,
-              'Estado': found,
-              'Detalle Encontrado': detail,
-              'Nombres Coincidentes': res.allMatches.map(m => m.NOMBRE).join(' | ')
-          };
-      });
+      const dataToExport = batchResults.map(res => ({
+          'Código/DNI': res.originalCode,
+          'Cód. Estudiante': res.studentCode || '',
+          'Nombre Buscado': res.originalName,
+          'Estado': res.status === 'EXACT' ? 'CONFIRMADO' : (res.status === 'PROBABLE' ? 'PROBABLE' : 'NO REGISTRADO'),
+          'Carrera': res.allMatches.length > 0 ? fixEncoding(res.allMatches[0].CARRERA) : '',
+          'Semestre-Año': res.allMatches.length > 0 ? `${res.allMatches[0].SEMESTRE}-${res.allMatches[0].ANIO}` : '',
+          'Modalidad': res.allMatches.length > 0 ? res.allMatches[0].MODALIDAD : '',
+          'Nota': res.allMatches.length > 0 ? res.allMatches[0].NOTA : '',
+          'Puesto': res.allMatches.length > 0 ? res.allMatches[0].OMERITO : ''
+      }));
 
-      const worksheet = XLSX.utils.json_to_sheet(formattedData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Resultados_Cruce');
-      
-      XLSX.writeFile(workbook, `Reporte_Cruce_Masivo_${new Date().getTime()}.xlsx`);
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Cruce_Masivo');
+      XLSX.writeFile(wb, `Cruce_Masivo_${new Date().getTime()}.xlsx`);
   };
 
   const handleExportCrucePdf = () => {
       if (batchResults.length === 0) return;
-      
-      const doc = new jsPDF('landscape');
-      
-      doc.setFontSize(16);
-      doc.text('Reporte de Cruce Masivo de Ingresantes', 14, 20);
-      
-      doc.setFontSize(10);
-      doc.text(`Fecha de generación: ${new Date().toLocaleString()}`, 14, 28);
-      
-      const exactCount = batchResults.filter(r => r.status === 'EXACT').length;
-      const probCount = batchResults.filter(r => r.status === 'PROBABLE').length;
-      const notFoundCount = batchResults.filter(r => r.status === 'NOT_FOUND').length;
-      
-      doc.text(`Total procesados: ${batchResults.length} | Confirmados: ${exactCount} | Probables: ${probCount} | No Encontrados: ${notFoundCount}`, 14, 34);
+      const doc = new jsPDF();
+      doc.setFontSize(14);
+      doc.text('REPORTE DE CRUCE MASIVO DE INGRESANTES', 14, 15);
+      doc.setFontSize(9);
+      doc.text(`Fecha: ${new Date().toLocaleDateString('es-PE')} ${new Date().toLocaleTimeString('es-PE')}`, 14, 22);
 
-      const tableData = batchResults.map(res => {
-          let detail = '';
-          if (res.allMatches.length === 1) {
-              detail = `${res.allMatches[0].CARRERA}\n${res.allMatches[0].SEMESTRE || res.allMatches[0].ANIO || 'N/A'}`;
-          } else if (res.allMatches.length > 1) {
-              detail = `Múltiples ingresos (${res.allMatches.length})`;
-          }
-          
-          const statusMap = { 'EXACT': 'CONFIRMADO', 'PROBABLE': 'PROBABLE', 'NOT_FOUND': 'NO ENCONTRADO' };
-          
-          return [
-              res.originalCode || '-',
-              res.originalName || '-',
-              statusMap[res.status],
-              detail || '-',
-              res.allMatches.map(m => m.NOMBRE).join('\n') || '-'
-          ];
-      });
+      const tableData = batchResults.map(res => [
+          res.originalCode,
+          res.studentCode || '-',
+          res.originalName,
+          res.status === 'EXACT' ? 'CONFIRMADO' : (res.status === 'PROBABLE' ? 'PROBABLE' : 'NO REGISTRADO'),
+          res.allMatches.length > 0 ? `${fixEncoding(res.allMatches[0].CARRERA)} (${res.allMatches[0].SEMESTRE}-${res.allMatches[0].ANIO})` : '-'
+      ]);
 
       autoTable(doc, {
-          startY: 40,
-          head: [['Código/DNI', 'Nombre Buscado', 'Estado', 'Carrera/Periodo', 'Nombres Equivalentes']],
+          startY: 28,
+          head: [['Código/DNI', 'Cód. Est.', 'Nombre Buscado', 'Estado', 'Carrera y Proceso']],
           body: tableData,
           theme: 'striped',
           headStyles: { fillColor: [15, 23, 42] },
-          styles: { fontSize: 8 },
-          columnStyles: {
-              0: { cellWidth: 25 },
-              1: { cellWidth: 50 },
-              2: { cellWidth: 25 },
-              3: { cellWidth: 70 },
-              4: { cellWidth: 'auto' }
-          }
+          styles: { fontSize: 8 }
       });
 
-      doc.save(`Reporte_Cruce_Masivo_${new Date().getTime()}.pdf`);
+      doc.save(`Cruce_Masivo_${new Date().getTime()}.pdf`);
   };
 
   // Import Logic
@@ -757,8 +1154,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           if (lines.length <= 1) return;
 
           const delimiter = lines[0].includes(';') ? ';' : ',';
-          const headers = lines[0].split(delimiter).map(h => h.trim().toUpperCase());
-          
           const parsed = lines.slice(1).map(line => {
               const cols = line.split(delimiter).map(c => c.trim().replace(/^"|"$/g, ''));
               return {
@@ -784,7 +1179,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       if (importData.length === 0) return;
       setIsImporting(true);
       setImportProgress(0);
-      
       const CHUNK_SIZE = 100;
       let successCount = 0;
 
@@ -793,15 +1187,13 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
               const chunk = importData.slice(i, i + CHUNK_SIZE);
               const { error } = await supabase.from('participantes').insert(chunk);
               if (error) throw error;
-              
               successCount += chunk.length;
               setImportProgress(Math.round((successCount / importData.length) * 100));
           }
-          alert(`✅ Importación finalizada con éxito: ${successCount} ingresantes registrados.`);
+          alert(`✅ Importación exitosa: ${successCount} registros ingresados.`);
           setImportData([]);
           setActiveMode('individual');
       } catch (err: any) {
-          console.error(err);
           alert(`Error durante la importación: ${err.message}`);
       } finally {
           setIsImporting(false);
@@ -809,58 +1201,314 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       }
   };
 
-  const mainStudent = studentHistory.length > 0 ? studentHistory[0] : null;
+  // Build unified timeline events for selected profile with strict deduplication
+  const getUnifiedTimelineEvents = (): TimelineItem[] => {
+      if (!selectedProfile) return [];
+      const items: TimelineItem[] = [];
+      const matchedAppIds = new Set<string>();
+      const matchedFolderLabels = new Set<string>();
 
-  const getTimelineEvents = () => {
-      const events: any[] = [];
-      studentHistory.forEach(s => {
-          events.push({
-              id: `ingreso-${s.id}`,
-              type: 'ingreso',
-              sortKey: `${s.ANIO}-${s.SEMESTRE === 'I' ? '1' : s.SEMESTRE === 'II' ? '2' : '3'}-ingreso`,
-              data: s
+      // PASO A: INGRESOS OFICIALES (participantes)
+      selectedProfile.admissions.forEach((adm, idx) => {
+          let carreraName = fixCareerName(adm.CARRERA);
+          const admAnio = String(adm.ANIO || '').trim();
+          const admSem = String(adm.SEMESTRE || 'I').trim();
+          const admMod = String(adm.MODALIDAD || 'ORDINARIO').trim();
+          const pKey = normalizeProcessKey(admMod, admSem, admAnio);
+
+          let puntaje: string | number | undefined = adm.NOTA && String(adm.NOTA) !== '0' ? adm.NOTA : undefined;
+          let puesto: string | number | undefined = adm.OMERITO && String(adm.OMERITO) !== '0' ? adm.OMERITO : undefined;
+          let grupo: string | undefined = undefined;
+          let matchedFolder: string | undefined = undefined;
+          let matchedDocCount = 0;
+
+          // Buscar TODAS las coincidencias en pre_revision_archivos (applications) para este mismo proceso y fusionar
+          const matchingApps = selectedProfile.applications.filter(app => {
+              if (matchedAppIds.has(app.id)) return false;
+              const prKey = normalizeProcessKey(
+                  app.modalidad, 
+                  String(app.rawRow?._semestre || app.rawRow?.semestre || app.rawRow?.Semestre || ''), 
+                  String(app.rawRow?._anio || app.rawRow?.anio || app.rawRow?.Anio || admAnio),
+                  app.rawRow
+              );
+              
+              // 1. Coincidencia exacta por clave normalizada (ej. 2026-I_ORDINARIO === 2026-I_ORDINARIO)
+              if (pKey && prKey && pKey === prKey) return true;
+
+              // 2. Coincidencia por año, semestre y tipo de examen (ej. 2026-I y ORDINARIO)
+              const [pYearSem, pRest] = pKey.split('_');
+              const [prYearSem, prRest] = prKey.split('_');
+              if (pYearSem && prYearSem && pYearSem === prYearSem && pRest === prRest) return true;
+
+              // 3. Coincidencia por carrera de ingreso real y año
+              const appRealCareer = fixCareerName(app.carreraIngreso || (app.condicion?.includes('INGRESA') ? app.carrera1 : ''));
+              const sameCareer = (carreraName && appRealCareer && (carreraName.includes(appRealCareer) || appRealCareer.includes(carreraName)));
+              const sameYear = admAnio && (String(app.modalidad).includes(admAnio) || String(app.rawRow?.anio || '').includes(admAnio));
+              if (sameCareer && sameYear && pRest === prRest) return true;
+
+              return false;
+          });
+
+          matchingApps.forEach(matchingApp => {
+              matchedAppIds.add(matchingApp.id);
+              if (!puntaje && matchingApp.nota) puntaje = matchingApp.nota;
+              if (!puesto && matchingApp.puesto) puesto = matchingApp.puesto;
+              if (!grupo && matchingApp.grupo) grupo = matchingApp.grupo;
+              
+              // Si la carrera en participantes es genérica o código, usar carreraIngreso de pre-revisión
+              const candidateCareer = fixCareerName(matchingApp.carreraIngreso || adm.CARRERA);
+              if ((!carreraName || carreraName === 'CARRERA UNIVERSITARIA') && candidateCareer) {
+                  carreraName = candidateCareer;
+              }
+          });
+
+          // Buscar documentos en disco H:\ asociados a este ingreso
+          const groupedDocs = getGroupedDocuments(selectedProfile.documents);
+          Object.entries(groupedDocs).forEach(([folderLabel, docs]) => {
+              const folderKey = normalizeProcessKey(folderLabel, '', admAnio);
+              if (folderKey === pKey || (admAnio && folderLabel.includes(admAnio) && (admSem === 'I' ? !folderLabel.includes('-II') : folderLabel.includes('-II')))) {
+                  matchedFolder = folderLabel;
+                  matchedDocCount = docs.length;
+                  matchedFolderLabels.add(folderLabel);
+              }
+          });
+
+          items.push({
+              id: `ingreso-${adm.id || idx}`,
+              tipo: 'INGRESO',
+              carrera: carreraName || 'CARRERA UNIVERSITARIA',
+              modalidad: adm.MODALIDAD || 'ORDINARIO',
+              anio: adm.ANIO || '',
+              semestre: adm.SEMESTRE || 'I',
+              puntaje,
+              puesto,
+              grupo,
+              sede: adm.FILIAL || 'CUSCO',
+              fecha: adm.FECHAINGRESO || '',
+              carpetaDocs: matchedFolder,
+              documentosCount: matchedDocCount,
+              rawAdm: adm
           });
       });
-      renuncias.forEach(r => {
-          const [anio, sem] = (r.semester || '0000-0').split('-');
-          events.push({
-              id: `renuncia-${r.id}`,
-              type: 'renuncia',
-              sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-renuncia`,
-              data: r
+
+      // PASO B: PROCESAR PRE-REVISIÓN (pre_revision_archivos)
+      selectedProfile.applications.forEach((app, idx) => {
+          if (matchedAppIds.has(app.id)) return; // Ya fusionada en el ingreso oficial
+
+          const prKey = normalizeProcessKey(
+              app.modalidad, 
+              String(app.rawRow?._semestre || app.rawRow?.semestre || app.rawRow?.Semestre || ''), 
+              String(app.rawRow?._anio || app.rawRow?.anio || app.rawRow?.Anio || ''),
+              app.rawRow
+          );
+
+          // Verificar si ya existe un evento (INGRESO o POSTULACION) para este mismo proceso exacto
+          const matchingItem = items.find(it => {
+              const itKey = normalizeProcessKey(it.modalidad, it.semestre, it.anio);
+              
+              // 1. Clave de proceso idéntica (ej. 2026-I_DIRIMENCIA === 2026-I_DIRIMENCIA)
+              if (itKey && prKey && itKey === prKey) return true;
+
+              // 2. Mismo año-semestre y mismo tipo de examen
+              const [itYearSem, itRest] = itKey.split('_');
+              const [prYearSem, prRest] = prKey.split('_');
+              if (itYearSem && prYearSem && itYearSem === prYearSem && itRest === prRest) return true;
+
+              return false;
           });
-      });
-      reservas.forEach(r => {
-          const [anio, sem] = (r.starting_semester || '0000-0').split('-');
-          events.push({
-              id: `reserva-${r.id}`,
-              type: 'reserva',
-              sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-reserva`,
-              data: r
-          });
-          if (r.is_withdrawn) {
-              events.push({
-                  id: `reserva-ret-${r.id}`,
-                  type: 'retiro_reserva',
-                  sortKey: `${anio}-${sem === 'I' ? '1' : sem === 'II' ? '2' : '3'}-retiro`,
-                  data: r
-              });
+
+          if (matchingItem) {
+              // SI YA EXISTE UN EVENTO EN ESTE MISMO PROCESO: NO crear una segunda tarjeta.
+              // Inyectar datos faltantes en la tarjeta existente
+              matchedAppIds.add(app.id);
+              if (!matchingItem.puntaje && app.nota) matchingItem.puntaje = app.nota;
+              if (!matchingItem.puesto && app.puesto) matchingItem.puesto = app.puesto;
+              if (!matchingItem.grupo && app.grupo) matchingItem.grupo = app.grupo;
+              return;
           }
+
+          // SI NO EXISTE UN EVENTO EN ESTE PROCESO:
+          const obs = String(app.condicion || app.rawRow?.OBSERVACION || app.rawRow?.ESTADO || '').toUpperCase();
+          const isIngresante = obs.includes('INGRESA') || obs.includes('ADMITIDO') || (app.rawRow && (app.rawRow.Ingresante === 1 || app.rawRow.Ingresante === '1'));
+
+          let extractedAnio = String(app.rawRow?._anio || app.rawRow?.anio || app.rawRow?.Anio || '').trim();
+          if (!extractedAnio) {
+              const yMatch = (String(app.modalidad) + ' ' + String(app.rawRow?.nombremodalidad || '')).match(/\b(202\d|20\d\d)\b/);
+              if (yMatch) extractedAnio = yMatch[1];
+          }
+          if (!extractedAnio) extractedAnio = '2026';
+
+          let extractedSem = String(app.rawRow?._semestre || app.rawRow?.semestre || app.rawRow?.Semestre || '').trim();
+          if (extractedSem.includes('-II') || extractedSem === 'II' || extractedSem === '2') {
+              extractedSem = 'II';
+          } else if (extractedSem.includes('-I') || extractedSem === 'I' || extractedSem === '1') {
+              extractedSem = 'I';
+          } else {
+              const modUpper = (String(app.modalidad) + ' ' + String(app.rawRow?.nombremodalidad || '')).toUpperCase();
+              if (
+                  modUpper.includes('2026-II') || 
+                  modUpper.includes('2025-II') || 
+                  modUpper.includes('2024-II') || 
+                  modUpper.includes('-II') || 
+                  /\bII\b/.test(modUpper) || 
+                  modUpper.includes('SEGUNDA OPORTUNIDAD') || 
+                  modUpper.includes('SEGUNDO EXAMEN') ||
+                  modUpper.includes('SEMESTRE: II') || 
+                  modUpper.includes('SEMESTRE II')
+              ) {
+                  extractedSem = 'II';
+              } else {
+                  extractedSem = 'I';
+              }
+          }
+
+          // REGLA CRÍTICA:
+          // Si es ingresante, la carrera real es carreraIngreso (segunda opción o primera opción adjudicada).
+          // Si no es ingresante, la carrera postulada es carrera1 (primera opción) o carrera2.
+          let appCareer = '';
+          if (isIngresante) {
+              appCareer = fixCareerName(app.carreraIngreso) || fixCareerName(app.carrera1) || fixCareerName(app.carrera2);
+          } else {
+              appCareer = fixCareerName(app.carrera1) || fixCareerName(app.carrera2) || fixCareerName(app.carreraIngreso);
+          }
+
+          if (!appCareer || /^\d+$/.test(appCareer)) {
+              appCareer = app.modalidad || 'POSTULACIÓN REGISTRADA';
+          }
+
+          const appSede = app.rawRow?.sede || app.rawRow?.Sede || app.rawRow?.SEDE || app.rawRow?.filial || app.rawRow?.Filial || app.rawRow?.FILIAL || 'CUSCO';
+
+          // Buscar si hay carpeta local de documentos para esta postulación
+          let matchedFolder = '';
+          let matchedDocCount = 0;
+          const groupedDocs = getGroupedDocuments(selectedProfile.documents);
+          Object.entries(groupedDocs).forEach(([folderLabel, docs]) => {
+              const folderKey = normalizeProcessKey(folderLabel, '', extractedAnio);
+              if (folderKey === prKey || (extractedAnio && folderLabel.includes(extractedAnio) && (extractedSem === 'I' ? !folderLabel.includes('-II') : folderLabel.includes('-II')))) {
+                  matchedFolder = folderLabel;
+                  matchedDocCount = docs.length;
+                  matchedFolderLabels.add(folderLabel);
+              }
+          });
+
+          items.push({
+              id: `postulacion-app-${app.id || idx}`,
+              tipo: isIngresante ? 'INGRESO' : 'POSTULACION',
+              carrera: appCareer,
+              modalidad: app.modalidad || 'PROCESO DE ADMISIÓN',
+              anio: extractedAnio,
+              semestre: extractedSem,
+              puntaje: app.nota,
+              puesto: app.puesto,
+              grupo: app.grupo,
+              sede: appSede,
+              carpetaDocs: matchedFolder,
+              documentosCount: matchedDocCount,
+              condicion: isIngresante ? 'Ingresante adjudicado en proceso' : (app.condicion || 'No alcanzó vacante'),
+              rawApp: app
+          });
       });
-  
-      return events.sort((a, b) => {
-          if (a.sortKey > b.sortKey) return -1;
-          if (a.sortKey < b.sortKey) return 1;
-          return 0;
+
+      // B2: Desde Carpetas del Disco H:\ (File Gateway) que no correspondan a un ingreso oficial
+      const groupedDocs = getGroupedDocuments(selectedProfile.documents);
+      Object.entries(groupedDocs).forEach(([folderLabel, docs]) => {
+          if (matchedFolderLabels.has(folderLabel)) return;
+
+          const folderKey = normalizeProcessKey(folderLabel, '', '');
+          
+          // Verificar si ya está cubierta por algún evento
+          const matchingEvent = items.find(it => {
+              const itKey = normalizeProcessKey(it.modalidad, it.semestre, it.anio);
+              return itKey === folderKey || it.carpetaDocs === folderLabel;
+          });
+
+          if (matchingEvent) {
+              if (!matchingEvent.carpetaDocs) {
+                  matchingEvent.carpetaDocs = folderLabel;
+                  matchingEvent.documentosCount = docs.length;
+              }
+              matchedFolderLabels.add(folderLabel);
+              return;
+          }
+
+          let extractedAnio = '';
+          const yMatch = folderLabel.match(/\b(20\d\d)\b/);
+          if (yMatch) extractedAnio = yMatch[1];
+
+          let extractedSem = 'I';
+          const labelUpper = folderLabel.toUpperCase();
+          if (
+              labelUpper.includes('2026-II') || 
+              labelUpper.includes('2025-II') || 
+              labelUpper.includes('2024-II') || 
+              labelUpper.includes('-II') || 
+              /\bII\b/.test(labelUpper) || 
+              labelUpper.includes('SEGUNDA OPORTUNIDAD') || 
+              labelUpper.includes('SEGUNDO EXAMEN') ||
+              labelUpper.includes('SEMESTRE: II') || 
+              labelUpper.includes('SEMESTRE II')
+          ) {
+              extractedSem = 'II';
+          } else if (labelUpper.includes('PO') || labelUpper.includes('PRIMERA OP') || labelUpper.includes('PRIMERA')) {
+              extractedSem = 'I';
+          } else if (labelUpper.includes('DIRIMENCIA') || labelUpper.includes('DIRIM') || labelUpper.includes('1ER Y 2DO') || labelUpper.includes('EXONERACION') || labelUpper.includes('EXONERACIÓN')) {
+              extractedSem = 'I';
+          }
+
+          items.push({
+              id: `postulacion-folder-${folderLabel}`,
+              tipo: 'POSTULACION',
+              carrera: folderLabel,
+              modalidad: folderLabel,
+              anio: extractedAnio || 'Histórico',
+              semestre: extractedSem,
+              carpetaDocs: folderLabel,
+              documentosCount: docs.length,
+              condicion: 'Expediente digital en disco local • Rindió examen / No figura en padrón de ingresantes'
+          });
       });
+
+      // PASO C: ORDENAMIENTO CRONOLÓGICO DESCENDENTE
+      const getSortScore = (item: TimelineItem) => {
+          let yearNum = 0;
+          const yMatch = String(item.anio).match(/\b(20\d\d|\d{4})\b/);
+          if (yMatch) {
+              yearNum = parseInt(yMatch[1], 10);
+          } else {
+              const modMatch = String(item.modalidad).match(/\b(20\d\d|\d{4})\b/);
+              if (modMatch) yearNum = parseInt(modMatch[1], 10);
+          }
+
+          let semScore = 1;
+          const semText = (String(item.semestre) + ' ' + String(item.modalidad)).toUpperCase();
+          if (semText.includes('II') || semText.includes('-2') || semText.includes('SEGUNDA')) {
+              semScore = 3;
+          } else if (semText.includes('I') || semText.includes('-1')) {
+              semScore = 2;
+          } else if (semText.includes('PO') || semText.includes('PRIMERA')) {
+              semScore = 1;
+          }
+
+          const typePriority = item.tipo === 'INGRESO' ? 0.2 : 0.0;
+          return yearNum * 10 + semScore + typePriority;
+      };
+
+      items.sort((a, b) => getSortScore(b) - getSortScore(a));
+
+      return items;
   };
 
-  const timelineEvents = getTimelineEvents();
+  const timelineEvents = getUnifiedTimelineEvents();
+
+  // Photo URL
+  const candidatePhotoUrl = selectedProfile?.photoDoc 
+    ? getDocumentStreamUrl(selectedProfile.photoDoc.path, gatewayUrl) 
+    : null;
 
   return (
     <div className="flex-1 w-full max-w-[1600px] mx-auto p-4 md:p-6 lg:p-8 flex flex-col gap-6 h-full overflow-hidden">
       
-      {/* MODAL DE EDICIÓN COMPLETO */}
+      {/* MODAL DE EDICIÓN DE REGISTRO OFICIAL */}
       {isEditing && editingRecord && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
@@ -895,13 +1543,13 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                               />
                           </div>
                           {showSyncNameOption && (
-                              <div className="md:col-span-2 bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3 animate-in slide-in-from-top-2">
+                              <div className="md:col-span-2 bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-center gap-3">
                                   <span className="material-symbols-outlined text-amber-600">info</span>
-                                  <p className="text-xs font-bold text-amber-800">Has cambiado el nombre. ¿Deseas actualizarlo en todos sus otros registros de ingreso también?</p>
+                                  <p className="text-xs font-bold text-amber-800">Has modificado el nombre. ¿Deseas sincronizarlo en sus demás registros?</p>
                               </div>
                           )}
                           <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Año de Proceso (ANIO)</label>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Año de Proceso</label>
                               <input 
                                   value={editForm.ANIO || ''} 
                                   onChange={e => setEditForm({...editForm, ANIO: e.target.value})} 
@@ -909,7 +1557,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                               />
                           </div>
                           <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Orden Mérito (OMERITO)</label>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Orden Mérito</label>
                               <input 
                                   value={editForm.OMERITO || ''} 
                                   onChange={e => setEditForm({...editForm, OMERITO: e.target.value})} 
@@ -917,12 +1565,12 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                               />
                           </div>
                           <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Fecha de Ingreso (FECHAINGRESO)</label>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Fecha de Ingreso</label>
                               <input 
                                   value={editForm.FECHAINGRESO || ''} 
                                   onChange={e => setEditForm({...editForm, FECHAINGRESO: e.target.value})} 
                                   className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
-                                  placeholder="Ej: DD/MM/AAAA"
+                                  placeholder="DD/MM/AAAA"
                               />
                           </div>
                           <div>
@@ -953,92 +1601,13 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                   </div>
                   <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-wrap justify-end gap-3">
                        <button onClick={() => { setIsEditing(false); setEditingRecord(null); setShowSyncNameOption(false); }} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-200 rounded-xl transition-all">Cancelar</button>
-                       
-                       {showSyncNameOption ? (
-                           <div className="flex gap-2">
-                               <button 
-                                onClick={() => handleUpdateRecord(false)} 
-                                disabled={loading}
-                                className="px-6 py-3 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all disabled:opacity-50"
-                               >
-                                   Solo esta fila
-                               </button>
-                               <button 
-                                onClick={() => handleUpdateRecord(true)} 
-                                disabled={loading}
-                                className="px-6 py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
-                               >
-                                   Sincronizar nombre en todos
-                               </button>
-                           </div>
-                       ) : (
-                           <button 
-                            onClick={() => handleUpdateRecord(false)} 
-                            disabled={loading}
-                            className="px-10 py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
-                           >
-                               {loading ? 'Guardando...' : 'Guardar Cambios'}
-                           </button>
-                       )}
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* MODAL DE DETALLE (PARA MODO EN BLOQUE) */}
-      {selectedBatchHistory && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95">
-                  <div className="bg-slate-50 border-b border-slate-200 p-6 flex justify-between items-center">
-                      <div className="flex items-center gap-4">
-                          <div className="size-12 bg-primary text-white rounded-2xl flex items-center justify-center">
-                              <span className="material-symbols-outlined">person_outline</span>
-                          </div>
-                          <div>
-                              <h3 className="text-xl font-black text-slate-900 uppercase">{fixEncoding(selectedBatchHistory[0]?.NOMBRE)}</h3>
-                              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">CÓDIGO: {selectedBatchHistory[0]?.CODPOSTULANTE}</p>
-                          </div>
-                      </div>
-                      <button 
-                        onClick={() => setSelectedBatchHistory(null)}
-                        className="size-10 rounded-full hover:bg-slate-200 text-slate-400 flex items-center justify-center transition-colors"
-                      >
-                          <span className="material-symbols-outlined">close</span>
-                      </button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-8">
-                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-8 border-b pb-2">Trayectoria de Ingresos Detallada</h4>
-                        <div className="space-y-10 relative">
-                             <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-slate-100"></div>
-                             {selectedBatchHistory.map((item, idx) => (
-                                 <div key={idx} className="flex gap-8 relative group">
-                                     <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 ${idx === 0 ? 'bg-green-600 text-white shadow-lg shadow-green-200' : 'bg-slate-100 text-slate-400'}`}>
-                                         <span className="material-symbols-outlined text-xl">{idx === 0 ? 'verified' : 'history'}</span>
-                                     </div>
-                                     <div className="flex-1 bg-slate-50 rounded-2xl p-6 border border-slate-100 group-hover:border-primary/20 transition-all">
-                                         <div className="flex flex-wrap justify-between items-start gap-4 mb-4">
-                                             <div>
-                                                <p className="font-black text-lg text-slate-900 uppercase leading-tight">{fixEncoding(item.CARRERA)}</p>
-                                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">PROCESO: {item.SEMESTRE}-{item.ANIO}</p>
-                                             </div>
-                                             <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 text-center min-w-[100px]">
-                                                 <p className="text-[10px] font-black text-slate-400 uppercase">Puntaje</p>
-                                                 <p className="text-lg font-black text-primary">{item.NOTA}</p>
-                                             </div>
-                                         </div>
-                                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                             <div><p className="text-[9px] font-black text-slate-400 uppercase">Modalidad</p><p className="text-xs font-bold text-slate-700">{item.MODALIDAD}</p></div>
-                                             <div><p className="text-[9px] font-black text-slate-400 uppercase">Orden Mérito</p><p className="text-xs font-bold text-slate-700">{item.OMERITO}</p></div>
-                                             <div><p className="text-[9px] font-black text-slate-400 uppercase">Sede/Filial</p><p className="text-xs font-bold text-slate-700">{item.FILIAL || 'CUSCO'}</p></div>
-                                             <div><p className="text-[9px] font-black text-slate-400 uppercase">F. Ingreso</p><p className="text-xs font-bold text-slate-700">{item.FECHAINGRESO}</p></div>
-                                         </div>
-                                     </div>
-                                 </div>
-                             ))}
-                        </div>
-                  </div>
-                  <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-end">
-                       <button onClick={() => setSelectedBatchHistory(null)} className="px-8 py-3 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all">Cerrar Expediente</button>
+                       <button 
+                        onClick={() => handleUpdateRecord(showSyncNameOption)} 
+                        disabled={loading}
+                        className="px-10 py-3 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                       >
+                           {loading ? 'Guardando...' : 'Guardar Cambios'}
+                       </button>
                   </div>
               </div>
           </div>
@@ -1054,7 +1623,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                               <span className="material-symbols-outlined">person_add</span>
                           </div>
                           <div>
-                              <h3 className="text-xl font-black text-slate-900 uppercase">Agregar Nuevo Estudiante</h3>
+                              <h3 className="text-xl font-black text-slate-900 uppercase">Agregar Nuevo Ingresante</h3>
                               <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">REGISTRAR NUEVO INGRESO</p>
                           </div>
                       </div>
@@ -1084,7 +1653,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                               />
                           </div>
                           <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Año de Proceso (ANIO)</label>
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Año de Proceso</label>
                               <input 
                                   value={newStudentForm.ANIO || ''} 
                                   onChange={e => setNewStudentForm({...newStudentForm, ANIO: e.target.value})} 
@@ -1097,7 +1666,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                   value={newStudentForm.SEMESTRE || ''} 
                                   onChange={e => setNewStudentForm({...newStudentForm, SEMESTRE: e.target.value})} 
                                   className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
-                                  placeholder="Ej: I, II"
                               />
                           </div>
                           <div>
@@ -1116,40 +1684,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                   className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
                               />
                           </div>
-                          <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Sede / Filial</label>
-                              <input 
-                                  value={newStudentForm.FILIAL || ''} 
-                                  onChange={e => setNewStudentForm({...newStudentForm, FILIAL: e.target.value})} 
-                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1 uppercase"
-                                  placeholder="CUSCO"
-                              />
-                          </div>
-                          <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Orden Mérito (OMERITO)</label>
-                              <input 
-                                  value={newStudentForm.OMERITO || ''} 
-                                  onChange={e => setNewStudentForm({...newStudentForm, OMERITO: e.target.value})} 
-                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
-                              />
-                          </div>
-                          <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Nota</label>
-                              <input 
-                                  value={newStudentForm.NOTA || ''} 
-                                  onChange={e => setNewStudentForm({...newStudentForm, NOTA: e.target.value})} 
-                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
-                              />
-                          </div>
-                          <div>
-                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Fecha de Ingreso</label>
-                              <input 
-                                  value={newStudentForm.FECHAINGRESO || ''} 
-                                  onChange={e => setNewStudentForm({...newStudentForm, FECHAINGRESO: e.target.value})} 
-                                  className="w-full h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary focus:bg-white transition-all mt-1"
-                                  placeholder="Ej: DD/MM/AAAA"
-                              />
-                          </div>
                       </div>
                   </div>
                   <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-wrap justify-end gap-3">
@@ -1166,10 +1700,11 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           </div>
       )}
 
+      {/* Top Header Bar */}
       <div className="flex flex-wrap justify-between items-end gap-4 shrink-0">
-        <div className="flex flex-col gap-2">
-            <h1 className="text-slate-900 text-3xl font-black leading-tight">Gestión de Ingresantes</h1>
-            <p className="text-slate-500 text-sm font-medium">Búsqueda individual, cruce masivo o importación de nuevos registros.</p>
+        <div className="flex flex-col gap-1">
+            <h1 className="text-slate-900 text-3xl font-black leading-tight">Consulta Integral de Postulantes e Ingresantes</h1>
+            <p className="text-slate-500 text-sm font-medium">Búsqueda universal en bases de datos históricas, procesos recientes y servidor local de expedientes.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
             {/* File Gateway Server Status Button */}
@@ -1195,20 +1730,17 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                 <span className="material-symbols-outlined text-[16px]">dns</span>
                 <span className="hidden sm:inline">
                     {gatewayStatus.connected
-                        ? `Servidor de Archivos Conectado${gatewayStatus.latency !== undefined ? ` (${gatewayStatus.latency}ms)` : ''}`
+                        ? `File Gateway Conectado${gatewayStatus.latency !== undefined ? ` (${gatewayStatus.latency}ms)` : ''}`
                         : gatewayStatus.checking
                             ? 'Verificando Servidor...'
-                            : 'Servidor Fuera de Línea'}
-                </span>
-                <span className="sm:hidden">
-                    {gatewayStatus.connected ? 'Servidor 🟢' : 'Servidor ⚪'}
+                            : 'Servidor File Gateway Offline'}
                 </span>
                 <span className="material-symbols-outlined text-[14px] text-slate-400">tune</span>
             </button>
 
             <div className="flex bg-slate-200 p-1 rounded-xl shadow-inner shrink-0">
                 {[
-                    {id: 'individual', label: 'Individual', icon: 'person'},
+                    {id: 'individual', label: 'Búsqueda Individual', icon: 'person_search'},
                     {id: 'batch', label: 'Cruce Masivo', icon: 'compare_arrows'},
                     {id: 'import', label: 'Importar Datos', icon: 'upload_file', adminOnly: true}
                 ].filter(m => !m.adminOnly || user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('upload_csv'))).map((m) => (
@@ -1225,434 +1757,580 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
         </div>
       </div>
 
+      {/* Main Content Area */}
       <div className="flex-1 overflow-hidden">
         {activeMode === 'individual' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full overflow-y-auto pr-2">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full overflow-y-auto pr-1">
+                
+                {/* Left Search & Profile Overview */}
                 <aside className="lg:col-span-4 flex flex-col gap-6 w-full">
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold flex items-center gap-2 text-slate-900">
-                        <span className="material-symbols-outlined text-primary">person_search</span>
-                        Criterios de Búsqueda
-                        </h3>
-                        <button onClick={() => setIsAddingNew(true)} className="flex items-center gap-1 text-xs font-bold text-primary hover:text-merlot transition-colors bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg">
-                            <span className="material-symbols-outlined text-[16px]">person_add</span>
-                            Agregar
-                        </button>
-                    </div>
-                    <div className="flex flex-col gap-4">
-                        <div className="relative">
-                        <span className="material-symbols-outlined absolute left-3 top-3 text-slate-400">search</span>
-                        <input
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                            className="w-full rounded-lg border border-slate-300 bg-slate-50 text-slate-900 h-11 pl-10 pr-14 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-slate-400 uppercase"
-                            placeholder="DNI O NOMBRE..."
-                        />
-                        <button onClick={handleSearch} disabled={loading} className="absolute right-1 top-1 h-9 w-9 bg-primary hover:bg-merlot text-white rounded-lg flex items-center justify-center transition-colors">
-                            {loading ? <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span> : <span className="material-symbols-outlined text-[18px]">arrow_forward</span>}
-                        </button>
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-base font-black flex items-center gap-2 text-slate-900 uppercase tracking-tight">
+                                <span className="material-symbols-outlined text-primary">search</span>
+                                Búsqueda Universal
+                            </h3>
+                            <button onClick={() => setIsAddingNew(true)} className="flex items-center gap-1 text-xs font-bold text-primary hover:text-merlot transition-colors bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg">
+                                <span className="material-symbols-outlined text-[16px]">person_add</span>
+                                Nuevo
+                            </button>
                         </div>
-                    </div>
-                </div>
-
-                {candidates.length > 0 && studentHistory.length === 0 && (
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                            <h4 className="font-bold text-slate-700 text-xs uppercase tracking-wider">Resultados ({candidates.length})</h4>
-                        </div>
-                        <div className="max-h-[400px] overflow-y-auto">
-                            {candidates.map((c, i) => (
-                                <button key={i} onClick={() => selectCandidate(c)} className="w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors flex items-center gap-3">
-                                    <div className="size-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center"><span className="material-symbols-outlined">person</span></div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-bold text-slate-900 text-sm truncate uppercase">{fixEncoding(c.NOMBRE)}</p>
-                                        <p className="text-[10px] text-slate-500 truncate uppercase">{c.CODPOSTULANTE} • {fixEncoding(c.CARRERA)}</p>
-                                    </div>
-                                    <span className="material-symbols-outlined text-slate-300">chevron_right</span>
+                        <div className="flex flex-col gap-3">
+                            <div className="relative">
+                                <span className="material-symbols-outlined absolute left-3 top-3 text-slate-400">badge</span>
+                                <input
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                                    className="w-full rounded-xl border border-slate-300 bg-slate-50 text-slate-900 h-11 pl-10 pr-14 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all placeholder:text-slate-400 uppercase font-medium text-sm"
+                                    placeholder="DNI O APELLIDOS Y NOMBRES..."
+                                />
+                                <button onClick={handleSearch} disabled={loading} className="absolute right-1 top-1 h-9 w-9 bg-primary hover:bg-merlot text-white rounded-lg flex items-center justify-center transition-colors shadow-sm">
+                                    {loading ? <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span> : <span className="material-symbols-outlined text-[18px]">search</span>}
                                 </button>
-                            ))}
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-medium">
+                                Busca automáticamente en la tabla oficial de ingresantes (<code className="font-mono">participantes</code>) y en expedientes de postulantes (<code className="font-mono">pre_revision_archivos</code>).
+                            </p>
                         </div>
                     </div>
-                )}
 
-                {mainStudent && (
-                    <div className="bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
-                        <div className="h-24 bg-gradient-to-r from-primary to-merlot relative p-4 flex justify-end">
-                            <button onClick={() => { setStudentHistory([]); setCandidates([]); setSearchQuery(''); setEditingRecord(null); setIsEditing(false); }} className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40"><span className="material-symbols-outlined text-[18px]">close</span></button>
-                        </div>
-                        <div className="px-6 pb-6 relative">
-                            <div className="size-20 rounded-2xl border-4 border-white bg-slate-100 -mt-10 mb-4 flex items-center justify-center shadow-md"><span className="material-symbols-outlined text-4xl text-slate-400">person</span></div>
-                            
-                            <div className="flex items-center justify-between gap-2">
-                                <h3 className="text-xl font-black text-slate-900 uppercase leading-tight truncate">{fixEncoding(mainStudent.NOMBRE)}</h3>
+                    {/* Candidate Results List (if multiple results found) */}
+                    {candidatesList.length > 0 && !selectedProfile && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                <h4 className="font-black text-slate-700 text-xs uppercase tracking-wider">
+                                    Postulantes Encontrados ({candidatesList.length})
+                                </h4>
                             </div>
-                            
-                            <p className="text-primary font-black text-[10px] uppercase tracking-widest mt-1">CÓDIGO: {mainStudent.CODPOSTULANTE}</p>
-                            <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col gap-4">
-                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                                    <p className="text-[10px] font-black text-blue-800 uppercase tracking-widest mb-1">Último Ingreso</p>
-                                    <p className="font-bold text-blue-900 text-sm">{fixEncoding(mainStudent.CARRERA)}</p>
-                                    <p className="text-[10px] text-blue-700 font-bold mt-1 uppercase">{mainStudent.MODALIDAD} • {mainStudent.SEMESTRE}-{mainStudent.ANIO}</p>
-                                </div>
-                                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                                    <div className="flex justify-between items-center mb-3">
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="material-symbols-outlined text-primary text-[18px]">folder_special</span>
-                                            <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
-                                                Requisitos y Documentos
+                            <div className="max-h-[450px] overflow-y-auto divide-y divide-slate-100">
+                                {candidatesList.map((c, i) => (
+                                    <button 
+                                        key={i} 
+                                        onClick={() => handleSelectCandidate(c)} 
+                                        className="w-full text-left p-4 hover:bg-slate-50 transition-colors flex items-center gap-3 group"
+                                    >
+                                        <div className={`size-11 rounded-xl flex items-center justify-center shrink-0 ${
+                                            c.isIngresanteOficial ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-500'
+                                        }`}>
+                                            <span className="material-symbols-outlined text-xl">
+                                                {c.isIngresanteOficial ? 'verified' : 'school'}
+                                            </span>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded ${
+                                                    c.isIngresanteOficial ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                                                }`}>
+                                                    {c.isIngresanteOficial ? 'INGRESANTE' : 'SOLO POSTULANTE'}
+                                                </span>
+                                            </div>
+                                            <p className="font-black text-slate-900 text-sm truncate uppercase group-hover:text-primary transition-colors mt-0.5">
+                                                {c.fullName}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500 font-mono truncate">
+                                                DNI: {c.dni} {c.applications[0]?.modalidad ? `• ${c.applications[0].modalidad}` : ''}
                                             </p>
                                         </div>
-                                        <div className="flex items-center gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => fetchExtraInfo(studentHistory)}
-                                                disabled={loadingDocs}
-                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
-                                                title="Recargar documentos"
-                                            >
-                                                <span className={`material-symbols-outlined text-[15px] ${loadingDocs ? 'animate-spin' : ''}`}>sync</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setIsGatewayModalOpen(true)}
-                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
-                                                title="Configurar servidor de archivos"
-                                            >
-                                                <span className="material-symbols-outlined text-[15px]">tune</span>
-                                            </button>
+                                        <span className="material-symbols-outlined text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all">chevron_right</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Selected Student / Applicant Profile Card */}
+                    {selectedProfile && (
+                        <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col">
+                            
+                            {/* Card Top Banner */}
+                            <div className="h-24 bg-gradient-to-r from-slate-900 to-indigo-950 relative p-4 flex justify-between items-start">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border shadow-sm ${
+                                    selectedProfile.isIngresanteOficial 
+                                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30' 
+                                        : 'bg-blue-500/20 text-blue-300 border-blue-400/30'
+                                }`}>
+                                    {selectedProfile.isIngresanteOficial ? '🟢 INGRESANTE OFICIAL' : '⚪ SOLO POSTULANTE'}
+                                </span>
+                                
+                                <button 
+                                    onClick={() => { setSelectedProfile(null); setCandidatesList([]); setSearchQuery(''); }} 
+                                    className="size-8 bg-white/20 text-white rounded-lg flex items-center justify-center hover:bg-white/40 transition-colors"
+                                >
+                                    <span className="material-symbols-outlined text-[18px]">close</span>
+                                </button>
+                            </div>
+
+                            <div className="px-6 pb-6 relative">
+                                
+                                {/* Photo / Avatar */}
+                                <div className="flex items-end justify-between -mt-10 mb-4">
+                                    {candidatePhotoUrl ? (
+                                        <div className="size-20 rounded-2xl border-4 border-white bg-slate-800 overflow-hidden shadow-md shrink-0">
+                                            <img 
+                                                src={candidatePhotoUrl} 
+                                                alt={selectedProfile.fullName}
+                                                className="w-full h-full object-cover"
+                                                onError={(e) => {
+                                                    (e.target as HTMLElement).style.display = 'none';
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="size-20 rounded-2xl border-4 border-white bg-slate-100 text-slate-400 flex items-center justify-center shadow-md shrink-0">
+                                            <span className="material-symbols-outlined text-4xl">person</span>
+                                        </div>
+                                    )}
+
+                                    {/* Open Full Ficha Integral Button */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsFichaModalOpen(true)}
+                                        className="px-3.5 py-2 bg-primary hover:bg-merlot text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-primary/20 transition-all active:scale-95"
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">account_box</span>
+                                        Ficha Integral
+                                    </button>
+                                </div>
+
+                                <h3 className="text-xl font-black text-slate-900 uppercase leading-tight truncate">
+                                    {selectedProfile.fullName}
+                                </h3>
+                                
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-primary font-mono font-bold text-xs">
+                                        DNI: {selectedProfile.dni}
+                                    </span>
+                                    <button 
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(selectedProfile.dni);
+                                            alert(`DNI ${selectedProfile.dni} copiado al portapapeles`);
+                                        }}
+                                        className="text-slate-400 hover:text-slate-600 p-0.5"
+                                        title="Copiar DNI"
+                                    >
+                                        <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                                    </button>
+                                </div>
+
+                                {/* Status Badges */}
+                                <div className="flex flex-wrap gap-1.5 mt-3">
+                                    {selectedProfile.isIngresanteOficial && (
+                                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                                            INGRESANTE OFICIAL
+                                        </span>
+                                    )}
+                                    {selectedProfile.isSoloPostulante && (
+                                        <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                                            SOLO POSTULANTE
+                                        </span>
+                                    )}
+                                    {selectedProfile.hasRenuncia && (
+                                        <span className="bg-red-50 text-red-800 border border-red-200 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                                            RENUNCIA REGISTRADA
+                                        </span>
+                                    )}
+                                    {selectedProfile.hasReserva && (
+                                        <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                                            RESERVA DE VACANTE
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* Contact and School Preview */}
+                                <div className="mt-5 pt-5 border-t border-slate-100 flex flex-col gap-4">
+                                    
+                                    {/* Contact Section */}
+                                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Canales de Contacto</p>
+                                        <div className="flex flex-col gap-2">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2 text-xs">
+                                                    <span className="material-symbols-outlined text-[16px] text-slate-500">call</span>
+                                                    <span className="font-bold text-slate-700 font-mono">
+                                                        {selectedProfile.phone || 'No registrado'}
+                                                    </span>
+                                                </div>
+                                                {selectedProfile.phone && (
+                                                    <a 
+                                                        href={`https://wa.me/51${selectedProfile.phone.replace(/\D/g, '').slice(-9)}`}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-black uppercase flex items-center gap-1 transition-all"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[12px]">chat</span>
+                                                        WhatsApp
+                                                    </a>
+                                                )}
+                                            </div>
+
+                                            {selectedProfile.email && (
+                                                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <span className="material-symbols-outlined text-[16px] text-slate-500">mail</span>
+                                                        <span className="text-slate-700 truncate font-medium">{selectedProfile.email}</span>
+                                                    </div>
+                                                    <a 
+                                                        href={`mailto:${selectedProfile.email}`}
+                                                        className="text-primary hover:underline font-bold text-[10px] uppercase shrink-0"
+                                                    >
+                                                        Enviar
+                                                    </a>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    {loadingDocs ? (
-                                        <div className="flex items-center justify-center py-6 gap-2 text-slate-500 text-xs font-bold bg-white rounded-lg border border-slate-200">
-                                            <span className="material-symbols-outlined text-[18px] text-primary animate-spin">sync</span>
-                                            Consultando archivos del postulante...
+                                    {/* School Section */}
+                                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Procedencia Escolar (Colegio)</p>
+                                        <div className="text-xs">
+                                            <p className="font-bold text-slate-800 uppercase">
+                                                {selectedProfile.schoolInfo?.nombre_ie || selectedProfile.schoolName || 'Colegio no especificado'}
+                                            </p>
+                                            {selectedProfile.schoolInfo?.tipo_gestion && (
+                                                <span className="inline-block mt-1 bg-slate-200 text-slate-700 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                                                    {selectedProfile.schoolInfo.tipo_gestion}
+                                                </span>
+                                            )}
+                                            {selectedProfile.schoolInfo?.distrito && (
+                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                    {selectedProfile.schoolInfo.departamento} / {selectedProfile.schoolInfo.provincia} / {selectedProfile.schoolInfo.distrito}
+                                                </p>
+                                            )}
                                         </div>
-                                    ) : docsError ? (
-                                        <div className="flex flex-col gap-2 p-3 bg-amber-50/70 text-amber-900 rounded-xl border border-amber-200/80">
-                                            <div className="flex items-start gap-2">
-                                                <span className="material-symbols-outlined text-amber-600 text-[18px] shrink-0 mt-0.5">cloud_off</span>
-                                                <div className="text-[10px] leading-relaxed">
-                                                    <p className="font-bold text-amber-950">Servidor de Archivos no accesible</p>
-                                                    <p className="text-amber-800 mt-0.5">{docsError}</p>
-                                                </div>
+                                    </div>
+
+                                    {/* Digital Documents & Photos from File Gateway */}
+                                    <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                                        <div className="flex justify-between items-center mb-2.5">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="material-symbols-outlined text-primary text-[18px]">folder_special</span>
+                                                <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                                                    Expedientes Gateway (Puerto 5000)
+                                                </p>
                                             </div>
                                             <button
                                                 type="button"
-                                                onClick={() => setIsGatewayModalOpen(true)}
-                                                className="w-full py-1.5 px-3 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5"
+                                                onClick={() => fetchProfileExtraInfo(selectedProfile)}
+                                                disabled={loadingDocs}
+                                                className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors"
+                                                title="Recargar archivos"
                                             >
-                                                <span className="material-symbols-outlined text-[14px]">tune</span>
-                                                Configurar IP / Servidor
+                                                <span className={`material-symbols-outlined text-[15px] ${loadingDocs ? 'animate-spin' : ''}`}>sync</span>
                                             </button>
                                         </div>
-                                    ) : localDocuments.length > 0 ? (
-                                        <div className="flex flex-col gap-3">
-                                            {Object.entries(getGroupedDocuments(localDocuments))
-                                                .sort(([labelA], [labelB]) => {
-                                                    const yearMatchA = labelA.match(/\b\d{4}\b/);
-                                                    const yearMatchB = labelB.match(/\b\d{4}\b/);
-                                                    const yearA = yearMatchA ? parseInt(yearMatchA[0], 10) : 0;
-                                                    const yearB = yearMatchB ? parseInt(yearMatchB[0], 10) : 0;
-                                                    
-                                                    if (yearA !== yearB) {
-                                                        return yearB - yearA; // Recientes primero
-                                                    }
-                                                    
-                                                    const getSemesterVal = (label: string) => {
-                                                        if (/\b(II|2|SEGUNDO)\b/i.test(label) || label.includes('-II') || label.includes('_II')) return 2;
-                                                        if (/\b(I|1|PRIMERO|PRIMERA)\b/i.test(label) || label.includes('-I') || label.includes('_I')) return 1;
-                                                        return 0;
-                                                    };
-                                                    
-                                                    const semA = getSemesterVal(labelA);
-                                                    const semB = getSemesterVal(labelB);
-                                                    
-                                                    if (semA !== semB) {
-                                                        return semB - semA; // II antes que I
-                                                    }
-                                                    
-                                                    return labelA.localeCompare(labelB);
-                                                })
-                                                .map(([folderLabel, docsInFolder], groupIdx) => {
-                                                    const isExpanded = expandedFolders[folderLabel] !== false; // Default open
-                                                return (
-                                                    <div key={groupIdx} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
-                                                        {/* Folder Header */}
-                                                        <button
-                                                            onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
-                                                            type="button"
-                                                            className="w-full flex items-center justify-between p-2.5 bg-slate-100/90 hover:bg-slate-200/90 transition-colors border-b border-slate-200"
-                                                        >
-                                                            <div className="flex items-center gap-2 text-left min-w-0">
-                                                                <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0">folder</span>
-                                                                <span className="text-[11px] font-black text-slate-800 uppercase tracking-tight truncate">
-                                                                    {folderLabel}
-                                                                </span>
-                                                                <span className="bg-slate-200 text-slate-700 text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0">
-                                                                    {docsInFolder.length}
-                                                                </span>
-                                                            </div>
-                                                            <span className="material-symbols-outlined text-slate-500 text-[16px] shrink-0">
-                                                                {isExpanded ? 'expand_less' : 'expand_more'}
-                                                            </span>
-                                                        </button>
-                                                        
-                                                        {/* Documents in Folder */}
-                                                        {isExpanded && (
-                                                            <div className="p-2 flex flex-col gap-2 bg-slate-50/50">
-                                                                {docsInFolder.map((doc, i) => {
-                                                                    const docStreamUrl = getDocumentStreamUrl(doc.path, gatewayUrl);
-                                                                    
-                                                                    return (
-                                                                        <div
-                                                                            key={i}
-                                                                            className="bg-white border border-slate-200 rounded-lg p-2 hover:border-primary/50 hover:shadow-md transition-all flex flex-col gap-1.5 group relative"
-                                                                        >
-                                                                            <div className="flex items-start gap-2 min-w-0">
-                                                                                <div className={`size-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                                                                                    doc.isPdf 
-                                                                                        ? 'bg-red-50 text-red-600 border border-red-200' 
-                                                                                        : doc.isImage 
-                                                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200' 
-                                                                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
-                                                                                }`}>
-                                                                                    <span className="material-symbols-outlined text-[18px]">
-                                                                                        {doc.icon || (doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description')}
-                                                                                    </span>
-                                                                                </div>
-                                                                                
-                                                                                <div className="flex-1 min-w-0">
-                                                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                                                        <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                                                                            doc.badgeColor || (doc.isPdf ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-800')
-                                                                                        }`}>
-                                                                                            {doc.categoryLabel || 'DOCUMENTO'}
-                                                                                        </span>
-                                                                                        {doc.prefixCode && (
-                                                                                            <span className="text-[8px] font-mono font-bold text-slate-500 bg-slate-100 px-1 py-0.5 rounded">
-                                                                                                #{doc.prefixCode}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <p className="text-[10px] font-bold text-slate-900 group-hover:text-primary leading-snug truncate mt-0.5">
-                                                                                        {doc.friendlyName}
-                                                                                    </p>
-                                                                                    <p className="text-[8px] text-slate-400 font-mono truncate select-all">
-                                                                                        {doc.filename}
-                                                                                    </p>
-                                                                                </div>
-                                                                            </div>
 
-                                                                            {/* Action Buttons */}
-                                                                            <div className="flex items-center justify-end gap-1 pt-1.5 border-t border-slate-100">
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => setSelectedDocForViewer(doc)}
-                                                                                    className="px-2 py-1 bg-primary/10 hover:bg-primary text-primary hover:text-white rounded-md text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all"
-                                                                                    title="Ver archivo"
-                                                                                >
-                                                                                    <span className="material-symbols-outlined text-[13px]">visibility</span>
-                                                                                    Ver
-                                                                                </button>
-                                                                                
-                                                                                <a
-                                                                                    href={docStreamUrl}
-                                                                                    target="_blank"
-                                                                                    rel="noopener noreferrer"
-                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
-                                                                                    title="Abrir en pestaña nueva"
-                                                                                >
-                                                                                    <span className="material-symbols-outlined text-[13px]">open_in_new</span>
-                                                                                </a>
-                                                                                
-                                                                                <a
-                                                                                    href={docStreamUrl}
-                                                                                    download={doc.filename}
-                                                                                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[9px] font-bold flex items-center gap-1 transition-all"
-                                                                                    title="Descargar archivo"
-                                                                                >
-                                                                                    <span className="material-symbols-outlined text-[13px]">download</span>
-                                                                                </a>
+                                        {loadingDocs ? (
+                                            <div className="flex items-center justify-center py-4 gap-2 text-slate-500 text-xs font-bold bg-white rounded-lg border border-slate-200">
+                                                <span className="material-symbols-outlined text-[16px] text-primary animate-spin">sync</span>
+                                                Consultando disco local...
+                                            </div>
+                                        ) : docsError ? (
+                                            <div className="p-2.5 bg-amber-50 text-amber-900 rounded-lg border border-amber-200 text-[10px]">
+                                                <p className="font-bold">File Gateway no accesible:</p>
+                                                <p className="text-amber-800 mt-0.5">{docsError}</p>
+                                            </div>
+                                        ) : selectedProfile.documents.length > 0 ? (
+                                            <div className="flex flex-col gap-2">
+                                                {Object.entries(getGroupedDocuments(selectedProfile.documents)).map(([folderLabel, docsInFolder], gIdx) => {
+                                                    const isExpanded = expandedFolders[folderLabel] !== false;
+                                                    return (
+                                                        <div key={gIdx} className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                                                            <button
+                                                                onClick={() => setExpandedFolders(prev => ({ ...prev, [folderLabel]: !isExpanded }))}
+                                                                type="button"
+                                                                className="w-full flex items-center justify-between p-2 bg-slate-100 hover:bg-slate-200 transition-colors"
+                                                            >
+                                                                <div className="flex items-center gap-1.5 text-left min-w-0">
+                                                                    <span className="material-symbols-outlined text-amber-500 text-[16px] shrink-0">folder</span>
+                                                                    <span className="text-[10px] font-black text-slate-800 uppercase truncate">
+                                                                        {folderLabel}
+                                                                    </span>
+                                                                    <span className="bg-slate-200 text-slate-700 text-[8px] font-black px-1 rounded-full">
+                                                                        {docsInFolder.length}
+                                                                    </span>
+                                                                </div>
+                                                                <span className="material-symbols-outlined text-slate-500 text-[14px]">
+                                                                    {isExpanded ? 'expand_less' : 'expand_more'}
+                                                                </span>
+                                                            </button>
+
+                                                            {isExpanded && (
+                                                                <div className="p-1.5 flex flex-col gap-1.5 bg-slate-50/50">
+                                                                    {docsInFolder.map((doc, docIdx) => (
+                                                                        <div key={docIdx} className="p-1.5 bg-white rounded border border-slate-200 flex items-center justify-between gap-2 text-xs">
+                                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                                <span className="material-symbols-outlined text-[16px] text-slate-400 shrink-0">
+                                                                                    {doc.icon || (doc.isPdf ? 'picture_as_pdf' : doc.isImage ? 'image' : 'description')}
+                                                                                </span>
+                                                                                <span className="text-[10px] font-bold text-slate-800 truncate">
+                                                                                    {doc.friendlyName}
+                                                                                </span>
                                                                             </div>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setSelectedDocForViewer(doc)}
+                                                                                className="px-2 py-0.5 bg-primary/10 hover:bg-primary text-primary hover:text-white rounded text-[9px] font-black uppercase transition-all shrink-0"
+                                                                            >
+                                                                                Ver
+                                                                            </button>
                                                                         </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <div className="p-4 text-center bg-white rounded-xl border border-slate-200">
-                                            <span className="material-symbols-outlined text-slate-300 text-3xl mb-1">folder_open</span>
-                                            <p className="text-[10px] font-bold text-slate-500">No se encontraron documentos digitalizados.</p>
-                                        </div>
-                                    )}
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="p-3 text-center bg-white rounded-lg border border-slate-200">
+                                                <p className="text-[10px] font-bold text-slate-400">Sin archivos digitales en el disco local.</p>
+                                            </div>
+                                        )}
+                                    </div>
+
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
                 </aside>
 
-                <section className={`lg:col-span-8 h-full transition-all duration-500 ${studentHistory.length === 0 ? 'opacity-30 grayscale' : 'opacity-100'}`}>
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm h-full p-8 flex flex-col overflow-hidden">
-                         {studentHistory.length === 0 ? (
-                             <div className="flex-1 flex flex-col items-center justify-center text-center">
+                {/* Right Academic Trajectory & History */}
+                <section className={`lg:col-span-8 h-full transition-all duration-500 ${!selectedProfile ? 'opacity-30 grayscale' : 'opacity-100'}`}>
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm h-full p-6 md:p-8 flex flex-col overflow-hidden">
+                        {!selectedProfile ? (
+                            <div className="flex-1 flex flex-col items-center justify-center text-center py-20">
                                 <span className="material-symbols-outlined text-6xl text-slate-200 mb-4">history_edu</span>
-                                <h3 className="text-slate-400 font-black uppercase tracking-widest">Historial Académico Institucional</h3>
-                             </div>
-                         ) : (
-                             <div className="w-full text-left flex flex-col h-full">
-                                 <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 border-b pb-2 shrink-0">Trayectoria de Ingresos UNSAAC</h4>
-                                 <div className="flex-1 overflow-y-auto pr-4 space-y-8 relative">
-                                     <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-slate-100"></div>
-                                     {timelineEvents.map((evt, idx) => {
-                                         if (evt.type === 'ingreso') {
-                                             const item = evt.data;
-                                             return (
-                                                 <div key={evt.id} className="flex gap-6 relative group">
-                                                     <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all ${idx === 0 ? 'bg-green-600 text-white shadow-lg shadow-green-200 scale-110' : 'bg-slate-100 text-slate-400 group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                                                         <span className="material-symbols-outlined text-xl">{idx === 0 ? 'verified' : 'history'}</span>
-                                                     </div>
-                                                     <div className="flex-1 pb-2">
-                                                         <div className="flex justify-between items-start">
-                                                             <div>
-                                                                <p className={`font-black text-sm uppercase ${idx === 0 ? 'text-slate-900' : 'text-slate-500'}`}>{fixEncoding(item.CARRERA)}</p>
-                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Admisión: {item.SEMESTRE}-{item.ANIO}</p>
-                                                             </div>
-                                                             <button 
-                                                                onClick={() => { setEditingRecord(item); setEditForm(item); setIsEditing(true); }}
-                                                                className="p-2 text-slate-400 hover:text-primary transition-colors"
-                                                             >
-                                                                <span className="material-symbols-outlined text-[20px]">edit</span>
-                                                             </button>
-                                                         </div>
-                                                         <div className="mt-3 flex gap-2">
-                                                             <span className="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">{item.MODALIDAD}</span>
-                                                             <span className="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">{item.FILIAL || 'CUSCO'}</span>
-                                                             {item.OMERITO && <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">Puesto: {item.OMERITO}</span>}
-                                                             {item.FECHAINGRESO && <span className="bg-blue-50 text-blue-700 border border-blue-100 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">{item.FECHAINGRESO}</span>}
-                                                         </div>
-                                                     </div>
-                                                 </div>
-                                             );
-                                         }
-                                         
-                                         if (evt.type === 'renuncia') {
-                                             const item = evt.data;
-                                             return (
-                                                 <div key={evt.id} className="flex gap-6 relative group">
-                                                     <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all bg-red-100 text-red-500`}>
-                                                         <span className="material-symbols-outlined text-xl">cancel</span>
-                                                     </div>
-                                                     <div className="flex-1 pb-2">
-                                                         <div className="flex justify-between items-start">
-                                                             <div>
-                                                                <p className={`font-black text-sm uppercase text-slate-700`}>Renuncia de Vacante: {item.school}</p>
-                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">PROCESO: {item.semester}</p>
-                                                             </div>
-                                                         </div>
-                                                         <div className="mt-3 flex gap-2">
-                                                             <span className="bg-red-50 text-red-700 border border-red-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">Res: {item.resolution_number}</span>
-                                                             {item.resolution_date && <span className="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">{item.resolution_date}</span>}
-                                                         </div>
-                                                     </div>
-                                                 </div>
-                                             );
-                                         }
+                                <h3 className="text-slate-400 font-black uppercase tracking-widest text-sm">Historial Académico y Procesos de Admisión</h3>
+                                <p className="text-slate-400 text-xs mt-1 max-w-sm">Ingrese un DNI o nombres para consultar la trayectoria completa del postulante o ingresante.</p>
+                            </div>
+                        ) : (
+                            <div className="w-full text-left flex flex-col h-full">
+                                <div className="flex items-center justify-between mb-6 pb-3 border-b border-slate-100 shrink-0">
+                                    <div>
+                                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                                            Trayectoria de Admisiones y Postulaciones UNSAAC
+                                        </h4>
+                                        <p className="text-xs font-bold text-slate-700 mt-0.5">
+                                            {selectedProfile.admissions.length} Ingresos Oficiales • {selectedProfile.applications.length} Postulaciones Registradas
+                                        </p>
+                                    </div>
 
-                                         if (evt.type === 'reserva') {
-                                             const item = evt.data;
-                                             return (
-                                                 <div key={evt.id} className="flex gap-6 relative group">
-                                                     <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all bg-amber-100 text-amber-600`}>
-                                                         <span className="material-symbols-outlined text-xl">bookmark</span>
-                                                     </div>
-                                                     <div className="flex-1 pb-2">
-                                                         <div className="flex justify-between items-start">
-                                                             <div>
-                                                                <p className={`font-black text-sm uppercase text-slate-700`}>Reserva de Vacante</p>
-                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Retorno: {item.starting_semester}</p>
-                                                             </div>
-                                                         </div>
-                                                         <div className="mt-3 flex gap-2">
-                                                             {item.batch?.resolution_number && <span className="bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">Res: {item.batch.resolution_number}</span>}
-                                                             <span className="bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">Iniciará: {item.starting_semester}</span>
-                                                         </div>
-                                                     </div>
-                                                 </div>
-                                             );
-                                         }
-                                         
-                                         if (evt.type === 'retiro_reserva') {
-                                             const item = evt.data;
-                                             return (
-                                                 <div key={evt.id} className="flex gap-6 relative group">
-                                                     <div className={`size-10 rounded-full flex items-center justify-center shrink-0 z-10 transition-all bg-slate-200 text-slate-500`}>
-                                                         <span className="material-symbols-outlined text-xl">block</span>
-                                                     </div>
-                                                     <div className="flex-1 pb-2">
-                                                         <div className="flex justify-between items-start">
-                                                             <div>
-                                                                <p className={`font-black text-sm uppercase text-slate-700`}>Retiro Definitivo (Tras Reserva)</p>
-                                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">PROCESO: {item.starting_semester}</p>
-                                                             </div>
-                                                         </div>
-                                                         <div className="mt-3 flex gap-2">
-                                                             {item.withdrawal_resolution_number && <span className="bg-slate-100 text-slate-600 border border-slate-200 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest">Res Retiro: {item.withdrawal_resolution_number}</span>}
-                                                         </div>
-                                                     </div>
-                                                 </div>
-                                             );
-                                         }
+                                    <button
+                                        onClick={() => setIsFichaModalOpen(true)}
+                                        className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-all"
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">visibility</span>
+                                        Ver Ficha Completa
+                                    </button>
+                                </div>
 
-                                         return null;
-                                     })}
-                                 </div>
-                             </div>
-                         )}
+                                <div className="flex-1 overflow-y-auto pr-3 space-y-6 relative">
+                                    <div className="absolute left-5 top-0 bottom-0 w-0.5 bg-slate-100 hidden md:block"></div>
+                                    
+                                    {/* Alert for Renuncias or Reservas */}
+                                    {selectedProfile.renuncias.length > 0 && (
+                                        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-red-600 text-2xl shrink-0">cancel</span>
+                                            <div>
+                                                <p className="text-xs font-black uppercase text-red-900">
+                                                    Renuncia de Vacante Registrada ({selectedProfile.renuncias.length})
+                                                </p>
+                                                {selectedProfile.renuncias.map((ren, rIdx) => (
+                                                    <p key={rIdx} className="text-xs text-red-700 mt-0.5">
+                                                        • Escuela: <strong>{ren.school}</strong> • Semestre: <strong>{ren.semester}</strong> • Resolución: <strong>{ren.resolution_number}</strong> ({ren.resolution_date || 'Sin fecha'})
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {selectedProfile.reservas.length > 0 && (
+                                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+                                            <span className="material-symbols-outlined text-amber-600 text-2xl shrink-0">bookmark</span>
+                                            <div>
+                                                <p className="text-xs font-black uppercase text-amber-900">
+                                                    Reserva de Vacante ({selectedProfile.reservas.length})
+                                                </p>
+                                                {selectedProfile.reservas.map((res, rIdx) => (
+                                                    <p key={rIdx} className="text-xs text-amber-700 mt-0.5">
+                                                        • Carrera: <strong>{res.carrera}</strong> • Semestre Retorno: <strong>{res.starting_semester}</strong> {res.is_withdrawn ? '(Retiro Definitivo Registrado)' : ''}
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {timelineEvents.map((item, idx) => {
+                                        if (item.tipo === 'INGRESO') {
+                                            return (
+                                                <div key={item.id} className="flex gap-4 md:gap-6 relative group items-start">
+                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-emerald-600 text-white shadow-md shadow-emerald-200">
+                                                        <span className="material-symbols-outlined text-xl">verified</span>
+                                                    </div>
+                                                    
+                                                    {/* Card Ingreso Oficial - Alineado a la izquierda con borde verde */}
+                                                    <div className="flex-1 bg-emerald-50/40 rounded-2xl p-5 border-2 border-emerald-500/80 hover:border-emerald-600 transition-all shadow-sm">
+                                                        <div className="flex justify-between items-start gap-3">
+                                                            <div>
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
+                                                                        🎓 INGRESO OFICIAL
+                                                                    </span>
+                                                                    {item.carpetaDocs && (
+                                                                        <span className="text-[9px] font-bold bg-white text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs">
+                                                                            <span className="material-symbols-outlined text-[13px] text-amber-500">folder</span>
+                                                                            {item.carpetaDocs} {item.documentosCount ? `(${item.documentosCount} docs)` : ''}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <h4 className="font-black text-lg uppercase text-slate-900 mt-1.5 leading-snug">
+                                                                    {item.carrera}
+                                                                </h4>
+                                                                <p className="text-[11px] font-bold text-emerald-950/70 uppercase tracking-wide mt-0.5">
+                                                                    ADMISIÓN: {item.semestre?.includes('20') ? item.semestre : (item.anio ? `${item.anio}-${item.semestre}` : item.semestre)} • MODALIDAD: {item.modalidad} {item.sede ? `• SEDE: ${item.sede}` : '• SEDE: CUSCO'}
+                                                                </p>
+                                                            </div>
+                                                            {item.rawAdm && (
+                                                                <button 
+                                                                    onClick={() => { setEditingRecord(item.rawAdm!); setEditForm(item.rawAdm!); setIsEditing(true); }}
+                                                                    className="p-2 text-emerald-700 hover:text-emerald-900 transition-colors rounded-lg hover:bg-emerald-100/60 shrink-0"
+                                                                    title="Editar registro de ingreso oficial"
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                                                                </button>
+                                                            )}
+                                                        </div>
+
+                                                        <div className="mt-3.5 flex flex-wrap gap-2 text-xs">
+                                                            {item.puntaje && (
+                                                                <span className="bg-white text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-2xs">
+                                                                    Puntaje: {item.puntaje}
+                                                                </span>
+                                                            )}
+                                                            {item.puesto && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puesto: #{item.puesto}
+                                                                </span>
+                                                            )}
+                                                            {item.grupo && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Grupo: {item.grupo}
+                                                                </span>
+                                                            )}
+                                                            {item.fecha && (
+                                                                <span className="bg-white text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Fecha: {item.fecha}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+
+                                        if (item.tipo === 'POSTULACION') {
+                                            return (
+                                                <div key={item.id} className="flex gap-4 md:gap-6 relative group items-start">
+                                                    <div className="size-10 rounded-full flex items-center justify-center shrink-0 z-10 bg-slate-200 text-slate-600">
+                                                        <span className="material-symbols-outlined text-xl">history_edu</span>
+                                                    </div>
+                                                    
+                                                    {/* Card Postulación sin Ingreso - Alineado a la derecha con borde punteado/gris */}
+                                                    <div className="flex-1 bg-slate-50/70 rounded-2xl p-5 border-2 border-dashed border-slate-300 hover:border-slate-400 transition-all md:ml-6">
+                                                        <div className="flex justify-between items-start gap-3">
+                                                            <div>
+                                                                <div className="flex flex-wrap items-center gap-2">
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 border border-slate-300 inline-flex items-center gap-1">
+                                                                        👥 POSTULACIÓN (Sin Ingreso)
+                                                                    </span>
+                                                                    {item.carpetaDocs && (
+                                                                        <span className="text-[9px] font-bold bg-white text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs">
+                                                                            <span className="material-symbols-outlined text-[13px] text-amber-500">folder</span>
+                                                                            {item.carpetaDocs} {item.documentosCount ? `(${item.documentosCount} docs)` : ''}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <h4 className="font-bold text-base uppercase text-slate-700 mt-1.5 leading-snug">
+                                                                    {item.carrera}
+                                                                </h4>
+                                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mt-0.5">
+                                                                    ADMISIÓN: {item.semestre?.includes('20') ? item.semestre : (item.anio ? `${item.anio}-${item.semestre}` : item.semestre)} • MODALIDAD: {item.modalidad} • SEDE: {item.sede || 'CUSCO'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-3.5 flex flex-wrap gap-2 text-xs">
+                                                            {item.puntaje && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puntaje: {item.puntaje}
+                                                                </span>
+                                                            )}
+                                                            {item.puesto && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Puesto: #{item.puesto}
+                                                                </span>
+                                                            )}
+                                                            {item.grupo && (
+                                                                <span className="bg-white text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-2xs">
+                                                                    Grupo: {item.grupo}
+                                                                </span>
+                                                            )}
+                                                            {item.condicion && (
+                                                                <span className="bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-medium">
+                                                                    {item.condicion}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+
+                                        return null;
+                                    })}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </section>
             </div>
         ) : activeMode === 'batch' ? (
+            /* Batch Search Mode */
             <div className="h-full flex flex-col gap-4 animate-in fade-in slide-in-from-right-4 overflow-hidden">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm shrink-0">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div className="flex items-center gap-4">
-                            <div className="size-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shrink-0 border border-amber-100 shadow-sm"><span className="material-symbols-outlined text-3xl">view_timeline</span></div>
+                            <div className="size-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shrink-0 border border-amber-100 shadow-sm">
+                                <span className="material-symbols-outlined text-3xl">view_timeline</span>
+                            </div>
                             <div>
-                                <h3 className="font-black text-slate-800 uppercase text-sm tracking-tight">Verificación Multi-Ingreso</h3>
-                                <p className="text-xs text-slate-500 font-medium">Contraste listas con la base de datos oficial. Formato CSV: Columna 1 = DNI/Código, Columna 2 = Nombres (con encabezados en la primera fila).</p>
+                                <h3 className="font-black text-slate-800 uppercase text-sm tracking-tight">Verificación Multi-Ingreso (Cruce Masivo)</h3>
+                                <p className="text-xs text-slate-500 font-medium">Contraste listas con la base de datos oficial. Formato CSV o Excel (.xlsx, .csv): Columna 1 = DNI/Código, Columna 2 = Nombres.</p>
                             </div>
                         </div>
-                        <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileUpload}/>
+                        <input type="file" accept=".csv,.xlsx,.xls" ref={fileInputRef} className="hidden" onChange={handleFileUpload}/>
                         <div className="flex flex-wrap gap-2 justify-end">
                              {batchResults.length > 0 && (
                                  <>
-                                     <button onClick={handleExportCruceCC} className="px-5 h-12 bg-blue-50 text-blue-600 rounded-xl text-xs font-black uppercase hover:bg-blue-100 transition-colors flex items-center gap-2">
-                                         <span className="material-symbols-outlined text-sm">laptop_mac</span> Reporte CC
-                                     </button>
-                                     <button onClick={handleExportCruceExcel} className="px-5 h-12 bg-green-50 text-green-600 rounded-xl text-xs font-black uppercase hover:bg-green-100 transition-colors flex items-center gap-2">
+                                     <button onClick={handleExportCruceExcel} className="px-5 h-12 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-black uppercase hover:bg-emerald-100 transition-colors flex items-center gap-2 shadow-sm">
                                          <span className="material-symbols-outlined text-sm">table_view</span> Excel
                                      </button>
-                                     <button onClick={handleExportCrucePdf} className="px-5 h-12 bg-red-50 text-red-600 rounded-xl text-xs font-black uppercase hover:bg-red-100 transition-colors flex items-center gap-2">
+                                     <button onClick={handleExportCrucePdf} className="px-5 h-12 bg-red-50 text-red-700 rounded-xl text-xs font-black uppercase hover:bg-red-100 transition-colors flex items-center gap-2 shadow-sm">
                                          <span className="material-symbols-outlined text-sm">picture_as_pdf</span> PDF
                                      </button>
                                      <button onClick={() => setBatchResults([])} className="px-5 h-12 rounded-xl text-xs font-black uppercase text-slate-400 hover:bg-slate-100 transition-colors">Limpiar</button>
                                  </>
                              )}
                              <button onClick={() => fileInputRef.current?.click()} disabled={isProcessingBatch} className="px-8 h-12 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-xl shadow-slate-900/20 active:scale-95 transition-all flex items-center gap-2">
-                                 {isProcessingBatch ? <span className="material-symbols-outlined animate-spin">progress_activity</span> : <span className="material-symbols-outlined">add</span>}
-                                 {isProcessingBatch ? 'BUSCANDO...' : 'PROCESAR CSV'}
+                                 {isProcessingBatch ? <span className="material-symbols-outlined animate-spin">progress_activity</span> : <span className="material-symbols-outlined">upload_file</span>}
+                                 {isProcessingBatch ? 'BUSCANDO...' : 'PROCESAR ARCHIVO'}
                              </button>
                         </div>
                     </div>
                 </div>
+                
                 <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                     {isProcessingBatch && (
                          <div className="p-4 border-b border-slate-100 bg-blue-50/50">
@@ -1669,16 +2347,15 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                         <table className="w-full text-left border-collapse">
                             <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10 shadow-sm">
                                 <tr>
-                                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-40">Código / DNI</th>
-                                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre (CSV)</th>
+                                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-36">Código / DNI</th>
+                                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre Buscado</th>
                                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-32 text-center">Estatus</th>
                                     <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Carrera / Semestre</th>
-                                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right pr-10">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {batchResults.length === 0 ? (
-                                    <tr><td colSpan={5} className="py-20 text-center text-slate-400 italic font-bold">Sin datos procesados.</td></tr>
+                                    <tr><td colSpan={4} className="py-20 text-center text-slate-400 italic font-bold">Sin datos procesados. Cargue un archivo CSV o Excel.</td></tr>
                                 ) : (
                                     batchResults.map((res, i) => (
                                         <tr key={i} className={`hover:bg-slate-50 transition-colors ${!res.found ? 'bg-red-50/20' : ''}`}>
@@ -1701,11 +2378,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                                     </div>
                                                 ) : '--'}
                                             </td>
-                                            <td className="px-6 py-4 text-right pr-10">
-                                                {res.found && (
-                                                    <button onClick={() => setSelectedBatchHistory(res.allMatches)} className="size-9 bg-primary/10 text-primary rounded-xl flex items-center justify-center hover:bg-primary hover:text-white transition-all"><span className="material-symbols-outlined text-[20px]">visibility</span></button>
-                                                )}
-                                            </td>
                                         </tr>
                                     ))
                                 )}
@@ -1715,9 +2387,12 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                 </div>
             </div>
         ) : (
+            /* Data Import Mode */
             <div className="h-full flex flex-col gap-6 animate-in fade-in slide-in-from-right-4 overflow-hidden">
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm shrink-0 flex flex-col items-center text-center gap-6">
-                    <div className="size-20 bg-primary/10 text-primary rounded-full flex items-center justify-center border border-primary/20"><span className="material-symbols-outlined text-4xl">upload_file</span></div>
+                    <div className="size-20 bg-primary/10 text-primary rounded-full flex items-center justify-center border border-primary/20">
+                        <span className="material-symbols-outlined text-4xl">upload_file</span>
+                    </div>
                     <div>
                         <h2 className="text-xl font-black text-slate-900 uppercase">Cargar Nuevos Ingresantes</h2>
                         <p className="text-slate-500 text-sm max-w-lg mt-1">Suba un archivo CSV con el formato: <br/><code className="bg-slate-100 px-2 rounded font-bold">CÓDIGO, NOMBRE, CARRERA, FILIAL, MODALIDAD, SEMESTRE, AÑO, NOTA, OMÉRITO, FECHA_INGRESO</code></p>
@@ -1774,9 +2449,6 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
                                         </tr>
                                     ))
                                 )}
-                                {importData.length > 50 && (
-                                    <tr className="bg-slate-50/30"><td colSpan={6} className="py-3 text-center text-[10px] text-slate-400 font-bold uppercase italic">Y {importData.length - 50} registros más...</td></tr>
-                                )}
                             </tbody>
                         </table>
                     </div>
@@ -1785,6 +2457,15 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
         )}
       </div>
 
+      {/* Comprehensive Ficha Integral Modal */}
+      {isFichaModalOpen && selectedProfile && (
+        <IntegratedStudentModal
+          data={selectedProfile}
+          gatewayUrl={gatewayUrl}
+          onClose={() => setIsFichaModalOpen(false)}
+        />
+      )}
+
       {/* File Gateway Settings Modal */}
       <FileGatewayModal
         isOpen={isGatewayModalOpen}
@@ -1792,8 +2473,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
         onGatewayUpdated={(newUrl) => {
           setGatewayUrl(newUrl);
           checkGateway(newUrl);
-          if (studentHistory.length > 0) {
-            fetchExtraInfo(studentHistory);
+          if (selectedProfile) {
+            fetchProfileExtraInfo(selectedProfile);
           }
         }}
       />

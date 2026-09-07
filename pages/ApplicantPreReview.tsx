@@ -370,6 +370,7 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
   const [schoolsSortBy, setSchoolsSortBy] = useState<'postulantes-desc' | 'postulantes-asc' | 'ingresantes-desc' | 'vacantes-desc' | 'ratio-desc' | 'tasa-desc' | 'nombre-asc'>('postulantes-desc');
   const [schoolsFilterVacancies, setSchoolsFilterVacancies] = useState<'todos' | 'con-vacantes' | 'sin-vacantes'>('todos');
   const [schoolsFilterArea, setSchoolsFilterArea] = useState('Todas las Áreas');
+  const [showCompetitivityReportModal, setShowCompetitivityReportModal] = useState(false);
 
   // Controles de Análisis Temporal de Pagos y Validaciones
   const [temporalViewMode, setTemporalViewMode] = useState<'dias' | 'horas'>('dias');
@@ -2648,6 +2649,232 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
     }
     const safeName = modalidadName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '').replace(/\s+/g, '_');
     doc.save(`Reporte_Competitividad_${safeName}_${new Date().getTime()}.pdf`);
+    if (notify) {
+      notify("Reporte PDF de Competitividad generado exitosamente.", "success");
+    }
+  };
+
+  const generateCompetitivityExcelReport = () => {
+    try {
+      const currentMod = allModalidades.find(m => m.id === selectedModalidad) || modalidades.find(m => m.id === selectedModalidad);
+      const modalidadName = currentMod ? currentMod.nombre : 'MODALIDAD NO SELECCIONADA';
+      const safeName = modalidadName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s-]/g, '').replace(/\s+/g, '_');
+      const workbook = XLSX.utils.book_new();
+
+      const totalPostulantes = normalizedCsvData.length;
+      const totalIngresantesDirectos = normalizedCsvData.filter(r => isAdmittedRow(r) && !r.isAdjudicado && !(r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length;
+      const totalIngresantesAdj = normalizedCsvData.filter(r => r.isAdjudicado || (r.OBSERVACION||'').toUpperCase().includes('ADJUDICA')).length;
+      const totalIngresantes = normalizedCsvData.filter(r => isAdmittedRow(r)).length;
+      const tasaGlobal = totalPostulantes > 0 ? ((totalIngresantes / totalPostulantes) * 100).toFixed(1) : '0.0';
+
+      const areaGroups: Record<string, typeof coberturaRows> = {};
+      coberturaRows.forEach(item => {
+        const areaKey = item.area ? `Área ${item.area}` : 'SIN ÁREA';
+        if (!areaGroups[areaKey]) areaGroups[areaKey] = [];
+        areaGroups[areaKey].push(item);
+      });
+
+      // 1. Hoja: Resumen General
+      const resumenData: any[] = [
+        { "MÉTRICA / INDICADOR": "Universidad", "VALOR": "Universidad Nacional de San Antonio Abad del Cusco (UNSAAC)" },
+        { "MÉTRICA / INDICADOR": "Dependencia", "VALOR": "Dirección de Admisión - Oficina de Sistemas" },
+        { "MÉTRICA / INDICADOR": "Modalidad de Admisión", "VALOR": modalidadName },
+        { "MÉTRICA / INDICADOR": "Fecha de Generación", "VALOR": new Date().toLocaleString('es-PE') },
+        {},
+        { "MÉTRICA / INDICADOR": "Postulantes Totales", "VALOR": totalPostulantes },
+        { "MÉTRICA / INDICADOR": "Ingresantes Directos", "VALOR": totalIngresantesDirectos },
+        { "MÉTRICA / INDICADOR": "Ingresantes Adjudicados", "VALOR": totalIngresantesAdj },
+        { "MÉTRICA / INDICADOR": "Ingresantes Totales", "VALOR": totalIngresantes },
+        { "MÉTRICA / INDICADOR": "Tasa Global de Ingreso", "VALOR": `${tasaGlobal}%` },
+        { "MÉTRICA / INDICADOR": "Nota Mínima Registrada", "VALOR": gradeStats.min },
+        { "MÉTRICA / INDICADOR": "Nota Máxima Registrada", "VALOR": gradeStats.max },
+        { "MÉTRICA / INDICADOR": "Nota Promedio Registrada", "VALOR": gradeStats.avg },
+      ];
+      const wsResumen = XLSX.utils.json_to_sheet(resumenData);
+      wsResumen['!cols'] = [{ wch: 32 }, { wch: 45 }];
+      XLSX.utils.book_append_sheet(workbook, wsResumen, "Resumen General");
+
+      // 2. Hoja: Consolidado por Áreas
+      const areasData = Object.entries(areaGroups).sort(([a], [b]) => a.localeCompare(b)).map(([areaName, items]) => {
+        const totalVac = items.reduce((sum, i) => sum + i.vacancies, 0);
+        const totalApp = items.reduce((sum, i) => sum + i.applicants, 0);
+        const totalDir = items.reduce((sum, i) => sum + (i.admittedDirect || 0), 0);
+        const totalAdj = items.reduce((sum, i) => sum + (i.admittedAdj || 0), 0);
+        const totalAdm = items.reduce((sum, i) => sum + i.admitted, 0);
+        const ratio = totalVac > 0 ? (totalApp / totalVac).toFixed(2) : '—';
+        const tasa = totalApp > 0 ? ((totalAdm / totalApp) * 100).toFixed(1) : '0.0';
+        return {
+          "Área Académica": areaName,
+          "N° Carreras": items.length,
+          "Total Vacantes": totalVac,
+          "Total Postulantes": totalApp,
+          "Ing. Directos": totalDir,
+          "Ing. Adjudicados": totalAdj,
+          "Total Ingresantes": totalAdm,
+          "Ratio (Post/Vac)": ratio,
+          "Tasa de Ingreso": `${tasa}%`
+        };
+      });
+      const grandVac = coberturaRows.reduce((sum, i) => sum + i.vacancies, 0);
+      const grandApp = coberturaRows.reduce((sum, i) => sum + i.applicants, 0);
+      const grandDir = coberturaRows.reduce((sum, i) => sum + (i.admittedDirect || 0), 0);
+      const grandAdj = coberturaRows.reduce((sum, i) => sum + (i.admittedAdj || 0), 0);
+      const grandAdm = coberturaRows.reduce((sum, i) => sum + i.admitted, 0);
+      const grandRatio = grandVac > 0 ? (grandApp / grandVac).toFixed(2) : '—';
+      const grandTasa = grandApp > 0 ? ((grandAdm / grandApp) * 100).toFixed(1) : '0.0';
+
+      areasData.push({
+        "Área Académica": "TOTAL GENERAL",
+        "N° Carreras": coberturaRows.length,
+        "Total Vacantes": grandVac,
+        "Total Postulantes": grandApp,
+        "Ing. Directos": grandDir,
+        "Ing. Adjudicados": grandAdj,
+        "Total Ingresantes": grandAdm,
+        "Ratio (Post/Vac)": grandRatio,
+        "Tasa de Ingreso": `${grandTasa}%`
+      });
+      const wsAreas = XLSX.utils.json_to_sheet(areasData);
+      wsAreas['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 16 }];
+      XLSX.utils.book_append_sheet(workbook, wsAreas, "Consolidado por Áreas");
+
+      // 3. Hoja: Por Escuela Profesional
+      const escuelasRows = coberturaRows.map(item => ({
+        "Área": item.area ? `Área ${item.area}` : 'Sin Área',
+        "Código": item.schoolCode,
+        "Carrera Profesional": item.schoolName,
+        "Vacantes": item.vacancies,
+        "Postulantes": item.applicants,
+        "Ingresantes Directos": item.admittedDirect || 0,
+        "Ingresantes Adjudicados": item.admittedAdj || 0,
+        "Total Ingresantes": item.admitted,
+        "Ratio (Postulantes/Vacante)": item.ratio,
+        "Tasa de Ingreso (%)": `${item.admissionRate}%`
+      }));
+      const wsEscuelas = XLSX.utils.json_to_sheet(escuelasRows);
+      wsEscuelas['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 45 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 25 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(workbook, wsEscuelas, "Por Escuela Profesional");
+
+      // 4. Hoja: Colegios de Procedencia
+      const colegiosRows: any[] = [];
+      schoolOriginsData.forEach((school, idx) => {
+        colegiosRows.push({
+          "Ranking": idx + 1,
+          "Colegio / Institución Educativa": school.name,
+          "Tipo Registro": "TOTAL GENERAL",
+          "Área Académica": "Todas",
+          "Postulantes": school.total,
+          "Ingresantes": school.admitted,
+          "% Efectividad": `${school.ratio}%`
+        });
+        if (school.areas) {
+          Object.entries(school.areas)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .forEach(([area, stats]: [string, any]) => {
+              const areaRatio = stats.total > 0 ? ((stats.admitted / stats.total) * 100).toFixed(0) : '0';
+              colegiosRows.push({
+                "Ranking": "",
+                "Colegio / Institución Educativa": `  ↳ Desglose ${school.name}`,
+                "Tipo Registro": "DESGLOSE POR ÁREA",
+                "Área Académica": `Área ${area}`,
+                "Postulantes": stats.total,
+                "Ingresantes": stats.admitted,
+                "% Efectividad": `${areaRatio}%`
+              });
+            });
+        }
+      });
+      const wsColegios = XLSX.utils.json_to_sheet(colegiosRows);
+      wsColegios['!cols'] = [{ wch: 10 }, { wch: 48 }, { wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
+      XLSX.utils.book_append_sheet(workbook, wsColegios, "Colegios de Procedencia");
+
+      // 5. Hoja: Geografía de Origen
+      const geoRows: any[] = [];
+      geoDeptsData.forEach(d => {
+        geoRows.push({
+          "Nivel": "Departamento",
+          "Ubicación Geográfica": d.name,
+          "Postulantes": d.value,
+          "Porcentaje": `${d.pct}%`
+        });
+      });
+      geoProvsData.forEach(p => {
+        geoRows.push({
+          "Nivel": "Provincia",
+          "Ubicación Geográfica": p.name,
+          "Postulantes": p.value,
+          "Porcentaje": `${p.pct}%`
+        });
+      });
+      geoDistsData.forEach(dist => {
+        geoRows.push({
+          "Nivel": "Distrito",
+          "Ubicación Geográfica": dist.name,
+          "Postulantes": dist.value,
+          "Porcentaje": `${dist.pct}%`
+        });
+      });
+      const wsGeo = XLSX.utils.json_to_sheet(geoRows);
+      wsGeo['!cols'] = [{ wch: 16 }, { wch: 32 }, { wch: 14 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(workbook, wsGeo, "Geografía de Origen");
+
+      // 6. Hoja: Género y Calificaciones
+      const notasYGeneroRows: any[] = [];
+      notasYGeneroRows.push({ "Categoría": "DISTRIBUCIÓN POR GÉNERO", "Detalle / Rango": "", "Postulantes": "", "Ingresantes": "", "Porcentaje / Tasa": "" });
+      sexData.chartData.forEach(s => {
+        notasYGeneroRows.push({
+          "Categoría": "Género",
+          "Detalle / Rango": s.name,
+          "Postulantes": s.value,
+          "Ingresantes": "—",
+          "Porcentaje / Tasa": `${s.pct}%`
+        });
+      });
+      notasYGeneroRows.push({});
+      notasYGeneroRows.push({ "Categoría": "DISTRIBUCIÓN DE NOTAS", "Detalle / Rango": "", "Postulantes": "", "Ingresantes": "", "Porcentaje / Tasa": "" });
+      gradeStats.chartData.forEach(g => {
+        const tasa = g.postulantes > 0 ? ((g.ingresantes / g.postulantes) * 100).toFixed(1) : '0.0';
+        notasYGeneroRows.push({
+          "Categoría": "Rango de Calificación",
+          "Detalle / Rango": g.range,
+          "Postulantes": g.postulantes,
+          "Ingresantes": g.ingresantes,
+          "Porcentaje / Tasa": `${tasa}%`
+        });
+      });
+      const wsNotasGenero = XLSX.utils.json_to_sheet(notasYGeneroRows);
+      wsNotasGenero['!cols'] = [{ wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(workbook, wsNotasGenero, "Género y Notas");
+
+      // 7. Hoja: Padrón de Postulantes
+      const padronRows = normalizedCsvData.map(row => ({
+        "DNI / Código": String(row.NroDocumento || row.alumno || '').trim(),
+        "Nombre del Postulante": row.nombre || '',
+        "Carrera de Postulación": row.Carrera || '',
+        "Carrera de Ingreso": row.CarreraIngreso || '',
+        "Nota": row.Nota || '',
+        "Puesto": row.POS || '',
+        "Condición": row.OBSERVACION || '',
+        "Sexo": row.Sexo || row.sexo || '',
+        "Colegio de Procedencia": row.Colegio || row.colegio || '',
+        "Procedencia Geográfica": row._departamento && row._provincia && row._distrito 
+          ? `${row._departamento} / ${row._provincia} / ${row._distrito}` 
+          : (row.Ubigeo_Domicilio_Actual || row.LugarNacimiento || '')
+      }));
+      const wsPadron = XLSX.utils.json_to_sheet(padronRows);
+      wsPadron['!cols'] = [{ wch: 14 }, { wch: 38 }, { wch: 32 }, { wch: 32 }, { wch: 10 }, { wch: 10 }, { wch: 22 }, { wch: 12 }, { wch: 38 }, { wch: 35 }];
+      XLSX.utils.book_append_sheet(workbook, wsPadron, "Padrón Postulantes");
+
+      XLSX.writeFile(workbook, `Reporte_Competitividad_${safeName}_${new Date().getTime()}.xlsx`);
+      if (notify) {
+        notify("Reporte Excel de Competitividad generado exitosamente.", "success");
+      }
+    } catch (err: any) {
+      console.error("Error al generar reporte Excel:", err);
+      if (notify) {
+        notify(`Error al generar Excel: ${err.message || 'Error desconocido'}`, "error");
+      }
+    }
   };
 
   const handleSyncParticipantesOmerito = async () => {
@@ -4575,15 +4802,16 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                   </div>
                 </div>
 
-                {/* Botón Generar Reporte PDF */}
+                {/* Botón Generar Reporte de Competitividad */}
                 <div className="flex justify-end mb-4">
                   <button
-                    onClick={generateCompetitivityReport}
+                    onClick={() => setShowCompetitivityReportModal(true)}
                     disabled={normalizedCsvData.length === 0}
-                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-wider rounded-xl flex items-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-5 py-2.5 bg-[#102c57] hover:bg-[#1a4480] text-white font-black text-xs uppercase tracking-wider rounded-xl flex items-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Generar y descargar reporte en formato PDF o Excel (.xlsx)"
                   >
-                    <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-                    Generar Reporte PDF
+                    <span className="material-symbols-outlined text-[18px]">assessment</span>
+                    Descargar Reporte (PDF / Excel)
                   </button>
                 </div>
 
@@ -4944,6 +5172,138 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
                   className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-colors"
                 >
                   Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal de Selección de Formato de Reporte de Competitividad (PDF o Excel) */}
+      {showCompetitivityReportModal && (() => {
+        const currentMod = allModalidades.find(m => m.id === selectedModalidad) || modalidades.find(m => m.id === selectedModalidad);
+        const modName = currentMod ? currentMod.nombre : 'Modalidad Actual';
+        const totalPost = normalizedCsvData.length;
+        const totalIng = normalizedCsvData.filter(r => isAdmittedRow(r)).length;
+        const totalVac = coberturaRows.reduce((sum, i) => sum + i.vacancies, 0);
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col">
+              {/* Header */}
+              <div className="bg-[#102c57] text-white p-5 flex items-start justify-between gap-4 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-amber-300">
+                    <span className="material-symbols-outlined text-2xl">analytics</span>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-white leading-tight">Exportar Reporte de Competitividad</h2>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Modalidad: <span className="font-semibold text-amber-300">{modName}</span>
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowCompetitivityReportModal(false)}
+                  className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">close</span>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-4 text-slate-700 bg-slate-50/50">
+                {/* Stats Bar */}
+                <div className="grid grid-cols-3 gap-2 p-3 bg-white rounded-xl border border-slate-200/80 text-center">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Postulantes</span>
+                    <span className="text-sm font-black text-blue-600">{totalPost}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Vacantes</span>
+                    <span className="text-sm font-black text-slate-800">{totalVac}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Ingresantes</span>
+                    <span className="text-sm font-black text-emerald-600">{totalIng}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs font-medium text-slate-600 text-center">
+                  ¿En qué formato deseas generar el reporte de competitividad y selectividad?
+                </p>
+
+                {/* Options Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
+                  {/* Option PDF */}
+                  <div className="bg-white p-4 rounded-xl border-2 border-slate-200 hover:border-red-500 hover:shadow-md transition-all flex flex-col justify-between group">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold">
+                          <span className="material-symbols-outlined text-xl">picture_as_pdf</span>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-red-100/80 text-red-700">
+                          PDF Oficial
+                        </span>
+                      </div>
+                      <h4 className="font-black text-slate-800 text-sm mb-1 group-hover:text-red-600 transition-colors">
+                        Documento PDF
+                      </h4>
+                      <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
+                        Informe institucional con diseño oficial UNSAAC, resumen ejecutivo, tablas de género, notas, geografía y desglose de colegios por área académica.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        generateCompetitivityReport();
+                        setShowCompetitivityReportModal(false);
+                      }}
+                      className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-wider rounded-lg flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">download</span>
+                      Descargar PDF
+                    </button>
+                  </div>
+
+                  {/* Option Excel */}
+                  <div className="bg-white p-4 rounded-xl border-2 border-slate-200 hover:border-emerald-500 hover:shadow-md transition-all flex flex-col justify-between group">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                          <span className="material-symbols-outlined text-xl">table_view</span>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100/80 text-emerald-700">
+                          Excel (.xlsx)
+                        </span>
+                      </div>
+                      <h4 className="font-black text-slate-800 text-sm mb-1 group-hover:text-emerald-600 transition-colors">
+                        Libro Excel (.xlsx)
+                      </h4>
+                      <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
+                        Libro con 7 hojas de cálculo estructuradas (Resumen, Áreas, Escuelas, Colegios, Geografía, Notas y Padrón completo) para análisis avanzado.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        generateCompetitivityExcelReport();
+                        setShowCompetitivityReportModal(false);
+                      }}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider rounded-lg flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">download</span>
+                      Descargar Excel (.xlsx)
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="bg-slate-100 border-t border-slate-200 p-3.5 flex justify-end">
+                <button
+                  onClick={() => setShowCompetitivityReportModal(false)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  Cancelar
                 </button>
               </div>
             </div>
