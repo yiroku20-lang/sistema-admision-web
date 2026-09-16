@@ -14,9 +14,9 @@ export async function checkOnlineStatus(): Promise<boolean> {
   
   try {
     // Intentar un fetch rápido al health check o url base de Supabase
-    // con un timeout bajo (3 segundos) para no congelar hilos
+    // con un timeout prudente (6 segundos) para evitar falsos negativos por latencia
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 3000);
+    const id = setTimeout(() => controller.abort(), 6000);
     
     // Llamar a la API REST de PostgREST de Supabase (url base)
     const response = await fetch(`${config.SUPABASE_URL}/rest/v1/`, {

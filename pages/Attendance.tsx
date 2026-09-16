@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Papa from 'papaparse';
+import { getAllUsers } from '../lib/usersApi';
 
 interface AttendanceProps {
   user: User;
@@ -46,7 +47,6 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
   const [selectedUserForReport, setSelectedUserForReport] = useState<any | null>(null);
   const [individualHistory, setIndividualHistory] = useState<any[]>([]);
   const [reportTotalHours, setReportTotalHours] = useState('00:00');
-  const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
   
   // CSV Import
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -106,11 +106,22 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
           }
 
           // Fetch all users to map DNI to user_id
-          const { data: users, error: userError } = await supabase.from('usuarios').select('id, dni');
-          if (userError) throw userError;
+          let users: any[] = [];
+          try {
+            users = await getAllUsers();
+          } catch(e) {}
+          if (!users || users.length === 0) {
+            const { data: uData, error: userError } = await supabase.from('usuarios').select('id, dni');
+            if (!userError && uData) users = uData;
+          }
 
           const userMap = new Map();
-          users?.forEach(u => userMap.set(u.dni?.toString().trim(), u.id));
+          const userNameMap = new Map();
+          users?.forEach(u => {
+            const cleanD = u.dni?.toString().trim();
+            userMap.set(cleanD, u.id);
+            userNameMap.set(cleanD, u.name);
+          });
 
           const recordsToInsert: any[] = [];
           const errors: string[] = [];
@@ -188,6 +199,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
               recordsToInsert.push({
                 user_id: userId,
                 dni: dni,
+                nombre: userNameMap.get(dni) || null,
                 tipo: normalizedRow.tipo.toUpperCase(),
                 fecha: parsed.fecha,
                 hora: parsed.hora,
@@ -202,6 +214,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                   recordsToInsert.push({
                     user_id: userId,
                     dni: dni,
+                    nombre: userNameMap.get(dni) || null,
                     tipo: 'INGRESO',
                     fecha: dataIn.fecha,
                     hora: dataIn.hora,
@@ -215,6 +228,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                   recordsToInsert.push({
                     user_id: userId,
                     dni: dni,
+                    nombre: userNameMap.get(dni) || null,
                     tipo: 'SALIDA',
                     fecha: dataOut.fecha,
                     hora: dataOut.hora,
@@ -294,8 +308,38 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
   };
 
   const fetchAllUsers = async () => {
+    try {
+      const users = await getAllUsers();
+      if (users && users.length > 0) {
+        setAllUsers(users);
+        return;
+      }
+    } catch (e) {}
+
     const { data } = await supabase.from('usuarios').select('id, name, dni').order('name');
     setAllUsers(data || []);
+  };
+
+  const getUserByDni = async (dni: string) => {
+    const cleanDni = dni.trim();
+    // 1. Intento directo con Supabase
+    try {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('id, name, dni, role')
+        .eq('dni', cleanDni)
+        .maybeSingle();
+      if (!error && data) return data;
+    } catch (e) {}
+
+    // 2. Fallback robusto con getAllUsers (servidor local / Netlify / Electron)
+    try {
+      const all = await getAllUsers();
+      const found = all.find(u => String(u.dni || '').trim() === cleanDni);
+      if (found) return found;
+    } catch (e) {}
+
+    return null;
   };
 
   const generateIndividualReport = async () => {
@@ -390,14 +434,10 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
 
     setLoading(true);
     try {
-      // 1. Verificar si el usuario existe
-      const { data: userData, error: userError } = await supabase
-        .from('usuarios')
-        .select('id, name')
-        .eq('dni', dniInput.trim())
-        .single();
+      // 1. Verificar si el usuario existe (mediante getUserByDni con fallback de API)
+      const userData = await getUserByDni(dniInput);
 
-      if (userError || !userData) {
+      if (!userData) {
         notify('DNI no registrado en el sistema de usuarios.', 'error');
         setDniInput('');
         return;
@@ -421,12 +461,13 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-GB', { hour12: false });
 
-      // 3. Registrar
+      // 3. Registrar asistencia con nombre persistido
       const { error: markError } = await supabase
         .from('asistencia')
         .insert([{
           user_id: userData.id,
           dni: dniInput.trim(),
+          nombre: userData.name,
           tipo: nextType,
           fecha: today,
           hora: timeStr,
@@ -459,15 +500,11 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       if (!manualForm.dni || !manualForm.fecha || !manualForm.hora) return;
       setLoading(true);
       try {
-          // Verify user
-          const { data: userData, error: userError } = await supabase
-            .from('usuarios')
-            .select('id, name')
-            .eq('dni', manualForm.dni.trim())
-            .single();
+          // Verify user con soporte de API y Supabase
+          const userData = await getUserByDni(manualForm.dni);
 
-          if (userError || !userData) {
-              notify('DNI no encontrado.', 'error');
+          if (!userData) {
+              notify('DNI no encontrado en el sistema de usuarios.', 'error');
               return;
           }
 
@@ -484,10 +521,12 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
           const { error } = await supabase.from('asistencia').insert([{
               user_id: userData.id,
               dni: manualForm.dni.trim(),
+              nombre: userData.name,
               tipo: manualForm.tipo,
               fecha: manualForm.fecha,
               hora: manualForm.hora.substring(0, 5) + ':00',
-              timestamp: finalTimestamp
+              timestamp: finalTimestamp,
+              manual: true
           }]);
 
           if (error) throw error;
@@ -518,6 +557,19 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       } finally {
           setLoading(false);
       }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!window.confirm('¿Está seguro de eliminar este registro de asistencia?')) return;
+    try {
+      const { error } = await supabase.from('asistencia').delete().eq('id', id);
+      if (error) throw error;
+      notify('Registro de asistencia eliminado con éxito', 'success');
+      setHistoryRecords(prev => prev.filter(r => r.id !== id));
+      setTodayRecords(prev => prev.filter(r => r.id !== id));
+    } catch (err: any) {
+      notify('Error al eliminar registro: ' + err.message, 'error');
+    }
   };
 
   return (
@@ -658,7 +710,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                                 <span className="material-symbols-outlined text-[18px]">{record.tipo === 'INGRESO' ? 'login' : 'logout'}</span>
                                             </div>
                                             <div>
-                                                <p className="text-[12px] font-black text-slate-900 uppercase leading-tight">{(record as any).usuarios?.name || 'Usuario'}</p>
+                                                <p className="text-[12px] font-black text-slate-900 uppercase leading-tight">{record.nombre || record.usuarios?.name || 'Personal'}</p>
                                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{record.dni}</p>
                                             </div>
                                         </div>
@@ -730,7 +782,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                 r.fecha,
                                 r.hora,
                                 r.dni,
-                                (r as any).usuarios?.name || 'N/A',
+                                r.nombre || r.usuarios?.name || 'N/A',
                                 r.tipo
                             ]);
                             const csvContent = "data:text/csv;charset=utf-8," 
@@ -769,10 +821,10 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                     <td className="px-6 py-4 rounded-l-2xl border-y border-l border-slate-100 group-hover:border-slate-200 transition-colors">
                                         <div className="flex items-center gap-3">
                                             <div className="size-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center font-black text-xs border border-white group-hover:bg-primary group-hover:text-white transition-all">
-                                                {((record as any).usuarios?.name || 'U').charAt(0)}
+                                                {(record.nombre || record.usuarios?.name || 'P').charAt(0)}
                                             </div>
                                             <div>
-                                                <p className="text-sm font-black text-slate-900 uppercase">{(record as any).usuarios?.name || 'Usuario'}</p>
+                                                <p className="text-sm font-black text-slate-900 uppercase">{record.nombre || record.usuarios?.name || 'Personal'}</p>
                                                 <p className="text-[10px] font-bold text-slate-400 tracking-widest">{record.dni}</p>
                                             </div>
                                         </div>
@@ -786,7 +838,7 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                     </td>
                                     <td className="px-6 py-4 rounded-r-2xl border-y border-r border-slate-100 group-hover:border-slate-200 text-right">
                                         <button 
-                                            onClick={() => setRecordToDelete(record.id)}
+                                            onClick={() => handleDeleteRecord(record.id)}
                                             className="size-8 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all flex items-center justify-center ml-auto"
                                         >
                                             <span className="material-symbols-outlined text-[18px]">delete</span>

@@ -1,12 +1,13 @@
 import dotenv from "dotenv";
 import path from "path";
-import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Polifill seguro para WebSocket en entornos Node.js / Electron sin realtime socket
+if (typeof (global as any).WebSocket === "undefined") {
+  (global as any).WebSocket = class MockWebSocket {};
+}
 
-// Cargar .env desde la raíz del backend
+// Cargar .env desde la raíz del backend si existe
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 export const config = {
@@ -21,12 +22,7 @@ export const config = {
   CURRENT_PERIODO: process.env.CURRENT_PERIODO || "2026-I"
 };
 
-// Validar credenciales mínimas (evitar caída, solo advertir)
-if (!config.SUPABASE_URL || !config.SUPABASE_SERVICE_ROLE_KEY) {
-  console.warn("ADVERTENCIA: SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY no configurados en el archivo .env");
-}
-
-// Inicializar Supabase Client (bypasando RLS al usar Service Role para sincronización)
+// Inicializar Supabase Client (usando Service Role para sincronización y bypass de RLS)
 export const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
   auth: {
     persistSession: false,

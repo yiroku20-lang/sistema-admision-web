@@ -208,33 +208,35 @@ export async function pullSupabaseBackup() {
         
         totalFetched += data.length;
         
-        // Vuelco a base local SQLite mediante una transaccion rapida
-        await db.transaction(async (tx) => {
-          for (const item of data) {
-            // Mapear campos para compatibilidad local si difieren
-            const localItem: any = {
-              ...item,
-              periodo: config.CURRENT_PERIODO,
-              syncStatus: "synced"
-            };
-            
-            // Drizzle SQLite requiere fechas en formato de texto
-            if (item.created_at) localItem.createdAt = new Date(item.created_at).toISOString();
-            if (item.updated_at) localItem.updatedAt = new Date(item.updated_at).toISOString();
-            
-            // Campos vacíos por defecto
-            if (!localItem.createdAt) localItem.createdAt = new Date().toISOString();
-            if (!localItem.updatedAt) localItem.updatedAt = new Date().toISOString();
-            
-            await tx
-              .insert(tableSchema)
-              .values(localItem)
-              .onConflictDoUpdate({
-                target: tableSchema.id,
-                set: localItem
-              });
-          }
-        });
+        // Vuelco a base local SQLite en lotes de 50 cediendo control al event loop
+        const chunkSize = 50;
+        for (let i = 0; i < data.length; i += chunkSize) {
+          const chunk = data.slice(i, i + chunkSize);
+          await db.transaction(async (tx) => {
+            for (const item of chunk) {
+              const localItem: any = {
+                ...item,
+                periodo: config.CURRENT_PERIODO,
+                syncStatus: "synced"
+              };
+              
+              if (item.created_at) localItem.createdAt = new Date(item.created_at).toISOString();
+              if (item.updated_at) localItem.updatedAt = new Date(item.updated_at).toISOString();
+              if (!localItem.createdAt) localItem.createdAt = new Date().toISOString();
+              if (!localItem.updatedAt) localItem.updatedAt = new Date().toISOString();
+              
+              await tx
+                .insert(tableSchema)
+                .values(localItem)
+                .onConflictDoUpdate({
+                  target: tableSchema.id,
+                  set: localItem
+                });
+            }
+          });
+          // Ceder el control al event loop para procesar solicitudes HTTP concurrentes
+          await new Promise((resolve) => setImmediate(resolve));
+        }
         
         if (data.length < limit) {
           hasMore = false;

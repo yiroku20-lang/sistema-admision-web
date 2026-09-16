@@ -274,6 +274,7 @@ export interface AttendanceRecord {
   id: string;
   user_id: string;
   dni: string;
+  nombre?: string;
   tipo: 'INGRESO' | 'SALIDA';
   fecha: string; // YYYY-MM-DD
   hora: string;  // HH:MM:SS

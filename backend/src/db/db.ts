@@ -2,21 +2,28 @@ import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 import * as schema from "./schema.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Determinar el directorio de datos persistente (evitando intentar escribir dentro de app.asar de solo lectura)
+let dbDir: string;
+if (process.env.APPDATA) {
+  dbDir = path.join(process.env.APPDATA, "SistemaAdmision", "db");
+} else {
+  dbDir = path.resolve(__dirname, "../../db");
+}
 
-// Asegurarse de que el directorio /backend/db/ existe
-const dbDir = path.resolve(__dirname, "../../db");
 if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+  try {
+    fs.mkdirSync(dbDir, { recursive: true });
+  } catch (e) {
+    dbDir = path.resolve("./db");
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+  }
 }
 
 const dbPath = path.join(dbDir, "local.sqlite");
 
-// Inicializar el cliente de LibSQL (SQLite local)
+// Inicializar el cliente de LibSQL (SQLite local persistente)
 const client = createClient({
   url: `file:${dbPath}`
 });

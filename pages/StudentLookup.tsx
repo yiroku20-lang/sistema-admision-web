@@ -300,72 +300,21 @@ export function getGroupedDocuments(documents: StudentDocument[] = []): Record<s
     return groups;
 }
 
-const getPreRevisionRecords = async (): Promise<any[]> => {
-    const now = Date.now();
-    if (preRevisionCache && (now - preRevisionCache.timestamp) < 5 * 60 * 1000) {
-        return preRevisionCache.data;
-    }
+const fetchRpcSafe = async (term: string): Promise<any[]> => {
+    if (!term || !term.trim()) return [];
     try {
-        let rawData: any[] | null = null;
-        let queryErr: any = null;
-        
-        try {
-            const res = await supabase
-                .from('pre_revision_archivos')
-                .select('id, modalidad_id, cv_modalidades(nombre, semestre, cv_cuadros_anuales(anio)), csv_data');
-            rawData = res.data;
-            queryErr = res.error;
-        } catch (joinErr) {
-            queryErr = joinErr;
-        }
-
-        if (queryErr || !rawData) {
-            const fallbackRes = await supabase
-                .from('pre_revision_archivos')
-                .select('id, modalidad_id, csv_data');
-            rawData = fallbackRes.data;
-        }
-
-        if (!rawData) return preRevisionCache?.data || [];
-        
-        const allRows: any[] = [];
-        for (const item of rawData) {
-            let parsed = item.csv_data;
-            if (typeof parsed === 'string') {
-                try { parsed = JSON.parse(parsed); } catch (e) { parsed = []; }
+        const timeoutPromise = new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 3500));
+        const rpcPromise = supabase.rpc('buscar_postulante_pre_revision', { p_termino: term.trim() }).then(res => {
+            if (res.error) {
+                console.warn('RPC buscar_postulante_pre_revision error:', res.error.message);
+                return [];
             }
-            let rows: any[] = [];
-            if (Array.isArray(parsed)) {
-                rows = parsed;
-            } else if (parsed && typeof parsed === 'object') {
-                if (Array.isArray(parsed.postulantes)) rows = parsed.postulantes;
-                else if (Array.isArray(parsed.data)) rows = parsed.data;
-                else if (Array.isArray(parsed.rows)) rows = parsed.rows;
-            }
-
-            const modObj = item.cv_modalidades as any;
-            const modalidadNombre = modObj?.nombre || '';
-            const modSemestre = modObj?.semestre || '';
-            const modAnio = modObj?.cv_cuadros_anuales?.anio || '';
-
-            rows.forEach((r: any) => {
-                if (r && typeof r === 'object') {
-                    allRows.push({ 
-                        ...r, 
-                        _preRevisionId: item.id, 
-                        _modalidadId: item.modalidad_id,
-                        _modalidadNombre: modalidadNombre,
-                        _semestre: modSemestre,
-                        _anio: modAnio
-                    });
-                }
-            });
-        }
-        preRevisionCache = { data: allRows, timestamp: now };
-        return allRows;
-    } catch (err) {
-        console.error('Error fetching pre_revision_archivos:', err);
-        return preRevisionCache?.data || [];
+            return Array.isArray(res.data) ? res.data : [];
+        });
+        return await Promise.race([rpcPromise, timeoutPromise]);
+    } catch (e) {
+        console.warn('RPC exception:', e);
+        return [];
     }
 };
 
@@ -649,51 +598,28 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       const term = searchQuery.trim();
       const isNumeric = /^\d+$/.test(term);
       
-      // 1. Layer 1: Query 'participantes' (Ingresantes oficiales)
+      // 1. Layer 1: Query 'participantes' (Ingresantes oficiales) con límites seguros
       let partQuery = supabase.from('participantes').select('*');
       if (isNumeric) {
-          partQuery = partQuery.eq('CODPOSTULANTE', term);
+          partQuery = partQuery.eq('CODPOSTULANTE', term).limit(50);
       } else {
           const words = term.split(/[\s,\-/]+/).filter(Boolean);
           words.forEach(word => {
             const agnostic = word.replace(/[aeiouáéíóúüAEIOUÁÉÍÓÚÜ]/g, '_');
             partQuery = partQuery.ilike('NOMBRE', `%${agnostic}%`);
           });
+          partQuery = partQuery.limit(60);
       }
       
-      const [partRes, preRows] = await Promise.all([
+      // 2. Layer 2: Consulta paralela ultrarrápida (Participantes + RPC Server-Side de Postulantes)
+      const [partRes, rpcMatches] = await Promise.all([
           partQuery.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false }),
-          getPreRevisionRecords()
+          fetchRpcSafe(term)
       ]);
 
       if (partRes.error) throw partRes.error;
       const partData = partRes.data || [];
-
-      // 2. Layer 2: Filter pre_revision_archivos
-      const preMatches: any[] = [];
-      const searchLower = term.toLowerCase();
-      const searchWords = searchLower.split(/[\s,\-/]+/).filter(Boolean);
-
-      preRows.forEach(row => {
-          const dni = String(row.NroDocumento || row.alumno || row.dni || row.DNI || row.CODPOSTULANTE || row.DOCUMENTO || '').trim();
-          const name = String(row.nombre || row.Nombre || row.NOMBRE || row.POSTULANTE || '').toUpperCase();
-          
-          if (isNumeric) {
-              if (dni === term) {
-                  preMatches.push(row);
-              }
-          } else {
-              // Word match
-              const allWordsMatch = searchWords.every(w => {
-                  const wNorm = w.replace(/[aeiouáéíóúü]/g, '');
-                  const nameNorm = name.toLowerCase().replace(/[aeiouáéíóúü]/g, '');
-                  return nameNorm.includes(wNorm) || name.toLowerCase().includes(w);
-              });
-              if (allWordsMatch) {
-                  preMatches.push(row);
-              }
-          }
-      });
+      const preMatches: any[] = rpcMatches || [];
 
       // 3. Assemble Unified Person Map
       const personMap = new Map<string, IntegratedStudentData>();

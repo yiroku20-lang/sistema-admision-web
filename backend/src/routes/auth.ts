@@ -160,4 +160,44 @@ router.post("/login", async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/auth/users - Listar todos los usuarios para control de asistencia y administración
+router.get("/users", async (req: Request, res: Response) => {
+  try {
+    const online = isOnline();
+    if (online) {
+      const { data, error } = await supabase
+        .from("usuarios")
+        .select("id, name, dni, role, permissions, created_at")
+        .order("name", { ascending: true });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return res.status(200).json(data);
+      }
+    }
+
+    const localUsers = await db.select().from(usuarios);
+    const formatted = localUsers.map((u) => {
+      let parsedPerms = null;
+      try {
+        parsedPerms = u.permissions ? JSON.parse(u.permissions) : null;
+      } catch (e) {
+        parsedPerms = u.permissions;
+      }
+      return {
+        id: u.id,
+        dni: u.dni,
+        name: u.name,
+        role: u.role,
+        permissions: parsedPerms,
+        created_at: u.createdAt
+      };
+    });
+
+    return res.status(200).json(formatted);
+  } catch (err: any) {
+    console.error("[Auth Service] Error al obtener usuarios:", err);
+    return res.status(500).json({ error: err.message || "Error al obtener usuarios" });
+  }
+});
+
 export default router;

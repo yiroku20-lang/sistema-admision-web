@@ -305,6 +305,7 @@ router.get("/student-documents/:dni", (req: Request, res: Response) => {
         if (match) prefix = match[1];
       }
       
+      const host = req.get("host") || "10.10.16.214:5000";
       return {
         name: file.name,
         periodo: file.periodo,
@@ -312,7 +313,7 @@ router.get("/student-documents/:dni", (req: Request, res: Response) => {
         description: description,
         prefix: prefix,
         relativePath: file.relativePath,
-        url: `http://127.0.0.1:5000/api/files/stream-document?path=${encodeURIComponent(file.relativePath)}`
+        url: `http://${host}/api/files/stream-document?path=${encodeURIComponent(file.relativePath)}`
       };
     });
     

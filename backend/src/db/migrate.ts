@@ -1,10 +1,7 @@
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { db, client } from "./db.js";
 import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import fs from "fs";
 
 export async function runMigrations() {
   console.log("=== Iniciando Migraciones de Base de Datos Local (LibSQL) ===");
@@ -12,7 +9,6 @@ export async function runMigrations() {
     let migrationsFolder = path.resolve(__dirname, "./migrations-sqlite");
     
     // Si no existe en dist/db, buscar en src/db/migrations-sqlite
-    const fs = await import("fs");
     if (!fs.existsSync(migrationsFolder)) {
       migrationsFolder = path.resolve(__dirname, "../../src/db/migrations-sqlite");
     }
@@ -28,8 +24,7 @@ export async function runMigrations() {
   }
 }
 
-// Permitir ejecutarlo directamente desde la CLI si se invoca este archivo
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && process.argv[1].includes("migrate")) {
   runMigrations().then(() => {
     client.close();
   });
