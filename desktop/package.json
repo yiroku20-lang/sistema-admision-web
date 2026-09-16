@@ -76,7 +76,8 @@
       {
         "provider": "github",
         "owner": "yiroku20-lang",
-        "repo": "sistema-admision-web"
+        "repo": "sistema-admision-web",
+        "releaseType": "release"
       }
     ]
   }
