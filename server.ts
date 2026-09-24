@@ -537,14 +537,16 @@ async function startServer() {
       const supabase = createClient(supabaseUrl, supabaseKey);
 
       // 1. Check if user already exists in public DB
-      const { data: existingUser } = await supabase.from('usuarios').select('dni').eq('dni', dni).single();
+      const cleanDni = String(dni).trim();
+      const { data: existingUser } = await supabase.from('usuarios').select('dni, name').eq('dni', cleanDni).maybeSingle();
       if (existingUser) {
-          return res.status(400).json({ error: `El usuario con DNI ${dni} ya existe.` });
+          return res.status(400).json({ error: `El usuario con DNI ${cleanDni} ya existe (${existingUser.name}).` });
       }
 
-      const email = `${dni}@admin.unsaac.pe`;
+      const email = `${cleanDni}@admin.unsaac.pe`;
 
-      // 2. Create user in Supabase Auth using Admin API
+      // 2. Create user in Supabase Auth using Admin API (or link existing)
+      let userId: string | null = null;
       const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
           email: email,
           password: password,
@@ -552,24 +554,33 @@ async function startServer() {
       });
 
       if (authError) {
-          return res.status(400).json({ error: "Error en Auth: " + authError.message });
+          if (authError.message.includes("already been registered") || authError.message.includes("already exists")) {
+              const { data: listData } = await supabase.auth.admin.listUsers();
+              const found = listData?.users?.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+              if (found) {
+                  userId = found.id;
+                  await supabase.auth.admin.updateUserById(userId, { password: password });
+              } else {
+                  return res.status(400).json({ error: "Error en Auth: " + authError.message });
+              }
+          } else {
+              return res.status(400).json({ error: "Error en Auth: " + authError.message });
+          }
+      } else {
+          userId = authUser.user.id;
       }
 
-      const userId = authUser.user.id;
-
-      // 3. Insert into public.usuarios
+      // 3. Insert into public.usuarios with verified auth.users id
       const { error: dbError } = await supabase.from('usuarios').insert([{
           id: userId,
-          dni: dni,
+          dni: cleanDni,
           password: password,
-          name: name,
+          name: String(name).trim(),
           role: role,
-          permissions: permissions || null
+          permissions: role === 'Operador' ? (permissions || null) : null
       }]);
 
       if (dbError) {
-          // If public insert fails, we should ideally delete the auth user to rollback, but for now just error out
-          await supabase.auth.admin.deleteUser(userId);
           return res.status(400).json({ error: "Error al guardar perfil: " + dbError.message });
       }
 

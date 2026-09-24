@@ -315,18 +315,45 @@ export interface VacancyReservationDetail {
     admission_options?: Participant[];
 }
 
+export interface EventoPersonalAsignado {
+  id: string;
+  dni: string;
+  nombre: string;
+  telefono?: string;
+  correo?: string;
+  dependencia?: string;
+  rol_comision?: 'Coordinador' | 'Expositor' | 'Apoyo Técnico' | 'Conductor' | 'Participante';
+}
+
+export interface ColegioItinerario {
+  id?: string | number;
+  codigo_modular?: string;
+  nombre_ie: string;
+  nivel_modalidad?: string;
+  distrito: string;
+  provincia: string;
+  departamento?: string;
+  dia_estimado?: string; // Ej: "Día 1 - Lunes" o fecha
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
   description?: string;
   start_date: string;
   end_date: string;
-  type: 'Inscripción' | 'Examen' | 'Reunión' | 'Evento' | 'Feriado' | 'Otro';
+  type: 'Inscripción' | 'Examen' | 'Reunión' | 'Evento' | 'Feriado' | 'Visita a Colegios' | 'Gira Vocacional' | 'Feria Vocacional' | 'Capacitación' | 'Otro';
   color: string;
   proceso?: string; // Ej: Ordinario 2026-I
   audiencia?: 'Público General' | 'Personal Interno';
   created_at: string;
   user_id?: string;
+  // Nuevos campos operativos:
+  personal_asignado?: EventoPersonalAsignado[];
+  lugar?: string; // Nombre del Colegio o Institución
+  hora?: string;  // Hora de salida o encuentro (ej. "08:30 AM")
+  estado_evento?: 'Programado' | 'En Curso' | 'Realizado' | 'Cancelado';
+  colegios_itinerario?: ColegioItinerario[];
 }
 
 export interface PersonalDirectorio {

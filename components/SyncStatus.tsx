@@ -43,19 +43,18 @@ export const SyncStatus: React.FC = () => {
 
   // 2. Escuchar eventos de actualización de Electron
   useEffect(() => {
-    if (window.electronAPI) {
-      const unsubscribeAvailable = window.electronAPI.onUpdateAvailable(() => {
-        setUpdateAvailable(true);
-      });
-
-      const unsubscribeDownloaded = window.electronAPI.onUpdateDownloaded(() => {
-        setUpdateAvailable(false);
-        setUpdateDownloaded(true);
+    if (window.electronAPI?.onUpdateStatus) {
+      const unsubscribe = window.electronAPI.onUpdateStatus((data: any) => {
+        if (data?.status === 'available' || data?.status === 'downloading') {
+          setUpdateAvailable(true);
+        } else if (data?.status === 'downloaded') {
+          setUpdateAvailable(false);
+          setUpdateDownloaded(true);
+        }
       });
 
       return () => {
-        unsubscribeAvailable();
-        unsubscribeDownloaded();
+        unsubscribe();
       };
     }
   }, []);
@@ -96,8 +95,8 @@ export const SyncStatus: React.FC = () => {
   };
 
   const applyUpdate = () => {
-    if (window.electronAPI) {
-      window.electronAPI.restartAppForUpdate();
+    if (window.electronAPI?.quitAndInstall) {
+      window.electronAPI.quitAndInstall();
     }
   };
 
@@ -170,18 +169,6 @@ export const SyncStatus: React.FC = () => {
     </div>
   );
 };
-
-// Declaración global para evitar errores de compilación TS en React
-declare global {
-  interface Window {
-    electronAPI?: {
-      getAppVersion: () => Promise<string>;
-      restartAppForUpdate: () => Promise<void>;
-      onUpdateAvailable: (callback: (info: any) => void) => () => void;
-      onUpdateDownloaded: (callback: (info: any) => void) => () => void;
-    };
-  }
-}
 
 const styles = {
   container: {

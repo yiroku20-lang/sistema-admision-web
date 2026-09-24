@@ -142,43 +142,129 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
   // Person Search State for Autocomplete
   const [personSearchResults, setPersonSearchResults] = useState<any[]>([]);
   const [showPersonDropdown, setShowPersonDropdown] = useState(false);
-  const [selectedPersonFromDropdown, setSelectedPersonFromDropdown] = useState(false);
+  const lastSelectedPersonNameRef = useRef<string>('');
+  const personDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const searchPerson = async () => {
-      // Don't search if we just selected from dropdown
-      if (selectedPersonFromDropdown) {
-        setSelectedPersonFromDropdown(false);
-        return;
-      }
-      if (newLoan.prestatario_nombre.length < 3) {
+      const term = newLoan.prestatario_nombre.trim();
+      if (!term || term === lastSelectedPersonNameRef.current) return;
+      if (term.length < 3) {
         setPersonSearchResults([]);
         setShowPersonDropdown(false);
         return;
       }
       
+      // Convertir espacios en comodín '%' para que "CURO MAMANI" coincida con "CURO-MAMANI":
+      const queryPattern = term.replace(/\s+/g, '%');
       const { data } = await supabase
         .from('personal_directorio')
         .select('*')
-        .ilike('nombre', `%${newLoan.prestatario_nombre}%`)
+        .ilike('nombre', `%${queryPattern}%`)
         .limit(10);
       
       if (data && data.length > 0) {
         setPersonSearchResults(data);
         setShowPersonDropdown(true);
       } else {
+        setPersonSearchResults([]);
         setShowPersonDropdown(false);
       }
     };
 
     const debounceId = setTimeout(searchPerson, 300);
     return () => clearTimeout(debounceId);
-  }, [newLoan.prestatario_nombre, selectedPersonFromDropdown]);
+  }, [newLoan.prestatario_nombre]);
+
+  const handleSelectPerson = (p: any) => {
+    lastSelectedPersonNameRef.current = p.nombre || '';
+    setNewLoan(prev => ({
+      ...prev,
+      prestatario_nombre: p.nombre || '',
+      prestatario_dni: p.dni || prev.prestatario_dni,
+      prestatario_correo: p.correo || prev.prestatario_correo,
+      prestatario_celular: p.telefono || prev.prestatario_celular
+    }));
+    setShowPersonDropdown(false);
+    setPersonSearchResults([]);
+  };
+
+  const handleDniChange = async (val: string) => {
+    const numericVal = val.replace(/\D/g, '').slice(0, 8);
+    setNewLoan(prev => ({ ...prev, prestatario_dni: numericVal }));
+
+    // Autocompletado si el usuario digita un DNI de 8 dígitos directamente en el campo DNI
+    if (numericVal.length === 8) {
+      try {
+        const { data } = await supabase
+          .from('personal_directorio')
+          .select('*')
+          .eq('dni', numericVal)
+          .maybeSingle();
+        if (data) {
+          lastSelectedPersonNameRef.current = data.nombre || '';
+          setNewLoan(prev => ({
+            ...prev,
+            prestatario_dni: numericVal,
+            prestatario_nombre: data.nombre || prev.prestatario_nombre,
+            prestatario_correo: data.correo || prev.prestatario_correo,
+            prestatario_celular: data.telefono || prev.prestatario_celular
+          }));
+          setShowPersonDropdown(false);
+          setPersonSearchResults([]);
+        }
+      } catch (err) {
+        console.error("Error buscando persona por DNI:", err);
+      }
+    }
+  };
+
+  const handleCelularChange = (val: string) => {
+    const numericVal = val.replace(/\D/g, '').slice(0, 9);
+    setNewLoan(prev => ({ ...prev, prestatario_celular: numericVal }));
+  };
+
+  const handleAddBienToLoan = (item: InventoryItem) => {
+    setNewLoan(prev => {
+      const alreadyExists = prev.bienes_seleccionados.some(
+        b => b.id === item.id || (b.codigo_barras && b.codigo_barras === item.codigo_barras)
+      );
+      if (alreadyExists) {
+        notify(`El bien "${item.nombre_bien}" ya está en la lista de este préstamo.`, 'warning');
+        return prev;
+      }
+      return { ...prev, bienes_seleccionados: [...prev.bienes_seleccionados, item] };
+    });
+    setSearchBienTerm('');
+    setShowBienDropdown(false);
+  };
+
+  const handleOpenNewLoanModal = () => {
+    lastSelectedPersonNameRef.current = '';
+    setNewLoan({
+      bienes_seleccionados: [],
+      prestatario_dni: '',
+      prestatario_nombre: '',
+      prestatario_correo: '',
+      prestatario_celular: '',
+      fecha_limite: ''
+    });
+    setPersonSearchResults([]);
+    setShowPersonDropdown(false);
+    setSearchBienTerm('');
+    setShowBienDropdown(false);
+    clearSignature();
+    setIsLoanModalOpen(true);
+  };
   
   // Custom dropdown state for inventory search
   const [searchBienTerm, setSearchBienTerm] = useState('');
   const [showBienDropdown, setShowBienDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // States for submission and receiving locks
+  const [isSubmittingLoan, setIsSubmittingLoan] = useState(false);
+  const [receivingLoanId, setReceivingLoanId] = useState<string | null>(null);
   
   // Signature State (Basic Canvas)
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -199,11 +285,14 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
     else fetchLoans();
   }, [activeTab]);
 
-  // Handle clicking outside the dropdown to close it
+  // Handle clicking outside the dropdowns to close them
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowBienDropdown(false);
+      }
+      if (personDropdownRef.current && !personDropdownRef.current.contains(event.target as Node)) {
+        setShowPersonDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -232,15 +321,15 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
         .order('created_at', { ascending: false });
       if (error) throw error;
       
-      // Auto-update status to Vencido if past due date and still Activo
+      // Auto-update status to Vencido if past due date (evaluated at 23:59:59 local end of day) and still Activo
       const now = new Date();
       let updatedData = data || [];
-      let needsUpdate = false;
       
       updatedData = updatedData.map(loan => {
-        if (loan.estado_prestamo === 'Activo' && new Date(loan.fecha_limite) < now) {
-          needsUpdate = true;
-          // We don't await here to not block UI, we'll do a background update
+        const dateStr = loan.fecha_limite.includes('T') ? loan.fecha_limite.split('T')[0] : loan.fecha_limite;
+        const dueEndOfDay = new Date(`${dateStr}T23:59:59`);
+        if (loan.estado_prestamo === 'Activo' && dueEndOfDay < now) {
+          // Background update in Supabase
           supabase.from('prestamos').update({ estado_prestamo: 'Vencido' }).eq('id', loan.id).then();
           return { ...loan, estado_prestamo: 'Vencido' };
         }
@@ -256,10 +345,17 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
   };
 
   const handleCreateInventoryItem = async () => {
-    if (!newItem.codigo_barras || !newItem.nombre_bien) return;
+    const cleanCodigo = newItem.codigo_barras.trim().toUpperCase();
+    const cleanNombre = newItem.nombre_bien.trim();
+    if (!cleanCodigo || !cleanNombre) {
+      notify('Por favor ingrese el código de barras y nombre del bien', 'warning');
+      return;
+    }
     try {
       const { error } = await supabase.from('inventario_bienes').insert([{
-        ...newItem,
+        codigo_barras: cleanCodigo,
+        nombre_bien: cleanNombre,
+        descripcion_estado: newItem.descripcion_estado.trim(),
         estado_actual: 'Disponible'
       }]);
       if (error) throw error;
@@ -349,12 +445,48 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
   };
 
   const handleCreateLoan = async () => {
+    if (isSubmittingLoan) return;
+
     if (newLoan.bienes_seleccionados.length === 0 || !newLoan.prestatario_dni || !newLoan.prestatario_nombre || !newLoan.fecha_limite) {
       notify('Por favor complete los campos obligatorios y seleccione al menos un bien', 'warning');
       return;
     }
 
+    setIsSubmittingLoan(true);
+
     try {
+      // Deduplicar defensivamente newLoan.bienes_seleccionados mediante un Map
+      const uniqueBienesMap = new Map<string, InventoryItem>();
+      newLoan.bienes_seleccionados.forEach(b => {
+        if (!uniqueBienesMap.has(b.id)) {
+          uniqueBienesMap.set(b.id, b);
+        }
+      });
+      const deduplicatedBienes = Array.from(uniqueBienesMap.values());
+
+      if (deduplicatedBienes.length === 0) {
+        notify('Por favor seleccione al menos un bien', 'warning');
+        return;
+      }
+
+      // Validar con Supabase que ninguno de los bienes seleccionados tenga ya un préstamo con estado_prestamo = 'Activo'
+      const bienIds = deduplicatedBienes.map(b => b.id);
+      const { data: activeLoans, error: activeCheckErr } = await supabase
+        .from('prestamos')
+        .select('bien_id, inventario_bienes(nombre_bien)')
+        .in('bien_id', bienIds)
+        .eq('estado_prestamo', 'Activo');
+
+      if (activeCheckErr) throw activeCheckErr;
+
+      if (activeLoans && activeLoans.length > 0) {
+        const busyNames = activeLoans
+          .map((al: any) => al.inventario_bienes?.nombre_bien || `ID: ${al.bien_id}`)
+          .join(', ');
+        notify(`Uno o más bienes ya cuentan con un préstamo Activo: ${busyNames}`, 'warning');
+        return;
+      }
+
       let firmaUrl = null;
       
       // Upload signature if exists
@@ -428,13 +560,15 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
         }
       }
 
-      // Create Loans
-      const loansToInsert = newLoan.bienes_seleccionados.map(bien => ({
+      // Create Loans (No modifying table structure, field names or triggers)
+      const cleanDni = newLoan.prestatario_dni.trim();
+      const cleanNombre = newLoan.prestatario_nombre.trim();
+      const loansToInsert = deduplicatedBienes.map(bien => ({
         bien_id: bien.id,
-        prestatario_dni: newLoan.prestatario_dni,
-        prestatario_nombre: newLoan.prestatario_nombre,
-        prestatario_correo: newLoan.prestatario_correo || null,
-        prestatario_celular: newLoan.prestatario_celular || null,
+        prestatario_dni: cleanDni,
+        prestatario_nombre: cleanNombre,
+        prestatario_correo: newLoan.prestatario_correo?.trim() || null,
+        prestatario_celular: newLoan.prestatario_celular?.trim() || null,
         fecha_limite: newLoan.fecha_limite,
         estado_prestamo: 'Activo',
         firma_url: firmaUrl,
@@ -445,27 +579,27 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
       if (loanError) throw loanError;
 
       // Actualizar o insertar en el directorio
-      const { data: existingPerson } = await supabase.from('personal_directorio').select('*').eq('dni', newLoan.prestatario_dni).maybeSingle();
+      const { data: existingPerson } = await supabase.from('personal_directorio').select('*').eq('dni', cleanDni).maybeSingle();
       if (existingPerson) {
          if ((newLoan.prestatario_correo && !existingPerson.correo) || (newLoan.prestatario_celular && !existingPerson.telefono)) {
              await supabase.from('personal_directorio').update({
-                 correo: newLoan.prestatario_correo || existingPerson.correo,
-                 telefono: newLoan.prestatario_celular || existingPerson.telefono
-             }).eq('dni', newLoan.prestatario_dni);
+                 correo: newLoan.prestatario_correo?.trim() || existingPerson.correo,
+                 telefono: newLoan.prestatario_celular?.trim() || existingPerson.telefono
+             }).eq('dni', cleanDni);
          }
       } else {
          await supabase.from('personal_directorio').insert([{
-             dni: newLoan.prestatario_dni,
-             nombre: newLoan.prestatario_nombre,
-             correo: newLoan.prestatario_correo || null,
-             telefono: newLoan.prestatario_celular || null
+             dni: cleanDni,
+             nombre: cleanNombre,
+             correo: newLoan.prestatario_correo?.trim() || null,
+             telefono: newLoan.prestatario_celular?.trim() || null
          }]);
       }
 
       // Update Inventory Status
       const { error: invError } = await supabase.from('inventario_bienes')
           .update({ estado_actual: 'Prestado' })
-          .in('id', newLoan.bienes_seleccionados.map(b => b.id));
+          .in('id', deduplicatedBienes.map(b => b.id));
       if (invError) throw invError;
 
       if (newLoan.prestatario_correo) {
@@ -474,19 +608,22 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
           notify('Préstamos registrados correctamente');
       }
       setIsLoanModalOpen(false);
+      lastSelectedPersonNameRef.current = '';
       setNewLoan({ bienes_seleccionados: [], prestatario_dni: '', prestatario_nombre: '', prestatario_correo: '', prestatario_celular: '', fecha_limite: '' });
       setSearchBienTerm('');
       clearSignature();
-      fetchLoans();
+      await Promise.all([fetchLoans(), fetchInventory()]);
     } catch (error: any) {
       notify(`Error: ${error.message}`, 'error');
+    } finally {
+      setIsSubmittingLoan(false);
     }
   };
 
   const handleReceive = async (loan: LoanRecord) => {
-    // Confirmación nativa sin window.confirm para entornos iframe
-    // Aquí podemos omitir el window.confirm y hacer la acción directa
-    // ya que en iframes puede bloquearse
+    if (receivingLoanId === loan.id) return;
+    setReceivingLoanId(loan.id);
+
     try {
       const { error: err1 } = await supabase.from('prestamos').update({
         estado_prestamo: 'Devuelto',
@@ -503,9 +640,11 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
       } else {
           notify('Bien recepcionado correctamente', 'success');
       }
-      fetchLoans();
+      await Promise.all([fetchLoans(), fetchInventory()]);
     } catch (error: any) {
       notify(`Error: ${error.message}`, 'error');
+    } finally {
+      setReceivingLoanId(null);
     }
   };
 
@@ -638,7 +777,7 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                 />
               </div>
               <button 
-                onClick={() => setIsLoanModalOpen(true)}
+                onClick={handleOpenNewLoanModal}
                 className="h-10 px-6 bg-primary text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-primary/20 hover:scale-105 transition-all flex items-center gap-2 whitespace-nowrap"
               >
                 <span className="material-symbols-outlined text-sm">add</span>
@@ -764,11 +903,21 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                               ) : (
                                 <button 
                                   onClick={() => handleReceive(loan)}
-                                  className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-black uppercase tracking-widest transition-colors flex items-center gap-2"
+                                  disabled={receivingLoanId === loan.id}
+                                  className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 rounded-lg text-xs font-black uppercase tracking-widest transition-colors flex items-center gap-2"
                                   title="Registrar Recepción de este Bien"
                                 >
-                                  <span className="material-symbols-outlined text-[16px]">inventory_2</span>
-                                  Recepcionar
+                                  {receivingLoanId === loan.id ? (
+                                    <>
+                                      <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+                                      Recepcionando...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="material-symbols-outlined text-[16px]">inventory_2</span>
+                                      Recepcionar
+                                    </>
+                                  )}
                                 </button>
                               )}
                             </div>
@@ -884,7 +1033,12 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
             <div className="flex flex-col gap-4">
               <label className="flex flex-col gap-1">
                 <span className="text-[10px] font-black text-slate-500 uppercase">Código de Barras *</span>
-                <input value={newItem.codigo_barras} onChange={e => setNewItem({...newItem, codigo_barras: e.target.value})} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" />
+                <input 
+                  value={newItem.codigo_barras} 
+                  onChange={e => setNewItem({...newItem, codigo_barras: e.target.value.toUpperCase()})} 
+                  placeholder="Ej: BIEN-001"
+                  className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary uppercase" 
+                />
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[10px] font-black text-slate-500 uppercase">Nombre del Bien *</span>
@@ -929,12 +1083,10 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                           i.estado_actual === 'Disponible' && 
                           !loans.some(l => l.bien_id === i.id && l.estado_prestamo !== 'Devuelto') &&
                           !newLoan.bienes_seleccionados.find(b => b.id === i.id) &&
-                          (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.includes(searchBienTerm))
+                          (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.toLowerCase().includes(searchBienTerm.toLowerCase()))
                         );
                         if (matches.length === 1) {
-                          setNewLoan({...newLoan, bienes_seleccionados: [...newLoan.bienes_seleccionados, matches[0]]});
-                          setSearchBienTerm('');
-                          setShowBienDropdown(false);
+                          handleAddBienToLoan(matches[0]);
                         }
                       }
                     }}
@@ -947,7 +1099,7 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                         i.estado_actual === 'Disponible' && 
                         !loans.some(l => l.bien_id === i.id && l.estado_prestamo !== 'Devuelto') &&
                         !newLoan.bienes_seleccionados.find(b => b.id === i.id) &&
-                        (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.includes(searchBienTerm))
+                        (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.toLowerCase().includes(searchBienTerm.toLowerCase()))
                       ).length === 0 ? (
                          <div className="p-4 text-xs text-slate-500 text-center font-bold">No hay bienes listos con ese código o nombre.</div>
                       ) : (
@@ -956,16 +1108,12 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                             i.estado_actual === 'Disponible' && 
                             !loans.some(l => l.bien_id === i.id && l.estado_prestamo !== 'Devuelto') &&
                             !newLoan.bienes_seleccionados.find(b => b.id === i.id) &&
-                            (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.includes(searchBienTerm))
+                            (i.nombre_bien.toLowerCase().includes(searchBienTerm.toLowerCase()) || i.codigo_barras.toLowerCase().includes(searchBienTerm.toLowerCase()))
                           )
                           .map(item => (
                           <div 
                             key={item.id}
-                            onClick={() => {
-                              setNewLoan({...newLoan, bienes_seleccionados: [...newLoan.bienes_seleccionados, item]});
-                              setSearchBienTerm('');
-                              setShowBienDropdown(false);
-                            }}
+                            onClick={() => handleAddBienToLoan(item)}
                             className="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
                           >
                             <p className="text-sm font-bold text-slate-900">{item.nombre_bien}</p>
@@ -1004,7 +1152,13 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
 
                 <label className="flex flex-col gap-1 mt-auto pt-2">
                   <span className="text-[10px] font-black text-slate-500 uppercase">Fecha Límite de Devolución *</span>
-                  <input type="date" value={newLoan.fecha_limite} onChange={e => setNewLoan({...newLoan, fecha_limite: e.target.value})} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" />
+                  <input 
+                    type="date" 
+                    value={newLoan.fecha_limite} 
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={e => setNewLoan({...newLoan, fecha_limite: e.target.value})} 
+                    className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" 
+                  />
                 </label>
               </div>
 
@@ -1013,36 +1167,45 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                 <div className="grid grid-cols-2 gap-4">
                   <label className="flex flex-col gap-1">
                     <span className="text-[10px] font-black text-slate-500 uppercase">DNI *</span>
-                    <input value={newLoan.prestatario_dni} onChange={e => setNewLoan({...newLoan, prestatario_dni: e.target.value})} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" />
+                    <input 
+                      value={newLoan.prestatario_dni} 
+                      onChange={e => handleDniChange(e.target.value)} 
+                      placeholder="8 dígitos"
+                      maxLength={8}
+                      className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" 
+                    />
                   </label>
                   <label className="flex flex-col gap-1">
                     <span className="text-[10px] font-black text-slate-500 uppercase">Celular</span>
-                    <input value={newLoan.prestatario_celular} onChange={e => setNewLoan({...newLoan, prestatario_celular: e.target.value})} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" />
+                    <input 
+                      value={newLoan.prestatario_celular} 
+                      onChange={e => handleCelularChange(e.target.value)} 
+                      placeholder="9 dígitos"
+                      maxLength={9}
+                      className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" 
+                    />
                   </label>
                 </div>
-                <label className="flex flex-col gap-1 relative">
+                <div className="flex flex-col gap-1 relative" ref={personDropdownRef}>
                   <span className="text-[10px] font-black text-slate-500 uppercase">Nombre Completo *</span>
                   <input 
                     value={newLoan.prestatario_nombre} 
                     onChange={e => {
-                        setSelectedPersonFromDropdown(false);
-                        setNewLoan({...newLoan, prestatario_nombre: e.target.value});
+                        setNewLoan(prev => ({ ...prev, prestatario_nombre: e.target.value }));
                         setShowPersonDropdown(true);
                     }} 
-                    onFocus={() => setShowPersonDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowPersonDropdown(false), 200)}
+                    onFocus={() => {
+                      if (personSearchResults.length > 0) setShowPersonDropdown(true);
+                    }}
+                    placeholder="Escriba apellido o nombre..."
                     className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" 
                   />
                   {showPersonDropdown && personSearchResults.length > 0 && (
-                      <div className="absolute top-14 left-0 w-full z-[100] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                      <div className="absolute top-14 left-0 w-full z-[100] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-52 overflow-y-auto">
                           {personSearchResults.map(p => (
                               <div key={p.id} 
                                    className="px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0"
-                                   onMouseDown={() => {
-                                       setNewLoan({...newLoan, prestatario_nombre: p.nombre, prestatario_dni: p.dni, prestatario_correo: p.correo || '', prestatario_celular: p.telefono || ''});
-                                       setSelectedPersonFromDropdown(true);
-                                       setShowPersonDropdown(false);
-                                   }}
+                                   onClick={() => handleSelectPerson(p)}
                               >
                                   <div className="font-bold text-slate-900 text-sm">{p.nombre}</div>
                                   <div className="text-[10px] text-slate-500 font-bold">DNI: {p.dni}</div>
@@ -1050,7 +1213,7 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
                           ))}
                       </div>
                   )}
-                </label>
+                </div>
                 <label className="flex flex-col gap-1">
                   <span className="text-[10px] font-black text-slate-500 uppercase">Correo Electrónico</span>
                   <input type="email" value={newLoan.prestatario_correo} onChange={e => setNewLoan({...newLoan, prestatario_correo: e.target.value})} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold outline-none focus:border-primary" />
@@ -1082,8 +1245,27 @@ export const Loans: React.FC<LoansProps> = ({ user, notify }) => {
             </div>
 
             <div className="flex gap-4 mt-8">
-              <button onClick={() => { setIsLoanModalOpen(false); clearSignature(); setSearchBienTerm(''); }} className="flex-1 font-black text-slate-400 uppercase tracking-widest text-[10px] hover:text-slate-600">Cancelar</button>
-              <button onClick={handleCreateLoan} className="flex-[2] h-14 bg-primary text-white rounded-xl font-black uppercase tracking-widest text-xs shadow-xl shadow-primary/30 hover:scale-[1.02] transition-all">Registrar Préstamo</button>
+              <button 
+                onClick={() => { setIsLoanModalOpen(false); clearSignature(); setSearchBienTerm(''); }} 
+                disabled={isSubmittingLoan}
+                className="flex-1 font-black text-slate-400 uppercase tracking-widest text-[10px] hover:text-slate-600 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleCreateLoan} 
+                disabled={isSubmittingLoan}
+                className="flex-[2] h-14 bg-primary text-white rounded-xl font-black uppercase tracking-widest text-xs shadow-xl shadow-primary/30 hover:scale-[1.02] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isSubmittingLoan ? (
+                  <>
+                    <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                    Registrando Préstamo...
+                  </>
+                ) : (
+                  'Registrar Préstamo'
+                )}
+              </button>
             </div>
           </div>
         </div>

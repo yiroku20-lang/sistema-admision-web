@@ -387,7 +387,80 @@ ipcMain.handle("users-create", async (event, userData) => {
     const cleanPassword = String(userData.password || "").trim();
     const cleanRole = userData.role || "Operador";
     const cleanPermissions = cleanRole === "Operador" ? userData.permissions : null;
+    const email = `${cleanDni}@admin.unsaac.pe`;
 
+    if (!cleanDni || !cleanName || !cleanPassword) {
+      return { success: false, error: "DNI, nombre y contraseña son requeridos" };
+    }
+
+    // 1. Verificar si ya existe en public.usuarios
+    const checkRes = await fetch(`${SUPABASE_URL}/rest/v1/usuarios?dni=eq.${cleanDni}&select=id,dni,name`, {
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`
+      }
+    });
+    if (checkRes.ok) {
+      const existing = await checkRes.json();
+      if (existing && existing.length > 0) {
+        return { success: false, error: `El usuario con DNI ${cleanDni} ya está registrado (${existing[0].name}).` };
+      }
+    }
+
+    // 2. Crear usuario en Supabase Auth Admin API (o asociar existente)
+    let authUserId = null;
+    const authCreateRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        "apikey": SERVICE_KEY,
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email: email,
+        password: cleanPassword,
+        email_confirm: true
+      })
+    });
+
+    if (authCreateRes.ok) {
+      const authData = await authCreateRes.json();
+      authUserId = authData.id;
+    } else {
+      const authErr = await authCreateRes.json().catch(() => ({}));
+      // Si el correo ya existía en auth.users, buscar su ID
+      if (authErr?.msg?.includes("already been registered") || authErr?.message?.includes("already been registered")) {
+        const listRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?per_page=1000`, {
+          headers: {
+            "apikey": SERVICE_KEY,
+            "Authorization": `Bearer ${SERVICE_KEY}`
+          }
+        });
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          const found = listData.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+          if (found) {
+            authUserId = found.id;
+            // Actualizar la contraseña del usuario en auth
+            await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${authUserId}`, {
+              method: "PUT",
+              headers: {
+                "apikey": SERVICE_KEY,
+                "Authorization": `Bearer ${SERVICE_KEY}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({ password: cleanPassword })
+            });
+          }
+        }
+      }
+
+      if (!authUserId) {
+        return { success: false, error: authErr.message || authErr.msg || "Error al crear cuenta en Supabase Auth" };
+      }
+    }
+
+    // 3. Insertar en tabla public.usuarios con el ID de auth (cumpliendo la foreign key usuarios_auth_fk)
     const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios`, {
       method: "POST",
       headers: {
@@ -397,6 +470,7 @@ ipcMain.handle("users-create", async (event, userData) => {
         "Prefer": "return=representation"
       },
       body: JSON.stringify({
+        id: authUserId,
         dni: cleanDni,
         name: cleanName,
         password: cleanPassword,
@@ -407,7 +481,7 @@ ipcMain.handle("users-create", async (event, userData) => {
 
     if (res.ok) {
       const created = await res.json();
-      return { success: true, userId: created?.[0]?.id };
+      return { success: true, userId: created?.[0]?.id || authUserId };
     }
     const errBody = await res.json().catch(() => ({}));
     return { success: false, error: errBody.message || `Error (${res.status}) al crear usuario` };
@@ -419,7 +493,24 @@ ipcMain.handle("users-create", async (event, userData) => {
 ipcMain.handle("users-update", async (event, { id, dni, name, role, permissions }) => {
   try {
     const updatePayload = {};
-    if (dni) updatePayload.dni = String(dni).trim();
+    if (dni) {
+      const cleanDni = String(dni).trim();
+      updatePayload.dni = cleanDni;
+      // Actualizar también el email en Supabase Auth
+      try {
+        await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${id}`, {
+          method: "PUT",
+          headers: {
+            "apikey": SERVICE_KEY,
+            "Authorization": `Bearer ${SERVICE_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ email: `${cleanDni}@admin.unsaac.pe` })
+        });
+      } catch (authErr) {
+        console.warn("[Electron] Error actualizando email en auth:", authErr);
+      }
+    }
     if (name) updatePayload.name = String(name).trim();
     if (role) updatePayload.role = role;
     if (role === "Operador") {
@@ -449,6 +540,7 @@ ipcMain.handle("users-update", async (event, { id, dni, name, role, permissions 
 
 ipcMain.handle("users-delete", async (event, { id }) => {
   try {
+    // 1. Eliminar de public.usuarios
     const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios?id=eq.${id}`, {
       method: "DELETE",
       headers: {
@@ -456,6 +548,20 @@ ipcMain.handle("users-delete", async (event, { id }) => {
         "Authorization": `Bearer ${SERVICE_KEY}`
       }
     });
+
+    // 2. Eliminar también de Supabase Auth para no dejar usuarios huérfanos
+    try {
+      await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${id}`, {
+        method: "DELETE",
+        headers: {
+          "apikey": SERVICE_KEY,
+          "Authorization": `Bearer ${SERVICE_KEY}`
+        }
+      });
+    } catch (e) {
+      console.warn("[Electron] No se pudo eliminar usuario de auth:", e);
+    }
+
     if (res.ok) return { success: true };
     const errBody = await res.json().catch(() => ({}));
     return { success: false, error: errBody.message || `Error (${res.status}) al eliminar usuario` };
@@ -467,6 +573,23 @@ ipcMain.handle("users-delete", async (event, { id }) => {
 ipcMain.handle("users-update-password", async (event, { userId, password }) => {
   try {
     const cleanPassword = String(password || "").trim();
+
+    // 1. Actualizar en Supabase Auth
+    try {
+      await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+        method: "PUT",
+        headers: {
+          "apikey": SERVICE_KEY,
+          "Authorization": `Bearer ${SERVICE_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ password: cleanPassword })
+      });
+    } catch (authErr) {
+      console.warn("[Electron] No se pudo actualizar contraseña en auth:", authErr);
+    }
+
+    // 2. Actualizar en public.usuarios
     const res = await fetch(`${SUPABASE_URL}/rest/v1/usuarios?id=eq.${userId}`, {
       method: "PATCH",
       headers: {

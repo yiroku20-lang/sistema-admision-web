@@ -244,9 +244,6 @@ export interface TimelineItem {
     rawApp?: ApplicantApplicationRecord;
 }
 
-// Global cache for pre-revision files to avoid re-downloading on every keystroke
-let preRevisionCache: { data: any[]; timestamp: number } | null = null;
-
 export function getModalityAndSemesterFromPath(docPath: string): { label: string; year?: string; semester?: string; modality?: string } {
     if (!docPath) return { label: 'PROCESO DE ADMISIÓN' };
     
@@ -299,24 +296,6 @@ export function getGroupedDocuments(documents: StudentDocument[] = []): Record<s
     });
     return groups;
 }
-
-const fetchRpcSafe = async (term: string): Promise<any[]> => {
-    if (!term || !term.trim()) return [];
-    try {
-        const timeoutPromise = new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 3500));
-        const rpcPromise = supabase.rpc('buscar_postulante_pre_revision', { p_termino: term.trim() }).then(res => {
-            if (res.error) {
-                console.warn('RPC buscar_postulante_pre_revision error:', res.error.message);
-                return [];
-            }
-            return Array.isArray(res.data) ? res.data : [];
-        });
-        return await Promise.race([rpcPromise, timeoutPromise]);
-    } catch (e) {
-        console.warn('RPC exception:', e);
-        return [];
-    }
-};
 
 export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
   const navigate = useNavigate();
@@ -484,6 +463,49 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           console.error("Error fetching renuncias/reservas:", err);
       }
 
+      // 4. Si el postulante no tiene applications cargadas, consultar sus aplicaciones por DNI de forma segura
+      let updatedApplications = [...profile.applications];
+      if (updatedApplications.length === 0 && dni) {
+          try {
+              const { data: rpcApps } = await supabase.rpc('buscar_postulante_pre_revision', { p_termino: dni });
+              let appList: any[] = [];
+              if (Array.isArray(rpcApps)) {
+                  appList = rpcApps;
+              } else if (typeof rpcApps === 'string') {
+                  try { appList = JSON.parse(rpcApps); } catch (_) {}
+              }
+              if (Array.isArray(appList) && appList.length > 0) {
+                  appList.forEach(r => {
+                      const rawCarrera1 = r.carrera_nombre || r['Carrera 1'] || r.Carrera1 || r.carrera1 || r.Escuela1 || r.escuela1 || r.Carrera || r.carrera || r.COD_CARRERA || r.codigo_carrera || r.CARRERA || r.ESCUELA || r.escuela;
+                      const rawCarrera2 = r['Carrera 2'] || r.Carrera2 || r.carrera2 || r.Escuela2 || r.escuela2;
+                      const rawCarreraIngreso = r.carrera_ingreso_nombre || r.CarreraIngreso || r.carreraIngreso || r.carrera_ingreso || r.CARRERA_INGRESO || r.ESCUELA_INGRESO || r.escuelaIngreso || r.escuela_ingreso || r.carrera_admitida || r.CarreraAdmitida;
+                      const modName = r._modalidadNombre || r.nombremodalidad || r.Modalidad || r.modalidad || r.proceso || 'PROCESO DE ADMISIÓN';
+                      const rawNota = r.notavigesimal || r.Nota || r.nota || r.PUNTAJE || r.puntaje || r.NOTA || '';
+                      const rawPuesto = r.POS || r.pos || r.PUESTO || r.puesto || r.OMERITO || r.omerito || '';
+                      const obs = String(r.OBSERVACION || r.observacion || r.Condicion || r.condicion || r.ESTADO || '').toUpperCase();
+                      const isAdmittedInProcess = obs.includes('INGRESA') || obs.includes('INGRESO') || obs.includes('ADMITIDO') || obs === 'SI';
+
+                      const appRec: ApplicantApplicationRecord = {
+                          id: `${dni}-${updatedApplications.length}`,
+                          modalidad: String(modName).toUpperCase(),
+                          carrera1: fixCareerName(rawCarrera1),
+                          carrera2: fixCareerName(rawCarrera2),
+                          carreraIngreso: fixCareerName(rawCarreraIngreso),
+                          nota: String(rawNota).trim(),
+                          puesto: String(rawPuesto).trim(),
+                          condicion: obs || (isAdmittedInProcess ? 'INGRESANTE' : 'PARTICIPANTE'),
+                          grupo: String(r.grupo || r.Grupo || '').trim(),
+                          aula: String(r.aula || r.Aula || '').trim(),
+                          rawRow: r
+                      };
+                      updatedApplications.push(appRec);
+                  });
+              }
+          } catch (e) {
+              console.debug('Detalle de pre-revisión no disponible por DNI:', e);
+          }
+      }
+
       // Set complete profile
       const hasRen = updatedRenuncias.length > 0;
       const hasRes = updatedReservas.length > 0;
@@ -500,7 +522,8 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
               reservas: updatedReservas,
               hasRenuncia: hasRen,
               hasReserva: hasRes,
-              hasRetiroReserva: hasRet
+              hasRetiroReserva: hasRet,
+              applications: updatedApplications
           };
       });
   };
@@ -598,7 +621,7 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
       const term = searchQuery.trim();
       const isNumeric = /^\d+$/.test(term);
       
-      // 1. Layer 1: Query 'participantes' (Ingresantes oficiales) con límites seguros
+      // 1. Layer 1: Query 'participantes' (Ingresantes oficiales)
       let partQuery = supabase.from('participantes').select('*');
       if (isNumeric) {
           partQuery = partQuery.eq('CODPOSTULANTE', term).limit(50);
@@ -611,15 +634,58 @@ export const StudentLookup: React.FC<{ user: User }> = ({ user }) => {
           partQuery = partQuery.limit(60);
       }
       
-      // 2. Layer 2: Consulta paralela ultrarrápida (Participantes + RPC Server-Side de Postulantes)
-      const [partRes, rpcMatches] = await Promise.all([
+      // Función para invocar el RPC de pre-revisión de forma segura y con timeout de 2.5s
+      const fetchRpcSafe = async (): Promise<any[]> => {
+          // Solo ejecutar RPC si es numérico (DNI) o si el término de búsqueda tiene al menos 3 caracteres
+          if (!isNumeric && term.length < 3) return [];
+          try {
+              const timeoutPromise = new Promise<any[]>(resolve => 
+                  setTimeout(() => resolve([]), 2500)
+              );
+              const rpcCall = (async () => {
+                  try {
+                      const res = await supabase.rpc('buscar_postulante_pre_revision', { p_termino: term });
+                      if (res.error) {
+                          console.debug('Aviso RPC buscar_postulante_pre_revision:', res.error.message || res.error);
+                          return [];
+                      }
+                      return res.data || [];
+                  } catch (err) {
+                      console.debug('Excepción RPC buscar_postulante_pre_revision:', err);
+                      return [];
+                  }
+              })();
+
+              const result = await Promise.race([rpcCall, timeoutPromise]);
+              return result;
+          } catch (_) {
+              return [];
+          }
+      };
+
+      // 1. Layer 1 & 2: Ejecutar en paralelo Ingresantes oficiales y Búsqueda server-side en Supabase RPC
+      const [partRes, rpcData] = await Promise.all([
           partQuery.order('ANIO', { ascending: false }).order('SEMESTRE', { ascending: false }),
-          fetchRpcSafe(term)
+          fetchRpcSafe()
       ]);
 
-      if (partRes.error) throw partRes.error;
+      if (partRes.error) {
+          console.warn('Advertencia en consulta participantes:', partRes.error);
+      }
       const partData = partRes.data || [];
-      const preMatches: any[] = rpcMatches || [];
+
+      // 2. Layer 2: Extraer resultados filtrados server-side de pre_revision_archivos
+      let preMatches: any[] = [];
+      if (Array.isArray(rpcData)) {
+          preMatches = rpcData;
+      } else if (typeof rpcData === 'string') {
+          try {
+              const parsed = JSON.parse(rpcData);
+              if (Array.isArray(parsed)) preMatches = parsed;
+          } catch (e) {
+              console.error('Error parseando JSON de RPC buscar_postulante_pre_revision:', e);
+          }
+      }
 
       // 3. Assemble Unified Person Map
       const personMap = new Map<string, IntegratedStudentData>();

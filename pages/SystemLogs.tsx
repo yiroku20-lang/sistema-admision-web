@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { getAllUsers } from '../lib/usersApi';
 
 export interface LogEntry {
   id: string;
@@ -27,7 +28,7 @@ export const SystemLogs: React.FC = () => {
       const allLogs: LogEntry[] = [];
 
       // Fetch users to map created_by to username
-      const { data: usersData } = await supabase.from('usuarios').select('id, name');
+      const usersData = await getAllUsers();
       const userMap = new Map(usersData?.map(u => [u.id, u.name]) || []);
 
       // 1. Tramite Seguimiento (Has exact user)
