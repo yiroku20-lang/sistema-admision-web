@@ -1,7 +1,7 @@
 {
   "name": "sistema-admision-desktop",
-  "version": "1.0.30",
-  "description": "Sistema de Admision UNSAAC - Version Oficial con Optimizacion de Busqueda y Control de Asistencia",
+  "version": "1.0.31",
+  "description": "Sistema de Admision UNSAAC - Modulo de Charlas y Visitas de Colegios, Verificacion QR y Optimizacion",
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
