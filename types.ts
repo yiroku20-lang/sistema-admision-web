@@ -529,3 +529,60 @@ export interface RoleSchedule {
   events: ScheduleEvent[];
   instructiveText?: string;
 }
+
+export interface CharlaDisponibilidad {
+  id: string;
+  fecha: string;
+  turno: 'Mañana' | 'Tarde' | 'Manana';
+  hora_inicio: string;
+  hora_fin: string;
+  modalidad_permitida: 'Presencial' | 'Virtual' | 'Ambas';
+  cupo_maximo: number;
+  cupo_reservado: number;
+  activo: boolean;
+  notas?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CharlaSolicitud {
+  id: string;
+  codigo_seguimiento: string;
+  token_acceso: string;
+  colegio_id?: number | null;
+  codigo_modular: string;
+  nombre_ie: string;
+  departamento: string;
+  provincia: string;
+  distrito: string;
+  tipo_gestion: string;
+  direccion_ie?: string;
+  director_nombre: string;
+  director_dni: string;
+  director_telefono: string;
+  director_email?: string;
+  coordinador_nombre?: string;
+  coordinador_telefono?: string;
+  alumnos_4to: number;
+  alumnos_5to: number;
+  modalidad: 'Presencial' | 'Virtual';
+  disponibilidad_id?: string | null;
+  fecha_charla?: string | null;
+  hora_charla?: string | null;
+  oficio_pdf_url?: string;
+  estado: 'Pendiente' | 'Aprobada para Reserva' | 'Cita Confirmada' | 'Observada' | 'Rechazada' | 'Completada';
+  motivo_observacion?: string;
+  ponente_id?: string | null;
+  link_reunion?: string;
+  notas_internas?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  created_at: string;
+  updated_at?: string;
+  personal_directorio?: {
+    id: string;
+    nombre: string;
+    cargo_actual?: string;
+    telefono?: string;
+  };
+}

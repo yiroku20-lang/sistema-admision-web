@@ -196,9 +196,17 @@ export const DEFAULT_OFFICIAL_TEMPLATES: OfficialTemplateDefinition[] = [
                 Se expide la presente a petición virtual de la parte interesada y para los fines que viere conveniente.
              </p>
 
-             <p style="text-align: right; margin-top: 25px; font-size: 13px; font-weight: 700; color: #7b1523;">
-                Cusco, {{fecha_actual}}
-             </p>
+             <!-- Fila Institucional: Código QR a la Izquierda (donde hay más espacio) y Fecha a la Derecha -->
+             <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 5px;">
+                 <div class="qr-block-wrapper" style="text-align: left;">
+                     {{codigo_qr}}
+                 </div>
+                 <div style="text-align: right;">
+                     <p style="margin: 0; font-size: 13px; font-weight: 700; color: #7b1523;">
+                        Cusco, {{fecha_actual}}
+                     </p>
+                 </div>
+             </div>
              <div style="flex: 1;"></div>
         </div>
 
@@ -231,7 +239,7 @@ export const DEFAULT_OFFICIAL_TEMPLATES: OfficialTemplateDefinition[] = [
              <div style="display: flex; justify-content: space-between; font-size: 8px; font-weight: 700; border-top: 2px solid #7b1523; padding-top: 6px; color: #555;">
                  <span>Recibo de Pago N°. {{BOUCHER}}</span>
                  <span>Expediente N° {{EXP}}</span>
-                 <span>Usuario: JCH / SISTEMA</span>
+                 <span>Usuario: {{usuario_iniciales}}</span>
              </div>
         </div>
     </div>

@@ -824,6 +824,269 @@ async function startServer() {
     }
   });
 
+  // --- CHARLAS Y CITAS DE COLEGIOS (SERVICE_ROLE BACKEND API) ---
+  app.post("/api/charlas/disponibilidad/generate", async (req, res) => {
+    try {
+      const { slots } = req.body;
+      if (!slots || !Array.isArray(slots) || slots.length === 0) {
+        return res.status(400).json({ error: "Arreglo de slots requerido" });
+      }
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase.from('charlas_disponibilidad').insert(slots).select();
+      if (error) throw error;
+      res.json({ success: true, count: data?.length || 0, data });
+    } catch (err: any) {
+      console.error("Error generating charlas slots:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/charlas/disponibilidad", async (req, res) => {
+    try {
+      const slot = req.body;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase.from('charlas_disponibilidad').insert([slot]).select().single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (err: any) {
+      console.error("Error creating charla slot:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/charlas/disponibilidad/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { data, error } = await supabase.from('charlas_disponibilidad').update(updates).eq('id', id).select().single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (err: any) {
+      console.error("Error updating charla slot:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/charlas/disponibilidad/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const { error } = await supabase.from('charlas_disponibilidad').delete().eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting charla slot:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/charlas/solicitudes/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      if (updates.reviewed_by && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updates.reviewed_by)) {
+        delete updates.reviewed_by;
+      }
+
+      const { data, error } = await supabase.from('charlas_solicitudes').update(updates).eq('id', id).select().single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (err: any) {
+      console.error("Error updating charla solicitud:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- VERIFICACIÓN OFICIAL DE CONSTANCIAS Y DOCUMENTOS ---
+  app.post("/api/verificacion/emitir", async (req, res) => {
+    try {
+      const payload = req.body;
+      const { verificationCode } = payload;
+      if (!verificationCode) {
+        return res.status(400).json({ error: "verificationCode es requerido" });
+      }
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const destinationMeta = {
+        tipo_documento: payload.documentType || 'CONSTANCIA DE INGRESO',
+        estudiante_nombre: payload.studentName || '',
+        estudiante_dni: payload.studentDni || '',
+        estudiante_codigo: payload.studentCode || '',
+        carrera: payload.career || '',
+        modalidad: payload.modality || '',
+        semestre: payload.semester || '',
+        puntaje: payload.score || '',
+        orden_merito: payload.meritOrder || '',
+        fecha_ingreso: payload.admissionDate || '',
+        expediente_numero: payload.expNumber || '',
+        recibo_pago: payload.receiptNumber || '',
+        usuario_nombre: payload.userName || '',
+        usuario_iniciales: (payload.userInitials === 'JAL' || (payload.userName && payload.userName.toUpperCase().includes('JHONATAN'))) ? 'JCH' : (payload.userInitials || 'DA'),
+        fecha_emision: payload.issuedAt || new Date().toISOString()
+      };
+
+      const docRecord = {
+        doc_type: payload.documentType || 'Constancia Oficial',
+        doc_number: verificationCode,
+        ref_number: payload.studentDni || payload.studentCode || payload.expNumber || 'OFICIAL',
+        subject: `${payload.documentType || 'CONSTANCIA DE INGRESO'} - ${payload.studentName || 'ESTUDIANTE'} - ${payload.career || 'UNSAAC'}`,
+        destination: JSON.stringify(destinationMeta),
+        status: 'Finalizado'
+      };
+
+      // 1. Guardar en Supabase
+      const { data: inserted, error: supaErr } = await supabase
+        .from('expedientes_salida')
+        .insert([docRecord])
+        .select()
+        .maybeSingle();
+
+      if (supaErr) {
+        console.warn("Supabase emission insert warning:", supaErr.message);
+      }
+
+      // 2. Persistir localmente en disco como respaldo de auditoría
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const dataDir = path.resolve('data');
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+        const filePath = path.join(dataDir, 'documentos_verificacion.json');
+        let records: Record<string, any> = {};
+        if (fs.existsSync(filePath)) {
+          try {
+            records = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          } catch(e) {}
+        }
+        records[verificationCode] = {
+          ...payload,
+          dbId: inserted?.id,
+          savedAt: new Date().toISOString()
+        };
+        fs.writeFileSync(filePath, JSON.stringify(records, null, 2), 'utf-8');
+      } catch (fsErr) {
+        console.warn("File storage emission warning:", fsErr);
+      }
+
+      res.json({ success: true, verificationCode, id: inserted?.id });
+    } catch (err: any) {
+      console.error("Error registrando emisión:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/verificacion/:code", async (req, res) => {
+    try {
+      const code = decodeURIComponent(req.params.code).trim();
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://cnqpzyanmmwspvemcfeb.supabase.co";
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNucXB6eWFubW13c3B2ZW1jZmViIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTgxNTc0MywiZXhwIjoyMDg1MzkxNzQzfQ.ME18iloL44XbOeLo_TbK0CL3n_3jg-uVrr0VaTKZQDI";
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // 1. Buscar en Supabase
+      const { data, error } = await supabase
+        .from('expedientes_salida')
+        .select('*')
+        .or(`doc_number.eq.${code},id.eq.${code}`)
+        .maybeSingle();
+
+      if (data) {
+        let meta: any = {};
+        try {
+          if (data.destination && data.destination.startsWith('{')) {
+            meta = JSON.parse(data.destination);
+          }
+        } catch(e) {}
+
+        return res.json({
+          valid: true,
+          verificationCode: data.doc_number || code,
+          documentType: meta.tipo_documento || data.doc_type || 'CONSTANCIA DE INGRESO',
+          student: {
+            name: meta.estudiante_nombre || (data.subject ? data.subject.split('-')[1]?.trim() : ''),
+            dni: meta.estudiante_dni || data.ref_number || '',
+            code: meta.estudiante_codigo || data.ref_number || '',
+            career: meta.carrera || (data.subject ? data.subject.split('-')[2]?.trim() : ''),
+            modality: meta.modalidad || '',
+            semester: meta.semestre || '',
+            score: meta.puntaje || '',
+            meritOrder: meta.orden_merito || '',
+            admissionDate: meta.fecha_ingreso || ''
+          },
+          issue: {
+            date: meta.fecha_emision || data.created_at,
+            expNumber: meta.expediente_numero || '',
+            receiptNumber: meta.recibo_pago || '',
+            userName: meta.usuario_nombre || '',
+            userInitials: meta.usuario_iniciales || 'DA'
+          }
+        });
+      }
+
+      // 2. Buscar en almacenamiento local como respaldo
+      try {
+        const fs = await import('fs');
+        const path = await import('path');
+        const filePath = path.resolve('data/documentos_verificacion.json');
+        if (fs.existsSync(filePath)) {
+          const records = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          if (records[code]) {
+            const item = records[code];
+            return res.json({
+              valid: true,
+              verificationCode: code,
+              documentType: item.documentType || 'CONSTANCIA DE INGRESO',
+              student: {
+                name: item.studentName || '',
+                dni: item.studentDni || '',
+                code: item.studentCode || '',
+                career: item.career || '',
+                modality: item.modality || '',
+                semester: item.semester || '',
+                score: item.score || '',
+                meritOrder: item.meritOrder || '',
+                admissionDate: item.admissionDate || ''
+              },
+              issue: {
+                date: item.issuedAt || new Date().toISOString(),
+                expNumber: item.expNumber || '',
+                receiptNumber: item.receiptNumber || '',
+                userName: item.userName || '',
+                userInitials: item.userInitials || 'DA'
+              }
+            });
+          }
+        }
+      } catch(e) {}
+
+      res.status(404).json({ valid: false, error: "Documento no encontrado o no registrado" });
+    } catch (err: any) {
+      console.error("Error verificando documento:", err);
+      res.status(500).json({ valid: false, error: err.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

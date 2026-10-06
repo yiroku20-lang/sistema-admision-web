@@ -6,6 +6,15 @@ import jsPDF from 'jspdf';
 import { supabase } from '../lib/supabaseClient';
 import { IncomingFile, Participant, Template, PaymentRegistry, User } from '../types';
 import { UnifiedTimelineModal } from '../components/UnifiedTimelineModal';
+import { 
+  getUserInitials, 
+  generateVerificationCode, 
+  generateQrDataUrl, 
+  registerDocumentEmission,
+  getFormattedCurrentDate,
+  CUSCO_DATE_REGEX
+} from '../lib/templateVerification';
+import { logAuditEvent } from '../lib/auditLogger';
 
 
 
@@ -69,6 +78,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [boucherNumber, setBoucherNumber] = useState('');
   const [signedPdf, setSignedPdf] = useState<File | null>(null);
   const [downloadLocal, setDownloadLocal] = useState(false);
+  const [qrInfo, setQrInfo] = useState<{ code: string; dataUrl: string } | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   // Payment Flow States
@@ -839,9 +849,15 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       const matches = selectedTemplate.content.match(regex);
       const uniqueVars = matches ? Array.from(new Set(matches.map(m => m.replace(/{{|}}/g, '').trim()))) : [];
       
-      // Filter out known system variables
-      const systemVars = ['nombres', 'apellidos', 'dni', 'codigo', 'escuela', 'modalidad', 'nota', 'omerito', 'fecha_ingreso', 'anio', 'semestre', 'fecha_actual', 'FECHA_ACTUAL', 'EXP', 'NOMBRE', 'CARRERA', 'MODALIDAD', 'CODIGO', 'fecha', 'FECHA'];
-      // codigo_estudi is NOT in systemVars, so it will automatically be included in manualVars
+      // Filter out known system variables (no deben pedirse en el formulario manual)
+      const systemVars = [
+          'nombres', 'apellidos', 'dni', 'codigo', 'escuela', 'modalidad', 'nota', 'omerito', 
+          'fecha_ingreso', 'anio', 'semestre', 'fecha_actual', 'FECHA_ACTUAL', 'EXP', 
+          'NOMBRE', 'CARRERA', 'MODALIDAD', 'CODIGO', 'fecha', 'FECHA',
+          'usuario_iniciales', 'USUARIO_INICIALES', 'usuario', 'USUARIO',
+          'codigo_qr', 'CODIGO_QR', 'qr', 'QR'
+      ];
+      // Las variables de usuario y QR nunca deben solicitarse al usuario como campos manuales
       const manualVars = uniqueVars.filter((v: string) => !systemVars.includes(v));
       
       setDetectedVariables(manualVars);
@@ -855,6 +871,15 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       
       if (manualVars.includes('NOMBRECORRE') && selectedStudent) {
           preFilledValues['NOMBRECORRE'] = selectedStudent.NOMBRE;
+      }
+
+      // Generar código y QR de verificación pública oficial si es necesario
+      try {
+        const vCode = generateVerificationCode('CONST');
+        const qrUrl = await generateQrDataUrl(vCode);
+        setQrInfo({ code: vCode, dataUrl: qrUrl });
+      } catch (err) {
+        console.warn('Error generando QR de constancia:', err);
       }
 
       setManualValues(prev => ({ ...prev, ...preFilledValues }));
@@ -871,7 +896,7 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           return `${date.getDate()} de ${months[date.getMonth()]} de ${date.getFullYear()}`;
       };
 
-      const dateStr = formatLongDate(new Date());
+      const dateStr = getFormattedCurrentDate(new Date());
 
       // Helper to format academic dates if they are in YYYY-MM-DD or similar
       const formatAcademicDate = (dateVal: string | null | undefined) => {
@@ -900,6 +925,9 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           return formatLongDate(d);
       };
 
+      // Extracción inteligente de iniciales del usuario emisor activo (ej: MAYTA-TTITO-WILL EDSON -> WMA)
+      const userInitials = getUserInitials(user);
+
       // 1. System Replacements
       const systemReplacements: Record<string, string> = {
           '{{nombres}}': selectedStudent.NOMBRE,
@@ -921,7 +949,11 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           '{{FECHA_ACTUAL}}': dateStr,
           '{{fecha}}': dateStr,
           '{{FECHA}}': dateStr,
-          '{{EXP}}': fileToAttend.number
+          '{{EXP}}': fileToAttend.number,
+          '{{usuario_iniciales}}': userInitials,
+          '{{USUARIO_INICIALES}}': userInitials,
+          '{{usuario}}': userInitials,
+          '{{USUARIO}}': userInitials
       };
 
       Object.entries(systemReplacements).forEach(([key, value]) => {
@@ -930,14 +962,37 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           content = content.replace(new RegExp(escapedKey, 'g'), value || '');
       });
 
+      // Normalizar texto legacy de usuario en plantillas antiguas
+      content = content.replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, `Usuario: ${userInitials}`);
+
+      // Garantizar que cualquier fecha estática antigua (con Cusco, o variaciones de 'del / de') se actualice dinámicamente a la fecha actual de emisión
+      content = content.replace(CUSCO_DATE_REGEX, `Cusco, ${dateStr}`);
+
+      // Reemplazo de código QR de verificación institucional
+      if (qrInfo?.dataUrl) {
+          const qrHtml = `<div class="unsaac-qr-container" style="display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; vertical-align: middle; margin: 4px 0;">
+            <img class="unsaac-qr-img" src="${qrInfo.dataUrl}" style="width: 96px; height: 96px; display: block; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px; background: white;" alt="QR Verificación" />
+            <span style="font-size: 8px; color: #7b1523; font-family: monospace; font-weight: bold; margin-top: 2px;">${qrInfo.code}</span>
+          </div>`;
+          content = content
+            .replace(/{{codigo_qr}}/gi, qrHtml)
+            .replace(/{{CODIGO_QR}}/gi, qrHtml)
+            .replace(/{{qr}}/gi, qrHtml);
+
+          // Si la plantilla contenía contenedores de QR anteriores preexistentes, reemplazarlos
+          if (!content.includes(qrInfo.code)) {
+            content = content.replace(/<div class="unsaac-qr-container"[\s\S]*?<\/div>(?:\s*<div class="unsaac-qr-container"[\s\S]*?<\/div>)?/i, qrHtml);
+          }
+      }
+
       // 2. Manual Replacements
       Object.entries(manualValues).forEach(([key, value]) => {
           const escapedKey = `{{${key}}}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           content = content.replace(new RegExp(escapedKey, 'g'), value || '');
       });
 
-      // 3. Clean justification styles that collapse spaces in HTML canvas rendering
-      content = content.replace(/text-align\s*:\s*justify/gi, 'text-align: left;');
+      // 3. Garantizar justificación profesional y elegante del cuerpo del documento
+      content = content.replace(/text-align\s*:\s*justify/gi, 'text-align: justify; text-justify: inter-word;');
 
       return content;
   };
@@ -1050,12 +1105,12 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       clone.style.height = '296.5mm';
       clone.style.boxSizing = 'border-box';
 
-      // 4. Sanitizar estilos en el clon para forzar alineación izquierda y evitar colapso de espacios por justificación o letter-spacing
+      // 4. Preservar y garantizar justificación profesional y elegante en el PDF
       const sanitizeNode = (node: HTMLElement) => {
           const style = node.getAttribute('style') || '';
           if (/text-align\s*:\s*justify/i.test(style) || node.style.textAlign === 'justify') {
-              node.setAttribute('style', style.replace(/text-align\s*:\s*justify/gi, 'text-align: left;'));
-              node.style.textAlign = 'left';
+              node.style.textAlign = 'justify';
+              (node.style as any).textJustify = 'inter-word';
           }
           node.style.letterSpacing = 'normal';
           node.style.wordSpacing = 'normal';
@@ -1173,9 +1228,13 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
 
           // 4. Register in Outgoing Files
           if (manualValues['INFORME'] || isConstancia) {
+              const issuedDocNumber = (isConstancia && qrInfo?.code)
+                ? qrInfo.code
+                : (manualValues['INFORME'] || manualValues['CONSTANCIA'] || `C-${fileToAttend.number}`);
+
               await supabase.from('expedientes_salida').insert([{
                   doc_type: isConstancia ? 'Constancia' : 'Informe',
-                  doc_number: manualValues['INFORME'] || manualValues['CONSTANCIA'] || `C-${fileToAttend.number}`,
+                  doc_number: issuedDocNumber,
                   ref_number: fileToAttend.number,
                   subject: fileToAttend.subject,
                   destination: isConstancia ? 'ESTUDIANTE' : 'COMPUTO',
@@ -1183,6 +1242,29 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                   pdf_url: urlData.publicUrl,
                   created_by: user.id
               }]);
+
+              // Registrar trazabilidad oficial con QR e iniciales para verificación pública
+              if (isConstancia && qrInfo?.code) {
+                  const initials = getUserInitials(user);
+                  await registerDocumentEmission({
+                      verificationCode: qrInfo.code,
+                      documentType: selectedTemplate.name || 'CONSTANCIA DE INGRESO',
+                      studentName: selectedStudent.NOMBRE,
+                      studentDni: selectedStudent.CODPOSTULANTE,
+                      studentCode: selectedStudent.CODPOSTULANTE,
+                      career: selectedStudent.CARRERA,
+                      modality: selectedStudent.MODALIDAD,
+                      semester: selectedStudent.SEMESTRE,
+                      score: selectedStudent.NOTA,
+                      meritOrder: selectedStudent.OMERITO,
+                      admissionDate: selectedStudent.FECHAINGRESO,
+                      expNumber: fileToAttend.number,
+                      receiptNumber: boucherNumber || manualValues['BOUCHER'] || '',
+                      userName: user?.name,
+                      userInitials: initials,
+                      userId: user?.id
+                  }).catch(e => console.warn('Error al registrar emisión oficial:', e));
+              }
 
               if (fileToAttend.subject.toUpperCase().includes('RENUNCIA')) {
                   await supabase.from('renuncias').insert([{

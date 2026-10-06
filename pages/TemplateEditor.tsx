@@ -3,6 +3,15 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { Participant } from '../types';
 import { DEFAULT_OFFICIAL_TEMPLATES } from '../lib/defaultTemplates';
+import { 
+  getUserInitials, 
+  generateVerificationCode, 
+  generateQrDataUrl, 
+  registerDocumentEmission,
+  getFormattedCurrentDate,
+  CUSCO_DATE_REGEX
+} from '../lib/templateVerification';
+import { logTemplateAction } from '../lib/auditLogger';
 
 // PLANTILLA HTML PREDEFINIDA (Optimizada para espacio)
 const DEFAULT_CONSTANCIA_HTML = `
@@ -71,9 +80,17 @@ const DEFAULT_CONSTANCIA_HTML = `
                 Se expide la presente a petición virtual de la parte interesada y para los fines que viere conveniente.
              </p>
 
-             <p style="text-align: right; margin-top: 25px; font-size: 13px; font-weight: 700; color: #7b1523;">
-                Cusco, {{fecha_actual}}
-             </p>
+             <!-- Fila Institucional: Código QR a la Izquierda (donde hay más espacio) y Fecha a la Derecha -->
+             <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 5px;">
+                 <div class="qr-block-wrapper" style="text-align: left;">
+                     {{codigo_qr}}
+                 </div>
+                 <div style="text-align: right;">
+                     <p style="margin: 0; font-size: 13px; font-weight: 700; color: #7b1523;">
+                        Cusco, {{fecha_actual}}
+                     </p>
+                 </div>
+             </div>
              <div style="flex: 1;"></div>
         </div>
 
@@ -106,7 +123,7 @@ const DEFAULT_CONSTANCIA_HTML = `
              <div style="display: flex; justify-content: space-between; font-size: 8px; font-weight: 700; border-top: 2px solid #7b1523; padding-top: 6px; color: #555;">
                  <span>Recibo de Pago N°. {{BOUCHER}}</span>
                  <span>Expediente N° {{EXP}}</span>
-                 <span>Usuario: JCH</span>
+                 <span>Usuario: {{usuario_iniciales}}</span>
              </div>
         </div>
     </div>
@@ -154,7 +171,24 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
   const dragTarget = useRef<HTMLElement | null>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
 
+  // Código de verificación institucional y URL del QR
+  const [verificationCode, setVerificationCode] = useState(() => generateVerificationCode());
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+
+  useEffect(() => {
+    let active = true;
+    generateQrDataUrl(verificationCode).then((url) => {
+      if (active) setQrDataUrl(url);
+    });
+    return () => { active = false; };
+  }, [verificationCode]);
+
+  const userInitials = getUserInitials(user?.name);
+  const todayDateStr = getFormattedCurrentDate();
+
   const variables = [
+    { code: '{{usuario_iniciales}}', desc: `Iniciales del usuario emisor (Activo: ${userInitials})` },
+    { code: '{{codigo_qr}}', desc: 'Código QR de Verificación Pública Oficial' },
     { code: '{{nombres}}', desc: 'Nombres del estudiante' },
     { code: '{{apellidos}}', desc: 'Apellidos del estudiante' },
     { code: '{{dni}}', desc: 'DNI' },
@@ -166,8 +200,8 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
     { code: '{{fecha_ingreso}}', desc: 'Fecha de Ingreso' },
     { code: '{{anio}}', desc: 'Año del Proceso' },
     { code: '{{semestre}}', desc: 'Semestre (Ej: 2024-I)' },
-    { code: '{{fecha_actual}}', desc: 'Fecha Actual (dd de mes de aaaa)' },
-    { code: '{{FECHA}}', desc: 'Alias de Fecha Actual' },
+    { code: '{{fecha_actual}}', desc: `Fecha actual dinámica (Hoy: ${todayDateStr})` },
+    { code: '{{FECHA}}', desc: `Alias de Fecha Actual (Hoy: ${todayDateStr})` },
     // Variables Específicas de Informes
     { code: '{{INFORME}}', desc: 'N° de Informe (Ej: 054-2024)' },
     { code: '{{EXP}}', desc: 'N° de Expediente' },
@@ -182,6 +216,25 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
 
   const handlePrint = () => {
     if (!editorRef.current) return;
+
+    // Registrar emisión oficial para trazabilidad y auditoría pública
+    registerDocumentEmission({
+      verificationCode,
+      documentType: documentTitle || 'CONSTANCIA DE INGRESO',
+      studentName: studentData?.NOMBRE,
+      studentDni: studentData?.CODPOSTULANTE,
+      studentCode: studentData?.CODPOSTULANTE,
+      career: studentData?.CARRERA,
+      modality: studentData?.MODALIDAD,
+      semester: studentData?.SEMESTRE,
+      score: studentData?.NOTA,
+      meritOrder: studentData?.OMERITO,
+      admissionDate: studentData?.FECHAINGRESO,
+      expNumber: fileNumber,
+      userName: user?.name,
+      userInitials,
+      userId: user?.id
+    }).catch(e => console.warn('Emission registration warning:', e));
     
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -189,7 +242,26 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
         return;
     }
 
-    const content = editorRef.current.innerHTML;
+    let content = editorRef.current.innerHTML;
+    const today = todayDateStr;
+    content = content
+      .replace(/{{\s*(?:fecha_actual|FECHA_ACTUAL|fecha|FECHA)\s*}}/gi, today)
+      .replace(CUSCO_DATE_REGEX, `Cusco, ${today}`)
+      .replace(/{{usuario_iniciales}}/gi, userInitials)
+      .replace(/{{usuario}}/gi, userInitials)
+      .replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, `Usuario: ${userInitials}`);
+
+    if (qrDataUrl) {
+      const qrSealHtml = `<div class="unsaac-qr-container" style="display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; vertical-align: middle; margin: 4px 0;">
+        <img class="unsaac-qr-img" src="${qrDataUrl}" style="width: 96px; height: 96px; display: block; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px; background: white;" alt="QR Verificación" />
+        <span style="font-size: 8px; color: #7b1523; font-family: monospace; font-weight: bold; margin-top: 2px;">${verificationCode}</span>
+      </div>`;
+      content = content
+        .replace(/{{codigo_qr}}/gi, qrSealHtml)
+        .replace(/{{CODIGO_QR}}/gi, qrSealHtml)
+        .replace(/{{qr}}/gi, qrSealHtml);
+    }
+
     const { width, height } = getPaperDimensions();
     // Replicate the editor padding to ensure WYSIWYG
     const padding = '25mm';
@@ -403,19 +475,39 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
                contentToSet = contentToSet.replace(/{{EXP}}/g, fileNumber);
           }
 
-          // Also handle {{fecha_actual}}, {{fecha}}, {{FECHA}}
-          const d = new Date();
-          const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-          const today = `${d.getDate()} de ${months[d.getMonth()]} de ${d.getFullYear()}`;
-          contentToSet = contentToSet.replace(/{{fecha_actual}}/g, today);
-          contentToSet = contentToSet.replace(/{{FECHA_ACTUAL}}/g, today);
-          contentToSet = contentToSet.replace(/{{fecha}}/g, today);
-          contentToSet = contentToSet.replace(/{{FECHA}}/g, today);
+          // Reemplazo dinámico de Iniciales y Fecha al emitir o atender expediente
+          if (studentData || fileNumber) {
+            const today = todayDateStr;
+            contentToSet = contentToSet
+              .replace(/{{\s*(?:fecha_actual|FECHA_ACTUAL|fecha|FECHA)\s*}}/gi, today)
+              .replace(CUSCO_DATE_REGEX, `Cusco, ${today}`)
+              .replace(/{{usuario_iniciales}}/gi, userInitials)
+              .replace(/{{usuario}}/gi, userInitials)
+              .replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, `Usuario: ${userInitials}`);
+          } else {
+            // En modo edición de plantilla: asegurar que las variables se mantengan dinámicas en la plantilla
+            contentToSet = contentToSet
+              .replace(CUSCO_DATE_REGEX, 'Cusco, {{fecha_actual}}')
+              .replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, 'Usuario: {{usuario_iniciales}}');
+          }
+
+          // Reemplazo de Código QR de Verificación Institucional
+          const qrSealHtml = qrDataUrl
+            ? `<div class="unsaac-qr-container" style="display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; vertical-align: middle; margin: 4px 0; cursor: pointer;" title="Código QR Oficial. Clic para seleccionar y alinear">
+                 <img class="unsaac-qr-img" src="${qrDataUrl}" style="width: 96px; height: 96px; display: block; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px; background: white;" alt="QR Verificación" />
+                 <span style="font-size: 8px; color: #7b1523; font-family: monospace; font-weight: bold; margin-top: 2px;">${verificationCode}</span>
+               </div>`
+            : `<div class="unsaac-qr-placeholder" style="display: inline-block; padding: 6px 12px; border: 1px dashed #7b1523; font-size: 9px; color: #7b1523; font-weight: bold; font-family: monospace;">[QR: ${verificationCode}]</div>`;
+
+          contentToSet = contentToSet
+            .replace(/{{codigo_qr}}/gi, qrSealHtml)
+            .replace(/{{CODIGO_QR}}/gi, qrSealHtml)
+            .replace(/{{qr}}/gi, qrSealHtml);
 
           editorRef.current.innerHTML = contentToSet;
           restoreEditorAttributes();
       }
-  }, [isLoading, fetchedContent, studentData, fileNumber]);
+  }, [isLoading, fetchedContent, studentData, fileNumber, userInitials, qrDataUrl, verificationCode]);
 
   // MANEJADORES DE ARRASTRE Y EVENTOS (GLOBALES)
   useEffect(() => {
@@ -455,8 +547,23 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
     };
 
     const handleWheel = (e: WheelEvent) => {
-        if (selectedImage && e.target === selectedImage && editorRef.current) {
+        if (selectedImage && editorRef.current && (selectedImage === e.target || selectedImage.contains(e.target as Node))) {
             e.preventDefault();
+
+            // Si es el contenedor del QR o imagen del QR
+            const qrImg = selectedImage.classList?.contains('unsaac-qr-container')
+                ? (selectedImage.querySelector('img') as HTMLElement | null)
+                : (selectedImage.tagName === 'IMG' ? selectedImage : null);
+
+            if (qrImg) {
+                const currentWidthPx = qrImg.offsetWidth || 96;
+                const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
+                const newWidth = Math.max(50, Math.min(220, Math.round(currentWidthPx * scaleFactor)));
+                qrImg.style.width = `${newWidth}px`;
+                qrImg.style.height = `${newWidth}px`;
+                return;
+            }
+
             const editorRect = editorRef.current.getBoundingClientRect();
             
             let currentWidthPercent;
@@ -488,6 +595,25 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
 
   const handleContainerMouseDown = (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
+
+      // Selección del Código QR para alineación y cambio de tamaño
+      const qrTarget = (target.classList?.contains('unsaac-qr-container') 
+        ? target 
+        : (target.closest('.unsaac-qr-container') as HTMLElement)) 
+        || (target.classList?.contains('unsaac-qr-img') ? (target.closest('.unsaac-qr-container') as HTMLElement) || target : null);
+
+      if (qrTarget) {
+          e.stopPropagation();
+          if (selectedImage && selectedImage !== qrTarget) {
+              selectedImage.style.outline = 'none';
+          }
+          qrTarget.style.outline = '2px dashed #7b1523';
+          qrTarget.style.outlineOffset = '3px';
+          setSelectedImage(qrTarget);
+          showToast('QR seleccionado. Usa las herramientas de alineación (izquierda, centro, derecha) para moverlo.');
+          return;
+      }
+
       if (target.tagName === 'IMG' && target.style.position === 'absolute' && target.id !== 'watermark-img') {
           e.preventDefault();
           e.stopPropagation();
@@ -702,6 +828,99 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
   };
 
   const handleFormat = (command: string, value: string | undefined = undefined) => {
+    // Si hay un elemento seleccionado (como el QR o imagen)
+    if (selectedImage) {
+      const targetEl = (selectedImage.classList?.contains('unsaac-qr-container') 
+        ? selectedImage 
+        : (selectedImage.closest('.unsaac-qr-container') as HTMLElement)) || selectedImage;
+      const parent = targetEl.parentElement;
+
+      if (command === 'justifyLeft') {
+        targetEl.style.marginLeft = '0';
+        targetEl.style.marginRight = 'auto';
+        targetEl.style.alignSelf = 'flex-start';
+        targetEl.style.textAlign = 'left';
+        if (parent) {
+          parent.style.textAlign = 'left';
+          if (parent.style.display === 'flex') parent.style.justifyContent = 'flex-start';
+        }
+        showToast('QR alineado a la izquierda');
+        return;
+      }
+      if (command === 'justifyCenter') {
+        targetEl.style.marginLeft = 'auto';
+        targetEl.style.marginRight = 'auto';
+        targetEl.style.alignSelf = 'center';
+        targetEl.style.textAlign = 'center';
+        if (parent) {
+          parent.style.textAlign = 'center';
+          if (parent.style.display === 'flex') parent.style.justifyContent = 'center';
+        }
+        showToast('QR centrado');
+        return;
+      }
+      if (command === 'justifyRight') {
+        targetEl.style.marginLeft = 'auto';
+        targetEl.style.marginRight = '0';
+        targetEl.style.alignSelf = 'flex-end';
+        targetEl.style.textAlign = 'right';
+        if (parent) {
+          parent.style.textAlign = 'right';
+          if (parent.style.display === 'flex') parent.style.justifyContent = 'flex-end';
+        }
+        showToast('QR alineado a la derecha');
+        return;
+      }
+    }
+
+    // Si el cursor está en el contenedor del QR o bloque adyacente
+    const sel = window.getSelection();
+    if (sel && sel.anchorNode) {
+      const node = sel.anchorNode.nodeType === Node.ELEMENT_NODE 
+        ? (sel.anchorNode as HTMLElement) 
+        : sel.anchorNode.parentElement;
+      const qrEl = node?.closest('.unsaac-qr-container, .qr-block-wrapper') as HTMLElement | null;
+      if (qrEl) {
+        const parent = qrEl.parentElement;
+        if (command === 'justifyLeft') {
+          qrEl.style.marginLeft = '0';
+          qrEl.style.marginRight = 'auto';
+          qrEl.style.alignSelf = 'flex-start';
+          qrEl.style.textAlign = 'left';
+          if (parent) {
+            parent.style.textAlign = 'left';
+            if (parent.style.display === 'flex') parent.style.justifyContent = 'flex-start';
+          }
+          showToast('Alineado a la izquierda');
+          return;
+        }
+        if (command === 'justifyCenter') {
+          qrEl.style.marginLeft = 'auto';
+          qrEl.style.marginRight = 'auto';
+          qrEl.style.alignSelf = 'center';
+          qrEl.style.textAlign = 'center';
+          if (parent) {
+            parent.style.textAlign = 'center';
+            if (parent.style.display === 'flex') parent.style.justifyContent = 'center';
+          }
+          showToast('Centrado');
+          return;
+        }
+        if (command === 'justifyRight') {
+          qrEl.style.marginLeft = 'auto';
+          qrEl.style.marginRight = '0';
+          qrEl.style.alignSelf = 'flex-end';
+          qrEl.style.textAlign = 'right';
+          if (parent) {
+            parent.style.textAlign = 'right';
+            if (parent.style.display === 'flex') parent.style.justifyContent = 'flex-end';
+          }
+          showToast('Alineado a la derecha');
+          return;
+        }
+      }
+    }
+
     document.execCommand(command, false, value);
     editorRef.current?.focus();
   };
@@ -709,6 +928,17 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
   const handleInsertVariable = (code: string) => {
     if (editorRef.current) {
         editorRef.current.focus();
+
+        if (code === '{{codigo_qr}}' && qrDataUrl) {
+          const qrHtml = `<div class="unsaac-qr-container" style="display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; vertical-align: middle; margin: 4px 0; cursor: pointer;" title="Código QR Oficial. Clic para seleccionar y alinear a izquierda/centro/derecha">
+            <img class="unsaac-qr-img" src="${qrDataUrl}" style="width: 96px; height: 96px; display: block; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px; background: white;" alt="QR Verificación" />
+            <span style="font-size: 8px; color: #7b1523; font-family: monospace; font-weight: bold; margin-top: 2px;">${verificationCode}</span>
+          </div>`;
+          document.execCommand('insertHTML', false, qrHtml);
+          showToast('Código QR insertado. Usa los botones de alineación para ubicarlo.');
+          return;
+        }
+
         const success = document.execCommand('insertText', false, code);
         if(!success) {
              editorRef.current.innerText += ` ${code}`;
@@ -820,7 +1050,12 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
             }
         }
         
-        const cleanContent = clone.innerHTML;
+        let cleanContent = clone.innerHTML;
+        
+        // Garantizar que las variables {{fecha_actual}} y {{usuario_iniciales}} se guarden como variables dinámicas
+        cleanContent = cleanContent
+          .replace(CUSCO_DATE_REGEX, 'Cusco, {{fecha_actual}}')
+          .replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, 'Usuario: {{usuario_iniciales}}');
         
         if (!cleanContent.trim()) {
             showToast('Error: El contenido parece estar vacío.');
@@ -838,10 +1073,12 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
         };
 
         if (isNew) {
-            const { error } = await supabase.from('templates').insert([payload]);
+            const { data: insertedData, error } = await supabase.from('templates').insert([payload]).select();
             if (error) throw error;
             showToast('Plantilla creada exitosamente');
-            try { await supabase.from('tramite_seguimiento').insert([{ action_type: 'Registro', description: `Creó una nueva plantilla: "${documentTitle}"`, user_name: user?.name || 'Operador / Sistema' }]); } catch(e) {}
+            try { 
+              await logTemplateAction('Creación', documentTitle, `Categoría: ${category}`);
+            } catch(e) {}
             setTimeout(() => navigate('/templates'), 1000);
         } else {
             // Check if id is a UUID (standard 36 chars) or a default template slug
@@ -851,11 +1088,17 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
               if (error) throw error;
             } else {
               // It's a default model being saved as a custom record in DB
-              const { error } = await supabase.from('templates').insert([payload]);
+              const { data: insertedData, error } = await supabase.from('templates').insert([payload]).select();
               if (error) throw error;
+              if (insertedData && insertedData[0]?.id) {
+                navigate(`/templates/${insertedData[0].id}`, { replace: true });
+              }
             }
+            setFetchedContent(cleanContent);
             showToast('Cambios guardados');
-            try { await supabase.from('tramite_seguimiento').insert([{ action_type: 'Estado', description: `Modificó la plantilla: "${documentTitle}"`, user_name: user?.name || 'Operador / Sistema' }]); } catch(e) {}
+            try { 
+              await logTemplateAction('Edición', documentTitle, `Categoría: ${category}`);
+            } catch(e) {}
         }
     } catch (error: any) {
         console.error("Error saving:", error);
@@ -889,6 +1132,25 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
             .eq('number', fileNumber);
             
           if (error) throw error;
+
+          // 2. Registrar emisión oficial con código QR y usuario para verificación
+          await registerDocumentEmission({
+            verificationCode,
+            documentType: documentTitle || 'CONSTANCIA DE INGRESO',
+            studentName: studentData?.NOMBRE,
+            studentDni: studentData?.CODPOSTULANTE,
+            studentCode: studentData?.CODPOSTULANTE,
+            career: studentData?.CARRERA,
+            modality: studentData?.MODALIDAD,
+            semester: studentData?.SEMESTRE,
+            score: studentData?.NOTA,
+            meritOrder: studentData?.OMERITO,
+            admissionDate: studentData?.FECHAINGRESO,
+            expNumber: fileNumber,
+            userName: user?.name,
+            userInitials,
+            userId: user?.id
+          }).catch(e => console.warn('Emission registration error:', e));
           
           showToast('Trámite finalizado correctamente');
           setTimeout(() => navigate('/incoming'), 1500);
@@ -910,6 +1172,29 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
           </div>
       )
   }
+
+  const getProcessedPreviewHtml = () => {
+    let html = editorRef.current?.innerHTML || '';
+    const today = todayDateStr;
+    html = html
+      .replace(/{{\s*(?:fecha_actual|FECHA_ACTUAL|fecha|FECHA)\s*}}/gi, today)
+      .replace(CUSCO_DATE_REGEX, `Cusco, ${today}`)
+      .replace(/{{usuario_iniciales}}/gi, userInitials)
+      .replace(/{{usuario}}/gi, userInitials)
+      .replace(/Usuario:\s*(?:JA|JCH|DA)\b/g, `Usuario: ${userInitials}`);
+
+    if (qrDataUrl) {
+      const qrSealHtml = `<div class="unsaac-qr-container" style="display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; vertical-align: middle; margin: 4px 0;">
+        <img class="unsaac-qr-img" src="${qrDataUrl}" style="width: 96px; height: 96px; display: block; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px; background: white;" alt="QR Verificación" />
+        <span style="font-size: 8px; color: #7b1523; font-family: monospace; font-weight: bold; margin-top: 2px;">${verificationCode}</span>
+      </div>`;
+      html = html
+        .replace(/{{codigo_qr}}/gi, qrSealHtml)
+        .replace(/{{CODIGO_QR}}/gi, qrSealHtml)
+        .replace(/{{qr}}/gi, qrSealHtml);
+    }
+    return html;
+  };
 
   return (
     <div className="flex flex-col h-full bg-slate-100 overflow-hidden relative">
@@ -937,7 +1222,7 @@ export const TemplateEditor: React.FC<Props> = ({ user }) => {
                                 ...getPaperDimensions(),
                                 transform: 'scale(0.8)'
                             }} 
-                            dangerouslySetInnerHTML={{ __html: editorRef.current?.innerHTML || '' }}
+                            dangerouslySetInnerHTML={{ __html: getProcessedPreviewHtml() }}
                         />
                   </div>
                   <div className="p-4 bg-white border-t border-slate-300 rounded-b-xl flex justify-end gap-2">

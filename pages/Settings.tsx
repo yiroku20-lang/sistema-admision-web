@@ -12,6 +12,7 @@ import {
   updateAdminUserPassword,
   AdminUserItem,
 } from '../lib/usersApi';
+import { logSecurityAction } from '../lib/auditLogger';
 
 export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'success'|'error'|'warning') => void }> = ({ user, notify }) => {
   const [users, setUsers] = useState<AdminUserItem[]>([]);
@@ -135,6 +136,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
             throw new Error(pwRes.error || 'Error al actualizar contraseña.');
           }
         }
+
+        try {
+          await logSecurityAction('Actualizó perfil y permisos', name.trim(), `Rol: ${role}, DNI: ${dni.trim()}${password ? ' (con cambio de clave)' : ''}`);
+        } catch (e) {}
       } else {
         // Create new user using secure API
         const createRes = await createAdminUser({
@@ -148,6 +153,10 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
         if (!createRes.success) {
           throw new Error(createRes.error || 'Error al crear usuario.');
         }
+
+        try {
+          await logSecurityAction('Creó nuevo operador/usuario', name.trim(), `Rol: ${role}, DNI: ${dni.trim()}`);
+        } catch (e) {}
       }
 
       setIsModalOpen(false);
@@ -229,6 +238,9 @@ export const Settings: React.FC<{ user: User, notify?: (msg: string, type?: 'suc
         throw new Error(res.error || 'Error al eliminar usuario');
       }
       fetchUsers();
+      try {
+        await logSecurityAction('Eliminó usuario del sistema', id, 'Operador eliminado');
+      } catch (e) {}
       notify?.('Usuario eliminado exitosamente.', 'success');
     } catch (err: any) {
       notify?.(`Error al eliminar: ${err.message}`, 'error');

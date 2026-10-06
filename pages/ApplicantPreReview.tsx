@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { getPreRevisiones } from '../src/services/preRevisionService';
 import { safeStorage } from '../lib/safeStorage';
+import { logPreReviewAction } from '../lib/auditLogger';
 import { User, CVCuadroAnual, CVModalidad, CVEscuela, CVVacante } from '../types';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -837,6 +838,14 @@ export const ApplicantPreReview: React.FC<ApplicantPreReviewProps> = ({ user, no
            if (savedOk) {
              notify?.('Archivo guardado en pre-revisión correctamente.', 'success');
              setSavedModalidadIds(prev => prev.includes(selectedModalidad) ? prev : [...prev, selectedModalidad]);
+             try {
+               const modObj = modalidades.find(m => m.id === selectedModalidad);
+               logPreReviewAction(
+                 'Carga de Lote de Pre-Revisión',
+                 modObj?.nombre || selectedModalidad,
+                 `Procesó lote con ${Array.isArray(dataToProcess) ? dataToProcess.length : 0} postulantes/registros`
+               );
+             } catch (e) {}
            }
          } catch (e) {
            console.error(e);

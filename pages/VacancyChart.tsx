@@ -8,6 +8,7 @@ import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 
 import { VacancyAnalytics } from '../components/VacancyAnalytics';
+import { logVacancyAction } from '../lib/auditLogger';
 
 const splitTextIntoLines = (text: string, maxChars: number): string[] => {
   const words = text.split(' ');
@@ -663,6 +664,9 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
       const { error } = await supabase.from('cv_vacantes').upsert(dbUpserts, { onConflict: 'escuela_id, modalidad_id' });
       
       if (error) throw error;
+      try {
+        logVacancyAction('Ajuste de Vacante', `${selectedCuadro?.anio || ''}`, `Modificó vacantes para carrera ${escuela.nombre} (${modalidad.nombre}): ${value}`);
+      } catch (e) {}
     } catch (err: any) {
       notify('Error al guardar celda: ' + err.message, 'error');
     } finally {
@@ -711,6 +715,10 @@ export const VacancyChart: React.FC<{ user: User, notify: (msg: string, type?: T
       }).eq('id', selectedCuadro.id);
 
       if (updateError) throw updateError;
+
+      try {
+        logVacancyAction('Aprobación de Cuadro', `${selectedCuadro.anio}`, `Cerró y aprobó Cuadro Anual de Vacantes con resolución ${closeForm.resolution_number}`);
+      } catch (e) {}
 
       notify('Cuadro cerrado y aprobado exitosamente', 'success');
       setIsCloseModalOpen(false);

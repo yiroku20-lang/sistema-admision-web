@@ -26,6 +26,7 @@ const navItems: (NavItem & { permission?: string })[] = [
   { label: 'Resoluciones', icon: 'gavel', path: '/resolutions', permission: 'view_resoluciones' },
   { label: 'Actas de Sesiones', icon: 'history_edu', path: '/actas', roles: ['Administrador', 'Director'], permission: 'view_actas' },
   { label: 'Agenda de Eventos', icon: 'calendar_today', path: '/calendar', permission: 'view_agenda' },
+  { label: 'Charlas y Citas Colegios', icon: 'co_present', path: '/school-talks', roles: ['Administrador', 'Director'], permission: 'view_charlas_colegios' },
   { label: 'Control Asistencia', icon: 'fingerprint', path: '/attendance', permission: 'view_asistencia' },
   { label: 'Adjudicaciones', icon: 'stars', path: '/adjudication', roles: ['Administrador', 'Director'], permission: 'view_adjudicaciones' },
   { label: 'Evolución Vacantes', icon: 'trending_up', path: '/vacancy-evolution', roles: ['Administrador', 'Director'], permission: 'view_vacancy_evolution' },

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase, clearStaleAuthTokens } from './lib/supabaseClient';
+import { logSessionLogin, logSessionLogout } from './lib/auditLogger';
 import { initKeepAliveSystem } from './lib/keepAlive';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -18,6 +19,7 @@ import { VacancyReservation } from './pages/VacancyReservation';
 import { VacancyChart } from './pages/VacancyChart';
 import { Attendance } from './pages/Attendance';
 import { CalendarEvents } from './pages/CalendarEvents';
+import { SchoolVisitsManagement } from './pages/SchoolVisitsManagement';
 import { VocationalOrientation } from './pages/VocationalOrientation';
 import { SystemLogs } from './pages/SystemLogs';
 import { Settings } from './pages/Settings';
@@ -32,6 +34,7 @@ import { ExamBudget } from './pages/ExamBudget';
 import { IngresantesReport } from './pages/IngresantesReport';
 import { Login } from './pages/Login';
 import { Unsubscribe } from './pages/Unsubscribe';
+import { PublicDocumentVerification } from './pages/PublicDocumentVerification';
 import { ChatBot } from './components/ChatBot';
 import { ToastContainer } from './components/Toast';
 import { User, ToastMessage } from './types';
@@ -75,6 +78,16 @@ function App() {
             const parsed = JSON.parse(savedUserStr);
             if (parsed && isMounted) {
               setUser(parsed);
+              // Registrar ingreso a la web app si no se ha registrado aún en la sesión actual
+              try {
+                if (typeof sessionStorage !== 'undefined') {
+                  const todayKey = `${parsed.id || parsed.dni || parsed.name}_${new Date().toDateString()}`;
+                  if (sessionStorage.getItem('unsaac_session_access_logged') !== todayKey) {
+                    sessionStorage.setItem('unsaac_session_access_logged', todayKey);
+                    logSessionLogin(parsed, 'Ingreso a la Web App (Sesión Activa)').catch(() => {});
+                  }
+                }
+              } catch (e) {}
             }
           } catch (e) {}
         }
@@ -109,14 +122,13 @@ function App() {
   const handleLogout = async () => {
     try {
       if (user?.name) {
-        await supabase.from('tramite_seguimiento').insert([{
-          action_type: 'Sistema',
-          description: 'Cierre de Sesión',
-          user_name: user.name
-        }]);
+        await logSessionLogout(user.name);
       }
     } catch(e) {}
     try {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('unsaac_session_access_logged');
+      }
       localStorage.removeItem('unsaac_auth_user');
     } catch(e) {}
     setUser(null);
@@ -138,6 +150,10 @@ function App() {
           <Route path="/login" element={<Login onLogin={(u) => { setUser(u); addToast(`Bienvenido, ${u.name}`); }} />} />
           <Route path="/staff-confirm" element={<StaffConfirmation />} />
           <Route path="/unsubscribe" element={<Unsubscribe />} />
+          <Route path="/validar/:code" element={<PublicDocumentVerification />} />
+          <Route path="/validar" element={<PublicDocumentVerification />} />
+          <Route path="/verificar/:code" element={<PublicDocumentVerification />} />
+          <Route path="/verificar" element={<PublicDocumentVerification />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       ) : (
@@ -211,6 +227,11 @@ function App() {
                   <Route path="/calendar" element={<CalendarEvents user={user} notify={addToast} />} />
                 )}
                 
+                {/* Charlas y Citas de Colegios */}
+                {(user.role === 'Administrador' || user.role === 'Director' || (user.role === 'Operador' && user.permissions?.includes('view_charlas_colegios'))) && (
+                  <Route path="/school-talks" element={<SchoolVisitsManagement user={user} notify={addToast} />} />
+                )}
+                
                 {(user.role === 'Administrador' || (user.role === 'Operador' && user.permissions?.includes('view_auditoria'))) && (
                   <Route path="/logs" element={<SystemLogs />} />
                 )}
@@ -229,6 +250,11 @@ function App() {
                 
                 <Route path="/staff-confirm" element={<StaffConfirmation />} />
                 <Route path="/unsubscribe" element={<Unsubscribe />} />
+
+                <Route path="/validar/:code" element={<PublicDocumentVerification />} />
+                <Route path="/validar" element={<PublicDocumentVerification />} />
+                <Route path="/verificar/:code" element={<PublicDocumentVerification />} />
+                <Route path="/verificar" element={<PublicDocumentVerification />} />
 
                 <Route path="/settings" element={<Settings user={user} notify={addToast} />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

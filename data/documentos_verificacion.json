@@ -1,0 +1,23 @@
+{
+  "UNSAAC-CONST-2026-UY7GRB": {
+    "verificationCode": "UNSAAC-CONST-2026-UY7GRB",
+    "documentType": "CONSTANCIA DE INGRESO",
+    "studentName": "SOTO-QUINTANILLA-JUAN CARLOS",
+    "studentDni": "100396",
+    "studentCode": "100396",
+    "career": "INGENIERIA ELECTRICA",
+    "modality": "CICLO BASICO UNIVERSITARIO (CBU) 2007-I",
+    "semester": "2007-I",
+    "score": "11.22",
+    "meritOrder": "5",
+    "admissionDate": "17/01/2007",
+    "expNumber": "26090342",
+    "receiptNumber": "4544659897",
+    "userName": "JHONATAN ALEX",
+    "userInitials": "JCH",
+    "userId": "2cddaa12-25a3-4806-8eec-148298c28c43",
+    "issuedAt": "2026-10-06T01:26:02.511Z",
+    "dbId": "3d5f4074-d844-40df-b5db-27506f758646",
+    "savedAt": "2026-10-06T01:26:03.646Z"
+  }
+}

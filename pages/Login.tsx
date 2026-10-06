@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, clearStaleAuthTokens } from '../lib/supabaseClient';
+import { logSessionLogin } from '../lib/auditLogger';
 
 interface Props {
   onLogin: (user: any) => void;
@@ -20,6 +21,26 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
     setIsLoading(true);
     setError('');
 
+    const completeLogin = async (loggedUser: any) => {
+      try {
+        localStorage.setItem('unsaac_auth_user', JSON.stringify(loggedUser));
+      } catch (e) {}
+
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          const todayKey = `${loggedUser.id || loggedUser.dni || loggedUser.name}_${new Date().toDateString()}`;
+          sessionStorage.setItem('unsaac_session_access_logged', todayKey);
+        }
+        await logSessionLogin(loggedUser);
+      } catch (logErr) {
+        console.warn('Advertencia al registrar auditoría de login:', logErr);
+      }
+
+      setIsLoading(false);
+      onLogin(loggedUser);
+      navigate('/');
+    };
+
     try {
       const cleanDni = dni.trim();
       const cleanPassword = password.trim();
@@ -29,13 +50,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         try {
           const res = await (window as any).electronAPI.login({ dni: cleanDni, password: cleanPassword });
           if (res && res.success && res.user) {
-            try {
-              localStorage.setItem('unsaac_auth_user', JSON.stringify(res.user));
-            } catch(e) {}
-
-            setIsLoading(false);
-            onLogin(res.user);
-            navigate('/');
+            await completeLogin(res.user);
             return;
           } else if (res && res.error) {
             setError(res.error);
@@ -58,13 +73,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         if (response.ok) {
           const result = await response.json();
           if (result.success && result.user) {
-            try {
-              localStorage.setItem('unsaac_auth_user', JSON.stringify(result.user));
-            } catch(e) {}
-
-            setIsLoading(false);
-            onLogin(result.user);
-            navigate('/');
+            await completeLogin(result.user);
             return;
           }
         } else {
@@ -93,11 +102,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
           .maybeSingle();
 
         if (profile) {
-          try {
-            localStorage.setItem('unsaac_auth_user', JSON.stringify(profile));
-          } catch(e) {}
-          onLogin(profile);
-          navigate('/');
+          await completeLogin(profile);
           return;
         }
       }
@@ -113,11 +118,7 @@ export const Login: React.FC<Props> = ({ onLogin }) => {
         const isValidPlain = dbUser.password === cleanPassword;
         const isBypass = ['admin123', '123456', '123', 'admin'].includes(cleanPassword);
         if (isValidPlain || isBypass) {
-          try {
-            localStorage.setItem('unsaac_auth_user', JSON.stringify(dbUser));
-          } catch(e) {}
-          onLogin(dbUser);
-          navigate('/');
+          await completeLogin(dbUser);
           return;
         }
       }
