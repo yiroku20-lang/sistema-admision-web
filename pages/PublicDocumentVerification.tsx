@@ -38,6 +38,17 @@ export const PublicDocumentVerification: React.FC = () => {
   };
 
   useEffect(() => {
+    // Garantizar scroll fluido en móviles y escritorio
+    document.body.classList.remove('overflow-hidden');
+    document.body.style.overflow = 'auto';
+    document.body.style.overflowY = 'auto';
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.overflowY = '';
+    };
+  }, []);
+
+  useEffect(() => {
     if (code) {
       setSearchCode(code);
       loadVerification(code);
@@ -324,16 +335,33 @@ export const PublicDocumentVerification: React.FC = () => {
                 </div>
 
                 <div>
-                  <span className="text-xs text-slate-500 block">DNI / Documento de Identidad:</span>
-                  <span className="font-mono font-semibold text-slate-800 block mt-0.5">
-                    {data.studentDni || '—'}
+                  <span className="text-xs text-slate-500 block">Escuela Profesional (Carrera):</span>
+                  <span className="font-bold text-[#7b1523] block mt-0.5">
+                    {data.career || '—'}
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-xs text-slate-500 block">Escuela Profesional (Carrera):</span>
-                  <span className="font-bold text-[#7b1523] block mt-0.5">
-                    {data.career || '—'}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-500 block">Código de Postulante:</span>
+                    <div className="relative group inline-flex items-center">
+                      <span
+                        className="material-symbols-outlined text-[16px] text-amber-500 hover:text-amber-600 cursor-help transition-colors select-none"
+                        title="El código de postulante no necesariamente es el número de DNI; es el código registrado oficialmente al momento de postular."
+                      >
+                        info
+                      </span>
+                      {/* Globo informativo emergente */}
+                      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 w-72 p-2.5 bg-slate-900 text-white text-[11px] font-normal leading-relaxed rounded-md shadow-2xl border border-slate-700 text-center">
+                        <span>
+                          El código de postulante no necesariamente es el número de DNI; es el código registrado oficialmente al momento de postular.
+                        </span>
+                        <div className="w-2.5 h-2.5 bg-slate-900 rotate-45 -mb-3 border-r border-b border-slate-700"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="font-mono font-bold text-slate-900 text-sm sm:text-base block mt-0.5">
+                    {data.studentCode || data.studentDni || '—'}
                   </span>
                 </div>
 
@@ -343,15 +371,6 @@ export const PublicDocumentVerification: React.FC = () => {
                     {data.modality || '—'}
                   </span>
                 </div>
-
-                {data.studentCode && (
-                  <div>
-                    <span className="text-xs text-slate-500 block">Código de Postulante / Matrícula:</span>
-                    <span className="font-mono font-bold text-slate-800 block mt-0.5">
-                      {data.studentCode}
-                    </span>
-                  </div>
-                )}
 
                 {data.semester && (
                   <div>
@@ -403,11 +422,6 @@ export const PublicDocumentVerification: React.FC = () => {
                     <span className="font-mono font-bold text-[#7b1523] bg-red-50 border border-red-200 px-2 py-0.5 rounded text-xs">
                       {data.userInitials || 'DA'}
                     </span>
-                    {data.userName && (
-                      <span className="text-slate-600 truncate text-[11px]" title={data.userName}>
-                        ({data.userName})
-                      </span>
-                    )}
                   </div>
                 </div>
 
