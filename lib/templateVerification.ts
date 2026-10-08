@@ -20,6 +20,9 @@ export interface DocumentVerificationData {
   userInitials?: string;
   issuedAt: string;
   isValid: boolean;
+  isAttachedOnly?: boolean;
+  attachedPdfUrl?: string;
+  warningNote?: string;
 }
 
 export interface EmissionRegistrationPayload {
@@ -39,6 +42,7 @@ export interface EmissionRegistrationPayload {
   userName?: string;
   userInitials?: string;
   userId?: string;
+  pdfUrl?: string;
 }
 
 // Catálogo oficial de operadores de la Dirección de Admisión UNSAAC
@@ -196,10 +200,13 @@ export function generateVerificationCode(prefix: string = 'CONST'): string {
  * Generates a high-resolution QR base64 data URL for a given verification code.
  */
 export async function generateQrDataUrl(verificationCode: string): Promise<string> {
+  const cleanCode = verificationCode.trim();
   // En HashRouter, la ruta canónica se ubica en #/validar/CODIGO
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://admision.unsaac.edu.pe';
-  const pathname = typeof window !== 'undefined' ? window.location.pathname.replace(/\/$/, '') : '';
-  const validationUrl = `${origin}${pathname}/#/validar/${encodeURIComponent(verificationCode)}`;
+  let origin = 'https://admision.unsaac.edu.pe';
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    origin = window.location.origin;
+  }
+  const validationUrl = `${origin}/#/validar/${encodeURIComponent(cleanCode)}`;
 
   try {
     const dataUrl = await QRCode.toDataURL(validationUrl, {
@@ -250,14 +257,21 @@ export async function registerDocumentEmission(
       fecha_emision: nowIso
     };
 
-    const docRecord = {
+    const docRecord: any = {
       doc_type: payload.documentType || 'Constancia Oficial',
       doc_number: payload.verificationCode,
-      ref_number: payload.studentDni || payload.studentCode || payload.expNumber || 'OFICIAL',
+      ref_number: payload.expNumber || payload.studentDni || payload.studentCode || 'OFICIAL',
       subject: `${payload.documentType || 'CONSTANCIA DE INGRESO'} - ${payload.studentName || 'ESTUDIANTE'} - ${payload.career || 'UNSAAC'}`,
       destination: JSON.stringify(destinationMeta),
       status: 'Finalizado'
     };
+
+    if (payload.pdfUrl) {
+      docRecord.pdf_url = payload.pdfUrl;
+    }
+    if (payload.userId) {
+      docRecord.created_by = payload.userId;
+    }
 
     // 1. Guardar en Supabase tabla expedientes_salida
     const { data: supaData, error: supaErr } = await supabase
@@ -277,7 +291,8 @@ export async function registerDocumentEmission(
         payload.studentName || 'ESTUDIANTE',
         payload.studentDni || payload.studentCode || 'S/DNI',
         payload.verificationCode,
-        payload.expNumber
+        payload.expNumber,
+        payload.pdfUrl
       );
     } catch (auditErr) {
       console.warn('Advertencia al registrar auditoría de emisión:', auditErr);
@@ -296,7 +311,7 @@ export async function registerDocumentEmission(
         })
       });
     } catch (apiErr) {
-      console.warn('API local de emisión no alcanzable:', apiErr);
+      // En despliegue Netlify el endpoint local puede no estar disponible
     }
 
     return {
@@ -318,10 +333,20 @@ export async function registerDocumentEmission(
 export async function fetchDocumentVerification(
   code: string
 ): Promise<DocumentVerificationData | null> {
-  const cleanCode = decodeURIComponent(code).trim();
+  if (!code) return null;
+  let cleanCode = decodeURIComponent(code).trim();
   if (!cleanCode) return null;
 
-  // 1. Intentar endpoint backend
+  // Extraer código si el usuario ingresó o escaneó la URL completa
+  if (cleanCode.includes('/validar/')) {
+    cleanCode = cleanCode.split('/validar/').pop()?.split(/[?#&]/)[0] || cleanCode;
+  } else if (cleanCode.includes('/verificar/')) {
+    cleanCode = cleanCode.split('/verificar/').pop()?.split(/[?#&]/)[0] || cleanCode;
+  }
+  cleanCode = cleanCode.trim().replace(/^['"]|['"]$/g, '');
+  if (!cleanCode) return null;
+
+  // 1. Intentar endpoint backend (si existe el servidor activo)
   try {
     const res = await fetch(`/api/verificacion/${encodeURIComponent(cleanCode)}`);
     if (res.ok) {
@@ -344,49 +369,137 @@ export async function fetchDocumentVerification(
           userName: data.issue?.userName,
           userInitials: data.issue?.userInitials,
           issuedAt: data.issue?.date || new Date().toISOString(),
-          isValid: true
+          isValid: true,
+          attachedPdfUrl: data.pdfUrl || undefined
         };
       }
     }
   } catch (err) {
-    console.warn('Fetch backend verificacion falló, intentando Supabase directo:', err);
+    // Continuar a Supabase directo
   }
 
-  // 2. Consulta directa a Supabase tabla expedientes_salida
+  // 2. Consulta directa a Supabase tabla expedientes_salida (funciona en Netlify y producción)
   try {
-    let query = supabase.from('expedientes_salida').select('*');
-    query = query.or(`doc_number.eq.${cleanCode},id.eq.${cleanCode}`);
-    const { data, error } = await query.maybeSingle();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanCode);
 
-    if (!error && data) {
-      let meta: any = {};
+    // Consulta por doc_number usando ilike para ignorar mayúsculas/minúsculas
+    let { data: records, error } = await supabase
+      .from('expedientes_salida')
+      .select('*')
+      .ilike('doc_number', cleanCode)
+      .order('created_at', { ascending: false });
+
+    // Si no encontró por doc_number, intentar por UUID (sólo si tiene formato UUID para evitar error 22P02 de PostgreSQL)
+    if ((!records || records.length === 0) && isUuid) {
+      const byId = await supabase
+        .from('expedientes_salida')
+        .select('*')
+        .eq('id', cleanCode);
+      if (byId.data && byId.data.length > 0) {
+        records = byId.data;
+      }
+    }
+
+    // Búsqueda por ref_number o dentro del JSON destination
+    if (!records || records.length === 0) {
+      const byRefOrDest = await supabase
+        .from('expedientes_salida')
+        .select('*')
+        .or(`ref_number.eq.${cleanCode},destination.ilike.%${cleanCode}%`)
+        .order('created_at', { ascending: false });
+      if (byRefOrDest.data && byRefOrDest.data.length > 0) {
+        records = byRefOrDest.data;
+      }
+    }
+
+    if (records && records.length > 0) {
+      // Priorizar el registro que contiene metadatos JSON completos estructurados
+      const bestRecord = records.find(r => {
+        try {
+          if (r.destination && r.destination.startsWith('{')) {
+            const m = JSON.parse(r.destination);
+            return Boolean(m.tipo_documento || m.estudiante_nombre || m.codigo_verificacion);
+          }
+        } catch (e) {}
+        return false;
+      }) || records[0];
+
+      let meta: any = null;
       try {
-        if (data.destination && data.destination.startsWith('{')) {
-          meta = JSON.parse(data.destination);
+        if (bestRecord.destination && bestRecord.destination.startsWith('{')) {
+          meta = JSON.parse(bestRecord.destination);
         }
       } catch (e) {
         console.warn('Error al parsear metadatos en destination:', e);
       }
 
-      return {
-        verificationCode: data.doc_number || cleanCode,
-        documentType: meta.tipo_documento || data.doc_type || 'CONSTANCIA DE INGRESO',
-        studentName: meta.estudiante_nombre || (data.subject ? data.subject.split('-')[1]?.trim() : ''),
-        studentDni: meta.estudiante_dni || data.ref_number || '',
-        studentCode: meta.estudiante_codigo || data.ref_number || '',
-        career: meta.carrera || (data.subject ? data.subject.split('-')[2]?.trim() : ''),
-        modality: meta.modalidad || '',
-        semester: meta.semestre || '',
-        score: meta.puntaje || '',
-        meritOrder: meta.orden_merito || '',
-        admissionDate: meta.fecha_ingreso || '',
-        expNumber: meta.expediente_numero || '',
-        receiptNumber: meta.recibo_pago || '',
-        userName: meta.usuario_nombre || '',
-        userInitials: meta.usuario_iniciales || 'DA',
-        issuedAt: meta.fecha_emision || data.created_at || new Date().toISOString(),
-        isValid: true
-      };
+      // Si no hay metadatos estructurados pero hay un ref_number (DNI o código de postulante),
+      // intentar enriquecer desde el padrón de participantes
+      if (!meta?.estudiante_nombre && bestRecord.ref_number) {
+        try {
+          const { data: part } = await supabase
+            .from('participantes')
+            .select('nombre_completo, dni, carrera, modalidad, puntaje, orden_merito, proceso')
+            .or(`dni.eq.${bestRecord.ref_number},codigo_postulante.eq.${bestRecord.ref_number}`)
+            .maybeSingle();
+          if (part) {
+            meta = {
+              ...meta,
+              estudiante_nombre: part.nombre_completo,
+              estudiante_dni: part.dni,
+              carrera: part.carrera,
+              modalidad: part.modalidad,
+              puntaje: part.puntaje,
+              orden_merito: part.orden_merito,
+              semestre: part.proceso
+            };
+          }
+        } catch (e) {}
+      }
+
+      const hasStructuredMeta = Boolean(meta && (meta.tipo_documento || meta.codigo_verificacion || meta.estudiante_nombre));
+      const hasOfficialCodePrefix = Boolean(bestRecord.doc_number && (bestRecord.doc_number.startsWith('UNSAAC-CONST-') || bestRecord.doc_number.startsWith('UNSAAC-INF-')));
+
+      const isSystemGenerated = hasStructuredMeta || hasOfficialCodePrefix;
+
+      if (isSystemGenerated) {
+        return {
+          verificationCode: bestRecord.doc_number || cleanCode,
+          documentType: meta?.tipo_documento || bestRecord.doc_type || 'CONSTANCIA DE INGRESO',
+          studentName: meta?.estudiante_nombre || (bestRecord.subject ? bestRecord.subject.split('-')[1]?.trim() : ''),
+          studentDni: meta?.estudiante_dni || bestRecord.ref_number || '',
+          studentCode: meta?.estudiante_codigo || bestRecord.ref_number || '',
+          career: meta?.carrera || (bestRecord.subject ? bestRecord.subject.split('-')[2]?.trim() : ''),
+          modality: meta?.modalidad || '',
+          semester: meta?.semestre || '',
+          score: meta?.puntaje || '',
+          meritOrder: meta?.orden_merito || '',
+          admissionDate: meta?.fecha_ingreso || '',
+          expNumber: meta?.expediente_numero || (bestRecord.ref_number?.length === 8 && bestRecord.ref_number.startsWith('26') ? bestRecord.ref_number : ''),
+          receiptNumber: meta?.recibo_pago || '',
+          userName: meta?.usuario_nombre || '',
+          userInitials: meta?.usuario_iniciales || 'DA',
+          issuedAt: meta?.fecha_emision || bestRecord.created_at || new Date().toISOString(),
+          isValid: true,
+          isAttachedOnly: false,
+          attachedPdfUrl: bestRecord.pdf_url || undefined
+        };
+      } else {
+        // Documento en expedientes de salida pero sin generación oficial
+        return {
+          verificationCode: bestRecord.doc_number || cleanCode,
+          documentType: bestRecord.doc_type || 'Expediente de Salida Ordinario',
+          studentName: '',
+          studentDni: bestRecord.ref_number || '',
+          studentCode: bestRecord.ref_number || '',
+          career: '',
+          issuedAt: bestRecord.created_at || new Date().toISOString(),
+          isValid: false,
+          isAttachedOnly: true,
+          attachedPdfUrl: bestRecord.pdf_url || undefined,
+          warningNote: 'Este registro corresponde a un expediente de salida con documento adjuntado manualmente. NO es una constancia oficial generada por el sistema.'
+        };
+      }
     }
   } catch (err) {
     console.error('Error al consultar Supabase expedientes_salida:', err);

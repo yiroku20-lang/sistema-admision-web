@@ -405,12 +405,16 @@ VALUES
     </div>
     <div style="flex: 1; padding: 30px 35px; position: relative; display: flex; flex-direction: column;">
         <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; opacity: 0.08;">
-             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="width: 70%; height: auto; filter: grayscale(100%);" />
+             <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" style="width: 65%; height: auto; filter: grayscale(100%);" />
         </div>
-        <div style="position: relative; z-index: 1; text-align: center; margin-bottom: 20px;">
-            <h2 style="font-family: ''Cinzel'', serif; font-size: 22px; font-weight: 700; margin: 0; color: #7b1523;">UNIVERSIDAD NACIONAL DE SAN ANTONIO<br>ABAD DEL CUSCO</h2>
-            <div style="width: 50px; height: 3px; background: #e8a134; margin: 8px auto;"></div>
-            <h3 style="font-size: 14px; font-weight: 600; color: #333; letter-spacing: 2px;">DIRECCIÓN DE ADMISIÓN</h3>
+        <div style="position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; border-bottom: 1.5px solid #e2e8f0; padding-bottom: 10px;">
+            <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" style="height: 55px; width: auto;" />
+            <div style="text-align: center; flex: 1;">
+                <h2 style="font-family: ''Cinzel'', serif; font-size: 19px; font-weight: 700; margin: 0; color: #7b1523;">UNIVERSIDAD NACIONAL DE SAN ANTONIO<br>ABAD DEL CUSCO</h2>
+                <div style="width: 50px; height: 3px; background: #e8a134; margin: 6px auto;"></div>
+                <h3 style="font-size: 13px; font-weight: 600; color: #333; letter-spacing: 2px;">DIRECCIÓN DE ADMISIÓN</h3>
+            </div>
+            <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%20color%20negro.png" style="height: 48px; width: auto;" />
         </div>
         <div style="position: relative; z-index: 1; flex: 1; font-size: 12px; line-height: 1.5; color: #333;">
              <p>El Director de la Dirección de Admisión, que suscribe hace constar:</p>
@@ -441,17 +445,14 @@ VALUES
         <!-- Header -->
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
             <div style="display: flex; align-items: center; gap: 15px;">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="height: 60px;" />
+                <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" style="height: 55px; width: auto;" />
                 <div>
-                    <h2 style="margin: 0; font-size: 18px; color: #7b1523; font-family: ''Times New Roman'', serif;">UNSAAC</h2>
+                    <h2 style="margin: 0; font-size: 16px; color: #7b1523; font-family: ''Times New Roman'', serif;">UNSAAC</h2>
                     <p style="margin: 0; font-size: 10px; color: #555;">Universidad Nacional de<br>San Antonio Abad del Cusco</p>
                 </div>
             </div>
-            <!-- DA Logo placeholder -->
-            <div style="color: white; text-align: center; margin-top: 10px; margin-right: 20px;">
-                <div style="font-size: 24px; font-weight: bold; font-family: ''Times New Roman'', serif;">DA</div>
-                <div style="font-size: 8px; letter-spacing: 1px;">DIRECCIÓN<br>DE ADMISIÓN</div>
-            </div>
+            <!-- DA Logo -->
+            <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%20color%20negro.png" style="height: 48px; width: auto; margin-right: 15px;" />
         </div>
 
         <!-- Title -->

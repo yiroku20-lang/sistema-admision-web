@@ -5,6 +5,7 @@ import { OutgoingFile, User, TrackingEvent } from '../types';
 import Papa from 'papaparse';
 import { UnifiedTimelineModal } from '../components/UnifiedTimelineModal';
 import { PendingFollowupModal } from '../components/PendingFollowupModal';
+import { logOutgoingAction } from '../lib/auditLogger';
 
 interface GroupedOutgoingFile extends OutgoingFile {
   count: number;
@@ -59,16 +60,37 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
         const groupedMap = new Map<string, GroupedOutgoingFile>();
 
         data.forEach((item: any) => {
+            let cleanDestination = item.destination || '-';
+            let isGenerated = false;
+            let studentName = '';
+
+            if (item.destination && item.destination.startsWith('{')) {
+              try {
+                const meta = JSON.parse(item.destination);
+                cleanDestination = meta.estudiante_nombre
+                  ? `ESTUDIANTE: ${meta.estudiante_nombre}`
+                  : (meta.tipo_documento || 'ESTUDIANTE');
+                isGenerated = true;
+                studentName = meta.estudiante_nombre || '';
+              } catch (e) {}
+            }
+            if (item.doc_number && (item.doc_number.startsWith('UNSAAC-CONST-') || item.doc_number.startsWith('UNSAAC-INF-'))) {
+              isGenerated = true;
+            }
+
             const currentFile: OutgoingFile = {
                 id: item.id,
                 docType: item.doc_type,
                 docNumber: item.doc_number,
                 refNumber: item.ref_number || '-',
                 subject: item.subject,
-                destination: item.destination || '-',
+                destination: cleanDestination,
                 status: item.status || 'Pendiente',
                 pdfUrl: item.pdf_url,
                 dateTime: new Date(item.created_at).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                isSystemGenerated: isGenerated,
+                hasAttachedPdf: Boolean(item.pdf_url),
+                studentName: studentName || undefined
             };
 
             const groupKey = currentFile.refNumber !== '-' ? currentFile.refNumber : currentFile.id;
@@ -126,9 +148,13 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                   subject: subject.trim().toUpperCase(),
                   destination: destination.trim().toUpperCase(),
                   status: status,
-                  pdf_url: publicUrl || undefined // Only update if a new one was provided, otherwise keep existing (handled by DB if we don't pass it, but here we pass publicUrl which might be empty string if not changed. Wait, if driveUrl is empty and no file, publicUrl is empty. Let's handle this better.)
+                  pdf_url: publicUrl || undefined
               }).eq('id', editingId);
               if (error) throw error;
+
+              try {
+                await logOutgoingAction('Edición', docType, docNumber.trim(), destination.trim(), Boolean(publicUrl), selectedFile?.name);
+              } catch (e) {}
           } else {
               const { error } = await supabase.from('expedientes_salida').insert([{
                   doc_type: docType,
@@ -141,6 +167,10 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                   created_by: user.id
               }]);
               if (error) throw error;
+
+              try {
+                await logOutgoingAction('Registro', docType, docNumber.trim(), destination.trim(), Boolean(publicUrl), selectedFile?.name);
+              } catch (e) {}
           }
           
           fetchFiles(); 
@@ -346,6 +376,15 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                       <button onClick={closeModal} className="text-slate-400 hover:text-slate-600"><span className="material-symbols-outlined">close</span></button>
                   </div>
                   <div className="p-8 flex flex-col gap-5 overflow-y-auto max-h-[70vh]">
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+                        <span className="material-symbols-outlined text-amber-600 text-lg shrink-0 mt-0.5">info</span>
+                        <div>
+                          <p className="font-bold text-amber-950">Mesa de Salidas Institucional:</p>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            Este módulo registra documentos salientes con <strong>archivos adjuntos externos</strong> (oficios, informes, PDFs escaneados). No sustituye la emisión oficial de constancias con QR generadas desde el sistema.
+                          </p>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-2 gap-4">
                           <label className="flex flex-col gap-1">
                               <span className="text-[10px] font-black text-slate-500 uppercase">Tipo</span>
@@ -652,9 +691,24 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 font-mono font-bold text-slate-700 text-sm">
-                                    <div className="flex flex-col">
+                                    <div className="flex flex-col items-start gap-1">
                                         <span>{file.docNumber}</span>
-                                        <span className="text-[9px] text-slate-400 uppercase tracking-widest">{file.docType}</span>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-[9px] text-slate-400 uppercase tracking-widest">{file.docType}</span>
+                                            {file.isSystemGenerated ? (
+                                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                                    <span className="material-symbols-outlined text-[10px]">verified</span> Generado (Sistema)
+                                                </span>
+                                            ) : file.pdfUrl ? (
+                                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                                                    <span className="material-symbols-outlined text-[10px]">attach_file</span> Adjunto Manual
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200">
+                                                    Sin Adjunto
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </td>
                                 <td className="px-6 py-4">
@@ -688,7 +742,7 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                                         <span className="material-symbols-outlined text-lg">more_vert</span>
                                     </button>
                                     {activeMenuId === file.id && (
-                                        <div className="absolute right-10 top-10 mt-1 w-40 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50 text-left">
+                                        <div className="absolute right-10 top-10 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-50 text-left">
                                             <button 
                                                 onClick={(e) => { e.stopPropagation(); handleOpenTracking(file); setActiveMenuId(null); }}
                                                 className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
@@ -709,7 +763,10 @@ export const OutgoingFiles: React.FC<{ user: User }> = ({ user }) => {
                                                     onClick={(e) => e.stopPropagation()}
                                                     className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                                                 >
-                                                    <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span> Ver PDF
+                                                    <span className={`material-symbols-outlined text-[16px] ${file.isSystemGenerated ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                      {file.isSystemGenerated ? 'verified' : 'attach_file'}
+                                                    </span>
+                                                    {file.isSystemGenerated ? 'Ver Constancia Generada' : 'Ver PDF Adjunto (Manual)'}
                                                 </a>
                                             )}
                                             {(user.role === 'Administrador' || user.role === 'Operador' || user.role === 'Director') && (

@@ -108,7 +108,7 @@ export interface IncomingFile {
 
 export interface OutgoingFile {
   id: string;
-  docType: 'Oficio' | 'Informe' | 'Circular' | 'Carta' | 'Proveido';
+  docType: string;
   docNumber: string; 
   refNumber: string; 
   subject: string;
@@ -116,6 +116,9 @@ export interface OutgoingFile {
   status?: 'Pendiente' | 'Finalizado' | 'Observado' | 'Archivado';
   pdfUrl?: string; 
   dateTime: string;
+  isSystemGenerated?: boolean;
+  hasAttachedPdf?: boolean;
+  studentName?: string;
 }
 
 export interface TrackingEvent {
