@@ -19,8 +19,12 @@ const app = express();
 process.on("unhandledRejection", (reason) => {
   console.error("[Server] Unhandled Rejection evitada:", reason);
 });
-process.on("uncaughtException", (err) => {
+process.on("uncaughtException", (err: any) => {
   console.error("[Server] Uncaught Exception capturada:", err);
+  if (err?.code === "EADDRINUSE") {
+    console.error("[Server] El puerto ya está en uso. Saliendo para permitir reinicio limpio...");
+    process.exit(1);
+  }
 });
 
 // Middlewares globales
@@ -170,14 +174,14 @@ async function bootstrap() {
   // 1. Ejecutar migraciones SQLite locales para asegurar que la estructura esté al día
   await runMigrations();
   
-  // 2. Iniciar el servicio de monitoreo de red (revisa conexión cada 15 segundos)
-  startNetworkMonitoring(15000);
+  // 2. Iniciar el servicio de monitoreo de red (revisa conexión cada 30 segundos con tolerancia)
+  startNetworkMonitoring(30000);
   
   // Registrar sincronización reactiva al recuperar conexión a internet
   onNetworkStatusChange((online) => {
     if (online) {
-      console.log("[Server] Conexion recuperada. Iniciando sincronizacion automatica e inmediata...");
-      runFullSync().catch((err) => {
+      console.log("[Server] Conexión recuperada. Sincronizando cambios locales pendientes...");
+      runFullSync(false).catch((err) => {
         console.error("[Server] Error al disparar la sincronizacion reactiva:", err);
       });
     }
@@ -193,8 +197,17 @@ async function bootstrap() {
   // startPdfBackupScheduler(24);
   
   // 6. Iniciar escucha del servidor HTTP en todas las interfaces de red (0.0.0.0)
-  app.listen(config.PORT, "0.0.0.0", () => {
+  const httpServer = app.listen(config.PORT, "0.0.0.0", () => {
     console.log(`[Server] Servidor backend Express escuchando en http://0.0.0.0:${config.PORT} (Red: http://10.10.16.214:${config.PORT})`);
+  });
+
+  httpServer.on("error", (error: any) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`\n[Server] [ERROR CRITICO] El puerto ${config.PORT} ya está en uso.`);
+    } else {
+      console.error("[Server] Error en servidor HTTP:", error);
+    }
+    process.exit(1);
   });
 }
 

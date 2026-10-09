@@ -2,9 +2,12 @@ import { config } from "../config/index.js";
 
 let _isOnline = false;
 let checkInterval: NodeJS.Timeout | null = null;
+let consecutiveFailures = 0;
+const MAX_FAILURES_BEFORE_OFFLINE = 3;
 
 /**
  * Verifica si hay conexión activa con la base de datos de Supabase.
+ * Aplica tolerancia a latencia y fallos intermitentes para evitar fluctuaciones falsas.
  */
 export async function checkOnlineStatus(): Promise<boolean> {
   if (!config.SUPABASE_URL) {
@@ -13,10 +16,9 @@ export async function checkOnlineStatus(): Promise<boolean> {
   }
   
   try {
-    // Intentar un fetch rápido al health check o url base de Supabase
-    // con un timeout prudente (6 segundos) para evitar falsos negativos por latencia
+    // Timeout prudente de 8 segundos para absorber picos temporales de red o consultas
     const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 6000);
+    const id = setTimeout(() => controller.abort(), 8000);
     
     // Llamar a la API REST de PostgREST de Supabase (url base)
     const response = await fetch(`${config.SUPABASE_URL}/rest/v1/`, {
@@ -28,9 +30,14 @@ export async function checkOnlineStatus(): Promise<boolean> {
     });
     
     clearTimeout(id);
-    _isOnline = true; // Si el servidor respondió (incluso con 401/403/404), estamos conectados a la nube
+    consecutiveFailures = 0;
+    _isOnline = true;
   } catch (error) {
-    _isOnline = false;
+    consecutiveFailures++;
+    // Solo si falla 3 veces consecutivas declaramos el estado como OFFLINE
+    if (consecutiveFailures >= MAX_FAILURES_BEFORE_OFFLINE) {
+      _isOnline = false;
+    }
   }
   
   return _isOnline;
@@ -51,9 +58,9 @@ export function isOnline(): boolean {
 }
 
 /**
- * Inicia el monitoreo continuo de red.
+ * Inicia el monitoreo continuo de red (cada 30s por defecto).
  */
-export function startNetworkMonitoring(intervalMs: number = 15000) {
+export function startNetworkMonitoring(intervalMs: number = 30000) {
   checkOnlineStatus();
   
   if (checkInterval) {
@@ -85,3 +92,4 @@ export function stopNetworkMonitoring() {
     checkInterval = null;
   }
 }
+

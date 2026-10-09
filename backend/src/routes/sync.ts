@@ -48,8 +48,8 @@ router.post("/trigger", async (req: Request, res: Response) => {
     return res.status(409).json({ message: "Sincronización ya se encuentra ejecutándose." });
   }
   
-  // Ejecutar de forma asíncrona para no colgar la llamada HTTP
-  runFullSync();
+  // Ejecutar de forma asíncrona forzando pull para atender la petición manual del usuario
+  runFullSync(true);
   
   res.status(202).json({ message: "Sincronización iniciada en segundo plano." });
 });

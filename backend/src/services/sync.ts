@@ -255,25 +255,39 @@ export async function pullSupabaseBackup() {
   console.log(`[Sync Engine] Sincronizacion de descarga (Pull) finalizada.`);
 }
 
+// Control de tiempo para evitar descargas masivas continuas (cooldown de 15 minutos)
+let lastPullTime = 0;
+const MIN_PULL_INTERVAL_MS = 15 * 60 * 1000;
+
 /**
- * Función principal que orquesta la sincronización completa.
+ * Función principal que orquesta la sincronización.
+ * @param forcePull Si es true, fuerza la descarga masiva de Supabase ignorando el cooldown de 15 min.
  */
-export async function runFullSync() {
+export async function runFullSync(forcePull: boolean = false) {
   if (_isSyncing) {
     console.log("[Sync Engine] Sincronización en curso. Omitiendo llamada.");
     return;
   }
   
   _isSyncing = true;
-  console.log("[Sync Engine] === Iniciando Ciclo de Sincronizacion Bidireccional ===");
+  console.log("[Sync Engine] === Iniciando Ciclo de Sincronizacion ===");
   
   try {
     const online = await isOnline();
     if (online) {
-      // 1. Primero subir cambios locales (para no machacarlos con el backup)
+      // 1. Primero subir cambios locales pendientes (Push ultrarrápido)
       await pushOfflineMutations();
-      // 2. Traer la base actualizada de la nube
-      await pullSupabaseBackup();
+
+      // 2. Traer la base actualizada de la nube solo si es forzado o si expiró el cooldown
+      const now = Date.now();
+      const elapsed = now - lastPullTime;
+      if (forcePull || elapsed >= MIN_PULL_INTERVAL_MS || lastPullTime === 0) {
+        await pullSupabaseBackup();
+        lastPullTime = Date.now();
+      } else {
+        const minRestantes = Math.ceil((MIN_PULL_INTERVAL_MS - elapsed) / 60000);
+        console.log(`[Sync Engine] Backup local reciente. Omitiendo descarga masiva (próximo Pull en ~${minRestantes} min).`);
+      }
     } else {
       console.log("[Sync Engine] Dispositivo Offline. No es posible sincronizar con Supabase.");
     }
@@ -292,7 +306,7 @@ export async function runFullSync() {
 export function startSyncScheduler(hours: number = 3) {
   // Ejecutar al arrancar después de validar la red inicial (delay de 5 segundos)
   setTimeout(() => {
-    runFullSync();
+    runFullSync(true);
   }, 5000);
   
   const intervalMs = hours * 60 * 60 * 1000;
@@ -302,7 +316,7 @@ export function startSyncScheduler(hours: number = 3) {
   }
   
   syncInterval = setInterval(() => {
-    runFullSync();
+    runFullSync(true);
   }, intervalMs);
 }
 
