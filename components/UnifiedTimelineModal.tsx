@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { isGoogleDriveUrl, formatDriveViewUrl } from '../lib/googleDriveService';
 
 interface UnifiedTimelineEvent {
   id: string;
@@ -185,21 +186,21 @@ export const UnifiedTimelineModal: React.FC<UnifiedTimelineModalProps> = ({ expe
   }, [expedienteNumber, outgoingFileId]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in zoom-in-95">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="px-8 py-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in zoom-in-95">
+      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="px-4 sm:px-8 py-3.5 sm:py-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
           <div>
-            <h3 className="font-black text-slate-900 uppercase tracking-tight text-xl">Historial del Expediente</h3>
-            <p className="text-sm font-bold text-primary mt-1">
+            <h3 className="font-black text-slate-900 uppercase tracking-tight text-base sm:text-xl">Historial del Expediente</h3>
+            <p className="text-xs sm:text-sm font-bold text-primary mt-0.5">
                 {expedienteNumber && expedienteNumber !== '-' ? `Nº Exp: ${expedienteNumber}` : 'Historial de Salida'}
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
-            <span className="material-symbols-outlined text-2xl">close</span>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors p-1">
+            <span className="material-symbols-outlined text-xl sm:text-2xl">close</span>
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50">
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-8 bg-slate-50/50">
           {loading ? (
             <div className="flex justify-center items-center h-40">
               <span className="material-symbols-outlined text-4xl text-primary animate-spin">progress_activity</span>
@@ -213,13 +214,13 @@ export const UnifiedTimelineModal: React.FC<UnifiedTimelineModalProps> = ({ expe
                 const primaryPdfEvent = events.find(e => e.pdfUrl && e.type === 'outgoing') || events.find(e => e.pdfUrl);
                 if (!primaryPdfEvent?.pdfUrl) return null;
                 return (
-                  <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-300 flex items-center justify-between shadow-sm">
+                  <div className="mb-4 sm:mb-6 p-3 sm:p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
                     <div className="flex items-center gap-3">
-                      <div className="size-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shrink-0">
-                        <span className="material-symbols-outlined text-2xl">picture_as_pdf</span>
+                      <div className="size-10 sm:size-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shrink-0">
+                        <span className="material-symbols-outlined text-xl sm:text-2xl">picture_as_pdf</span>
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
                             {primaryPdfEvent.isAttachedManual ? 'Documento Adjunto (Manual)' : 'Documento Oficial Generado (PDF)'}
                           </span>
@@ -227,17 +228,17 @@ export const UnifiedTimelineModal: React.FC<UnifiedTimelineModalProps> = ({ expe
                             {primaryPdfEvent.date.toLocaleDateString('es-PE')}
                           </span>
                         </div>
-                        <h4 className="font-black text-slate-900 text-sm mt-0.5">{primaryPdfEvent.title}</h4>
+                        <h4 className="font-black text-slate-900 text-xs sm:text-sm mt-0.5 truncate">{primaryPdfEvent.title}</h4>
                       </div>
                     </div>
                     <a
                       href={primaryPdfEvent.pdfUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all active:scale-95 shrink-0"
+                      className="w-full sm:w-auto justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all active:scale-95 shrink-0"
                     >
                       <span className="material-symbols-outlined text-base">open_in_new</span>
-                      <span>ABRIR PDF GENERADO</span>
+                      <span>ABRIR PDF</span>
                     </a>
                   </div>
                 );
@@ -266,16 +267,19 @@ export const UnifiedTimelineModal: React.FC<UnifiedTimelineModalProps> = ({ expe
                           }`}>
                             {event.type === 'incoming' ? 'Entrante' : event.type === 'outgoing' ? 'Salida' : 'Seguimiento'}
                           </span>
-                          {event.isGenerated && (
+                          {isGoogleDriveUrl(event.pdfUrl) ? (
                             <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              Google Drive
+                            </span>
+                          ) : event.isGenerated ? (
+                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
                               Generado QR
                             </span>
-                          )}
-                          {event.isAttachedManual && (
+                          ) : event.isAttachedManual ? (
                             <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
                               Adjunto Manual
                             </span>
-                          )}
+                          ) : null}
                           <span className="text-xs font-bold text-slate-400">
                             {event.date.toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </span>
@@ -302,17 +306,27 @@ export const UnifiedTimelineModal: React.FC<UnifiedTimelineModalProps> = ({ expe
                         </div>
                         {event.pdfUrl && (
                           <a 
-                            href={event.pdfUrl} 
+                            href={isGoogleDriveUrl(event.pdfUrl) ? formatDriveViewUrl(event.pdfUrl) : event.pdfUrl} 
                             target="_blank" 
                             rel="noopener noreferrer" 
                             className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase flex items-center gap-1.5 transition-all shadow-sm ${
-                              event.isAttachedManual 
+                              isGoogleDriveUrl(event.pdfUrl)
+                                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : event.isAttachedManual 
                                 ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' 
                                 : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
                             }`}
                           >
-                            <span className="material-symbols-outlined text-sm">picture_as_pdf</span>
-                            <span>{event.isAttachedManual ? 'Ver PDF Adjunto (Manual)' : 'Ver PDF Generado Oficial'}</span>
+                            <span className="material-symbols-outlined text-sm">
+                              {isGoogleDriveUrl(event.pdfUrl) ? 'cloud_done' : 'picture_as_pdf'}
+                            </span>
+                            <span>
+                              {isGoogleDriveUrl(event.pdfUrl)
+                                ? 'Ver en Google Drive'
+                                : event.isAttachedManual 
+                                ? 'Ver PDF Adjunto (Manual)' 
+                                : 'Ver PDF Generado Oficial'}
+                            </span>
                             <span className="material-symbols-outlined text-xs">open_in_new</span>
                           </a>
                         )}

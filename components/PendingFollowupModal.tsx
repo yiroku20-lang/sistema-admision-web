@@ -136,38 +136,38 @@ export const PendingFollowupModal: React.FC<PendingFollowupModalProps> = ({ onCl
   };
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in zoom-in-95">
-      <div className="bg-slate-50 rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-[90vh]">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-2.5 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in zoom-in-95">
+      <div className="bg-slate-50 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-[92vh]">
         {/* Header */}
-        <div className="px-8 py-6 border-b flex justify-between items-center bg-white shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center">
-              <span className="material-symbols-outlined text-2xl">pending_actions</span>
+        <div className="px-4 sm:px-8 py-3.5 sm:py-6 border-b flex flex-wrap justify-between items-center bg-white shrink-0 gap-3">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="size-10 sm:size-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-xl sm:text-2xl">pending_actions</span>
             </div>
             <div>
-              <h3 className="font-black text-xl text-slate-900 uppercase tracking-tight">Reporte de Pendientes</h3>
+              <h3 className="font-black text-base sm:text-xl text-slate-900 uppercase tracking-tight">Reporte de Pendientes</h3>
               <p className="text-xs font-bold text-slate-500">
                 {data.length} expedientes esperando atención
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button 
               onClick={handleExportPDF}
               disabled={generatingPdf || loading || data.length === 0}
-              className="flex items-center gap-2 px-6 py-3 bg-red-50 text-red-700 hover:bg-red-100 rounded-xl text-xs font-black uppercase transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 sm:py-3 bg-red-50 text-red-700 hover:bg-red-100 rounded-xl text-xs font-black uppercase transition-colors disabled:opacity-50"
             >
-              <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-              {generatingPdf ? 'Generando...' : 'Exportar PDF'}
+              <span className="material-symbols-outlined text-[16px] sm:text-[18px]">picture_as_pdf</span>
+              <span>{generatingPdf ? 'Generando...' : 'Exportar PDF'}</span>
             </button>
-            <button onClick={onClose} className="p-3 text-slate-400 hover:bg-slate-100 rounded-xl transition-colors">
+            <button onClick={onClose} className="p-2 sm:p-3 text-slate-400 hover:bg-slate-100 rounded-xl transition-colors">
               <span className="material-symbols-outlined">close</span>
             </button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="p-8 overflow-auto flex-1 hide-scrollbar">
+        <div className="p-3.5 sm:p-8 overflow-auto flex-1 hide-scrollbar">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400">
               <span className="material-symbols-outlined text-4xl animate-spin mb-4">progress_activity</span>

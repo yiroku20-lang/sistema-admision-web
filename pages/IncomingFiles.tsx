@@ -15,6 +15,7 @@ import {
   CUSCO_DATE_REGEX
 } from '../lib/templateVerification';
 import { logAuditEvent, logOutgoingAction, logEmissionAction } from '../lib/auditLogger';
+import { DEFAULT_DESTINATIONS } from './OutgoingFiles';
 
 
 
@@ -148,8 +149,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [outgoingDestination, setOutgoingDestination] = useState('');
   const [isEditingStudent, setIsEditingStudent] = useState(false);
   const [editedStudentName, setEditedStudentName] = useState('');
-  const [outgoingDestinationSuggestions, setOutgoingDestinationSuggestions] = useState<string[]>([]);
-  const [showOutgoingSuggestions, setShowOutgoingSuggestions] = useState(false);
+  const [isCustomOutgoingDestination, setIsCustomOutgoingDestination] = useState(false);
+  const [outgoingDestinationSuggestions, setOutgoingDestinationSuggestions] = useState<string[]>(DEFAULT_DESTINATIONS);
   const [outgoingDriveUrl, setOutgoingDriveUrl] = useState('');
   const [outgoingFile, setOutgoingFile] = useState<File | null>(null);
   const outgoingFileInputRef = useRef<HTMLInputElement>(null);
@@ -246,7 +247,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       try {
           const { data } = await supabase.from('expedientes_salida').select('destination');
           if (data) {
-              const uniqueDestinations = Array.from(new Set(data.map((item: any) => item.destination).filter(Boolean))) as string[];
+              const cleanDbDestinations = data
+                .map((item: any) => {
+                  const raw = item.destination;
+                  if (!raw || raw.startsWith('{') || raw.startsWith('[') || raw === '-') return null;
+                  return raw.trim().toUpperCase();
+                })
+                .filter(Boolean) as string[];
+              const uniqueDestinations = Array.from(new Set([...DEFAULT_DESTINATIONS, ...cleanDbDestinations])).sort((a, b) => a.localeCompare(b));
               setOutgoingDestinationSuggestions(uniqueDestinations);
           }
       } catch (err) {
@@ -853,6 +861,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           setOutgoingDocNumber('');
           setOutgoingRefNumber(file.number);
           setOutgoingSubject(`RESPUESTA A: ${file.subject}`);
+          setOutgoingDestination('');
+          setIsCustomOutgoingDestination(false);
           setOutgoingDriveUrl('');
           setOutgoingFile(null);
           setIsOutgoingModalOpen(true);
@@ -2307,39 +2317,67 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                               <span className="text-[10px] font-black text-slate-500 uppercase">Referencia</span>
                               <input value={outgoingRefNumber} onChange={e => setOutgoingRefNumber(e.target.value)} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold" placeholder="Expediente de origen" />
                           </label>
-                          <div className="relative flex flex-col gap-1">
-                              <span className="text-[10px] font-black text-slate-500 uppercase">Destino</span>
-                              <input 
-                                  value={outgoingDestination} 
-                                  onChange={e => {
-                                      setOutgoingDestination(e.target.value.toUpperCase());
-                                      setShowOutgoingSuggestions(true);
-                                  }} 
-                                  onFocus={() => setShowOutgoingSuggestions(true)}
-                                  onBlur={() => setTimeout(() => setShowOutgoingSuggestions(false), 200)}
-                                  className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold" 
-                                  placeholder="Oficina de destino..." 
-                              />
-                              {showOutgoingSuggestions && outgoingDestinationSuggestions.filter(s => s.toLowerCase().includes(outgoingDestination.toLowerCase()) && s !== outgoingDestination).length > 0 && (
-                                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 max-h-40 overflow-y-auto">
-                                      {outgoingDestinationSuggestions
-                                          .filter(s => s.toLowerCase().includes(outgoingDestination.toLowerCase()) && s !== outgoingDestination)
-                                          .map((s, i) => (
-                                              <button 
-                                                  key={i} 
-                                                  onClick={() => {
-                                                      setOutgoingDestination(s);
-                                                      setShowOutgoingSuggestions(false);
-                                                  }}
-                                                  className="w-full text-left px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                                              >
-                                                  {s}
-                                              </button>
-                                          ))
-                                      }
+                          {!isCustomOutgoingDestination ? (
+                              <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-500 uppercase">Destino</span>
+                                  <select 
+                                      value={outgoingDestination} 
+                                      onChange={e => {
+                                          if (e.target.value === '__custom__') {
+                                              setIsCustomOutgoingDestination(true);
+                                              setOutgoingDestination('');
+                                          } else {
+                                              setOutgoingDestination(e.target.value);
+                                          }
+                                      }} 
+                                      className="h-12 px-3 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold uppercase focus:bg-white focus:border-primary outline-none transition-all"
+                                  >
+                                      <option value="">-- SELECCIONE DESTINO DE LA LISTA --</option>
+                                      {outgoingDestinationSuggestions.map(dest => (
+                                          <option key={dest} value={dest}>{dest}</option>
+                                      ))}
+                                      <option value="__custom__">➕ OTRO / ESCRIBIR NUEVO DESTINO...</option>
+                                  </select>
+                              </div>
+                          ) : (
+                              <div className="flex flex-col gap-1 animate-in fade-in">
+                                  <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-black text-primary uppercase flex items-center gap-1">
+                                          <span className="material-symbols-outlined text-[13px]">edit</span>
+                                          Nuevo Destino
+                                      </span>
+                                      <button
+                                          type="button"
+                                          onClick={() => {
+                                              setIsCustomOutgoingDestination(false);
+                                              if (!outgoingDestinationSuggestions.includes(outgoingDestination)) {
+                                                  setOutgoingDestination('');
+                                              }
+                                          }}
+                                          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 hover:underline"
+                                      >
+                                          <span className="material-symbols-outlined text-[13px]">list</span>
+                                          Elegir de lista
+                                      </button>
                                   </div>
-                              )}
-                          </div>
+                                  <div className="relative flex items-center">
+                                      <input 
+                                          type="text" 
+                                          list="incoming-destinos-datalist"
+                                          value={outgoingDestination} 
+                                          onChange={e => setOutgoingDestination(e.target.value.toUpperCase())} 
+                                          className="w-full h-12 px-4 rounded-xl border-2 border-primary/40 bg-primary/5 text-sm font-bold uppercase focus:bg-white focus:border-primary outline-none transition-all" 
+                                          placeholder="Escriba el nombre del destino..." 
+                                          autoFocus
+                                      />
+                                      <datalist id="incoming-destinos-datalist">
+                                          {outgoingDestinationSuggestions.map(d => (
+                                              <option key={d} value={d} />
+                                          ))}
+                                      </datalist>
+                                  </div>
+                              </div>
+                          )}
                       </div>
                       <label className="flex flex-col gap-1">
                           <span className="text-[10px] font-black text-slate-500 uppercase">Asunto</span>

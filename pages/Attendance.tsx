@@ -47,7 +47,8 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
   const [selectedUserForReport, setSelectedUserForReport] = useState<any | null>(null);
   const [individualHistory, setIndividualHistory] = useState<any[]>([]);
   const [reportTotalHours, setReportTotalHours] = useState('00:00');
-  const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<AttendanceRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // CSV Import
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -292,6 +293,29 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
       notify(err.message, 'error');
     } finally {
       setIsSearchingHistory(false);
+    }
+  };
+
+  const confirmDeleteRecord = async () => {
+    if (!recordToDelete) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('asistencia')
+        .delete()
+        .eq('id', recordToDelete.id);
+
+      if (error) throw error;
+
+      notify('Marca de asistencia eliminada correctamente', 'success');
+      setHistoryRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      setTodayRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      setRecordToDelete(null);
+    } catch (err: any) {
+      console.error('Error al eliminar registro de asistencia:', err);
+      notify(`Error al eliminar: ${err?.message || 'Error desconocido'}`, 'error');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -702,9 +726,18 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{record.dni}</p>
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-sm font-black text-slate-700">{record.hora.substring(0, 5)}</p>
-                                            <p className={`text-[9px] font-black uppercase tracking-widest ${record.tipo === 'INGRESO' ? 'text-emerald-600' : 'text-amber-600'}`}>{record.tipo}</p>
+                                        <div className="flex items-center gap-2">
+                                            <div className="text-right">
+                                                <p className="text-sm font-black text-slate-700">{record.hora.substring(0, 5)}</p>
+                                                <p className={`text-[9px] font-black uppercase tracking-widest ${record.tipo === 'INGRESO' ? 'text-emerald-600' : 'text-amber-600'}`}>{record.tipo}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => setRecordToDelete(record)}
+                                                className="size-8 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                title="Eliminar marca"
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">delete</span>
+                                            </button>
                                         </div>
                                     </div>
                                 ))}
@@ -826,8 +859,9 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                                     </td>
                                     <td className="px-6 py-4 rounded-r-2xl border-y border-r border-slate-100 group-hover:border-slate-200 text-right">
                                         <button 
-                                            onClick={() => setRecordToDelete(record.id)}
+                                            onClick={() => setRecordToDelete(record)}
                                             className="size-8 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all flex items-center justify-center ml-auto"
+                                            title="Eliminar marca de asistencia"
                                         >
                                             <span className="material-symbols-outlined text-[18px]">delete</span>
                                         </button>
@@ -1123,6 +1157,81 @@ export const Attendance: React.FC<AttendanceProps> = ({ user, notify }) => {
                   </div>
               </div>
           </div>
+      )}
+
+      {/* Modal de Confirmación para Eliminar Registro de Asistencia */}
+      {recordToDelete && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in zoom-in-95">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 sm:p-8 flex flex-col animate-in fade-in">
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="size-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center border border-red-100 shrink-0">
+                <span className="material-symbols-outlined text-2xl">delete_forever</span>
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 uppercase tracking-tight">
+                  Eliminar Asistencia
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">Esta acción no se puede deshacer</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-5 flex flex-col gap-2.5">
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Personal Operador</span>
+                  <p className="text-sm font-black text-slate-900 uppercase leading-snug truncate">{getUserDisplayName(recordToDelete)}</p>
+                  <p className="text-xs font-bold text-slate-500 font-mono mt-0.5">DNI: {recordToDelete.dni}</p>
+                </div>
+                <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border shrink-0 ${
+                  recordToDelete.tipo === 'INGRESO'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  {recordToDelete.tipo}
+                </span>
+              </div>
+
+              <div className="pt-2.5 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600 font-bold">
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm text-slate-400">calendar_today</span>
+                  {recordToDelete.fecha}
+                </span>
+                <span className="flex items-center gap-1.5 font-mono">
+                  <span className="material-symbols-outlined text-sm text-slate-400">schedule</span>
+                  {recordToDelete.hora?.substring(0, 5)} hrs
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-6 font-medium leading-relaxed">
+              ¿Está seguro de que desea eliminar permanentemente este registro de asistencia?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setRecordToDelete(null)}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteRecord}
+                disabled={isDeleting}
+                className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-red-600/25 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                ) : (
+                  <span className="material-symbols-outlined text-sm">delete</span>
+                )}
+                <span>{isDeleting ? 'Eliminando...' : 'Sí, Eliminar'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

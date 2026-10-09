@@ -183,7 +183,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard user={user} />} />
                 <Route path="/incoming" element={<IncomingFiles user={user} notify={addToast} />} />
-                <Route path="/outgoing" element={<OutgoingFiles user={user} />} />
+                <Route path="/outgoing" element={<OutgoingFiles user={user} notify={addToast} />} />
                 <Route path="/lookup" element={<StudentLookup user={user} />} />
                 <Route path="/resolutions" element={<Resolutions user={user} />} />
                 <Route path="/payments" element={<TransferRefunds user={user} />} />
