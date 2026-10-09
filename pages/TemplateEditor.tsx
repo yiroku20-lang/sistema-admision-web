@@ -29,20 +29,22 @@ const DEFAULT_CONSTANCIA_HTML = `
         
         <!-- Marca de Agua -->
         <div id="watermark-container" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 0; opacity: 0.08;">
-             <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png" style="width: 70%; height: auto; filter: grayscale(100%);" />
+             <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" style="width: 65%; height: auto; filter: grayscale(100%);" />
         </div>
 
-        <!-- Encabezado -->
-        <div style="position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-            <div style="text-align: center;">
-                <h2 style="font-family: 'Cinzel', serif; font-size: 22px; font-weight: 700; margin: 0; line-height: 1.1; color: #7b1523; letter-spacing: 0px; text-transform: uppercase;">
+        <!-- Encabezado con Logos Oficiales -->
+        <div style="position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1.5px solid #e2e8f0;">
+            <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" alt="Escudo UNSAAC" style="height: 62px; width: auto; object-fit: contain;" />
+            <div style="text-align: center; flex: 1; padding: 0 10px;">
+                <h2 style="font-family: 'Cinzel', serif; font-size: 19px; font-weight: 700; margin: 0; line-height: 1.15; color: #7b1523; letter-spacing: 0px; text-transform: uppercase;">
                     UNIVERSIDAD NACIONAL DE SAN ANTONIO<br>ABAD DEL CUSCO
                 </h2>
-                <div style="width: 50px; height: 3px; background: #e8a134; margin: 8px auto;"></div>
-                <h3 style="font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 600; margin-top: 4px; color: #333; letter-spacing: 2px; text-transform: uppercase;">
+                <div style="width: 50px; height: 3px; background: #e8a134; margin: 6px auto;"></div>
+                <h3 style="font-family: 'Poppins', sans-serif; font-size: 13px; font-weight: 600; margin: 2px 0 0 0; color: #333; letter-spacing: 2px; text-transform: uppercase;">
                     DIRECCIÓN DE ADMISIÓN
                 </h3>
             </div>
+            <img src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%20color%20negro.png" alt="Logo Admisión" style="height: 52px; width: auto; object-fit: contain;" />
         </div>
 
         <!-- Cuerpo -->

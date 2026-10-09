@@ -14,7 +14,8 @@ import {
   getFormattedCurrentDate,
   CUSCO_DATE_REGEX
 } from '../lib/templateVerification';
-import { logAuditEvent } from '../lib/auditLogger';
+import { logAuditEvent, logOutgoingAction, logEmissionAction } from '../lib/auditLogger';
+import { DEFAULT_DESTINATIONS } from './OutgoingFiles';
 
 
 
@@ -43,6 +44,16 @@ interface GroupedIncomingFile extends IncomingFile {
     dateTime: string;
     status: string;
   }[];
+  outgoingDoc?: {
+    id: string;
+    doc_type: string;
+    doc_number: string;
+    ref_number?: string;
+    pdf_url?: string | null;
+    destination?: string;
+    isGenerated?: boolean;
+    created_at?: string;
+  };
 }
 
 export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) => {
@@ -138,8 +149,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
   const [outgoingDestination, setOutgoingDestination] = useState('');
   const [isEditingStudent, setIsEditingStudent] = useState(false);
   const [editedStudentName, setEditedStudentName] = useState('');
-  const [outgoingDestinationSuggestions, setOutgoingDestinationSuggestions] = useState<string[]>([]);
-  const [showOutgoingSuggestions, setShowOutgoingSuggestions] = useState(false);
+  const [isCustomOutgoingDestination, setIsCustomOutgoingDestination] = useState(false);
+  const [outgoingDestinationSuggestions, setOutgoingDestinationSuggestions] = useState<string[]>(DEFAULT_DESTINATIONS);
   const [outgoingDriveUrl, setOutgoingDriveUrl] = useState('');
   const [outgoingFile, setOutgoingFile] = useState<File | null>(null);
   const outgoingFileInputRef = useRef<HTMLInputElement>(null);
@@ -236,7 +247,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       try {
           const { data } = await supabase.from('expedientes_salida').select('destination');
           if (data) {
-              const uniqueDestinations = Array.from(new Set(data.map((item: any) => item.destination).filter(Boolean))) as string[];
+              const cleanDbDestinations = data
+                .map((item: any) => {
+                  const raw = item.destination;
+                  if (!raw || raw.startsWith('{') || raw.startsWith('[') || raw === '-') return null;
+                  return raw.trim().toUpperCase();
+                })
+                .filter(Boolean) as string[];
+              const uniqueDestinations = Array.from(new Set([...DEFAULT_DESTINATIONS, ...cleanDbDestinations])).sort((a, b) => a.localeCompare(b));
               setOutgoingDestinationSuggestions(uniqueDestinations);
           }
       } catch (err) {
@@ -295,15 +313,67 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
       if (searchQuery.trim()) {
         query = query.or(`number.ilike.%${searchQuery.trim()}%,subject.ilike.%${searchQuery.trim()}%`);
       }
-      const { data, error } = await query.order('created_at', { ascending: false }).limit(1000);
+      const [filesRes, salidasRes] = await Promise.all([
+        query.order('created_at', { ascending: false }).limit(1000),
+        supabase.from('expedientes_salida').select('id, doc_type, doc_number, ref_number, destination, pdf_url, created_at').order('created_at', { ascending: false }).limit(1000)
+      ]);
+
+      const data = filesRes.data;
+      const error = filesRes.error;
+      const salidasData = salidasRes.data || [];
+
       if (error) {
         console.error("Error fetching files:", error);
         notify("Error al conectar con expedientes: " + error.message, "error");
       }
       if (data) {
+        // Construir mapa de salidas por ref_number y por destination JSON (expediente_numero)
+        const salidasMap = new Map<string, any>();
+        salidasData.forEach((s: any) => {
+          let expNum = s.ref_number;
+          let isGen = false;
+          if (s.destination && s.destination.startsWith('{')) {
+            try {
+              const meta = JSON.parse(s.destination);
+              if (meta.expediente_numero) {
+                expNum = meta.expediente_numero;
+              }
+              isGen = true;
+            } catch (e) {}
+          }
+          if (s.doc_number && (s.doc_number.startsWith('UNSAAC-CONST-') || s.doc_number.startsWith('UNSAAC-INF-') || s.doc_type?.toLowerCase().includes('informe') || s.doc_type?.toLowerCase().includes('constancia'))) {
+            isGen = true;
+          }
+
+          const outObj = {
+            id: s.id,
+            doc_type: s.doc_type || 'Documento',
+            doc_number: s.doc_number || '',
+            ref_number: s.ref_number,
+            pdf_url: s.pdf_url,
+            destination: s.destination,
+            isGenerated: isGen,
+            created_at: s.created_at
+          };
+
+          if (s.ref_number) {
+            const cur = salidasMap.get(s.ref_number);
+            if (!cur || (!cur.pdf_url && s.pdf_url)) {
+              salidasMap.set(s.ref_number, outObj);
+            }
+          }
+          if (expNum && expNum !== s.ref_number) {
+            const cur = salidasMap.get(expNum);
+            if (!cur || (!cur.pdf_url && s.pdf_url)) {
+              salidasMap.set(expNum, outObj);
+            }
+          }
+        });
+
         const groupedMap = new Map<string, GroupedIncomingFile>();
 
         data.forEach((item: any) => {
+            const outDoc = salidasMap.get(item.number);
             const currentFile = {
                 id: item.id,
                 number: item.number,
@@ -316,7 +386,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                 assigned_by: item.assigned_by,
                 assignment_notes: item.assignment_notes,
                 assignment_type: item.assignment_type,
-                assignment_status: item.assignment_status
+                assignment_status: item.assignment_status,
+                outgoingDoc: outDoc
             };
 
             if (groupedMap.has(item.number)) {
@@ -338,6 +409,9 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                     existing.assignment_type = item.assignment_type;
                     existing.assignment_status = item.assignment_status;
                 }
+                if (!existing.outgoingDoc && outDoc) {
+                    existing.outgoingDoc = outDoc;
+                }
             } else {
                 groupedMap.set(item.number, {
                     ...currentFile,
@@ -347,7 +421,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                         subject: item.subject,
                         dateTime: currentFile.dateTime,
                         status: item.status
-                    }]
+                    }],
+                    outgoingDoc: outDoc
                 });
             }
         });
@@ -713,6 +788,18 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           }]);
           if (error) throw error;
 
+          // Registrar en auditoría la salida manual
+          try {
+            await logOutgoingAction(
+              'Registro',
+              outgoingDocType,
+              outgoingDocNumber.trim(),
+              outgoingDestination.trim().toUpperCase(),
+              Boolean(publicUrl),
+              outgoingFile?.name
+            );
+          } catch (e) {}
+
           // 2. Update Incoming Status
           await handleStatusChange(fileToAttend.id, 'Atendido');
           
@@ -774,6 +861,8 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           setOutgoingDocNumber('');
           setOutgoingRefNumber(file.number);
           setOutgoingSubject(`RESPUESTA A: ${file.subject}`);
+          setOutgoingDestination('');
+          setIsCustomOutgoingDestination(false);
           setOutgoingDriveUrl('');
           setOutgoingFile(null);
           setIsOutgoingModalOpen(true);
@@ -1227,44 +1316,77 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           await supabase.from('expedientes').update({ status: 'Atendido' }).eq('number', fileToAttend.number);
 
           // 4. Register in Outgoing Files
-          if (manualValues['INFORME'] || isConstancia) {
-              const issuedDocNumber = (isConstancia && qrInfo?.code)
-                ? qrInfo.code
-                : (manualValues['INFORME'] || manualValues['CONSTANCIA'] || `C-${fileToAttend.number}`);
+          if (isConstancia && qrInfo?.code) {
+              // Registro de Emisión Oficial con código QR, iniciales y PDF vinculado
+              const initials = getUserInitials(user);
+              await registerDocumentEmission({
+                  verificationCode: qrInfo.code,
+                  documentType: selectedTemplate?.name || 'CONSTANCIA DE INGRESO',
+                  studentName: selectedStudent.NOMBRE,
+                  studentDni: selectedStudent.CODPOSTULANTE,
+                  studentCode: selectedStudent.CODPOSTULANTE,
+                  career: selectedStudent.CARRERA,
+                  modality: selectedStudent.MODALIDAD,
+                  semester: selectedStudent.SEMESTRE,
+                  score: selectedStudent.NOTA,
+                  meritOrder: selectedStudent.OMERITO,
+                  admissionDate: selectedStudent.FECHAINGRESO,
+                  expNumber: fileToAttend.number,
+                  receiptNumber: boucherNumber || manualValues['BOUCHER'] || '',
+                  userName: user?.name,
+                  userInitials: initials,
+                  userId: user?.id,
+                  pdfUrl: urlData.publicUrl
+              }).catch(e => console.warn('Error al registrar emisión oficial:', e));
+          } else {
+              // Registro de INFORME Oficial o trámite recurrente generado (Rectificación, Renuncia, etc.)
+              const isReport = Boolean(manualValues['INFORME'] || selectedTemplate?.name?.toLowerCase().includes('informe') || fileToAttend.subject.toLowerCase().includes('informe'));
+              const issuedDocType = isReport 
+                ? (selectedTemplate?.name || 'INFORME DE RECTIFICACIÓN DE DATOS') 
+                : (selectedTemplate?.name || (isConstancia ? 'CONSTANCIA DE INGRESO' : 'INFORME TÉCNICO'));
+              const issuedDocNumber = manualValues['INFORME'] || manualValues['CONSTANCIA'] || (qrInfo?.code ? qrInfo.code : `INF-${fileToAttend.number}`);
+              const initials = getUserInitials(user);
+
+              const destinationMeta = {
+                tipo_documento: issuedDocType,
+                estudiante_nombre: selectedStudent?.NOMBRE || '',
+                estudiante_dni: selectedStudent?.CODPOSTULANTE || '',
+                estudiante_codigo: selectedStudent?.CODPOSTULANTE || '',
+                carrera: selectedStudent?.CARRERA || '',
+                modalidad: selectedStudent?.MODALIDAD || '',
+                semestre: selectedStudent?.SEMESTRE || '',
+                expediente_numero: fileToAttend.number,
+                recibo_pago: boucherNumber || manualValues['BOUCHER'] || '',
+                usuario_nombre: user?.name || '',
+                usuario_iniciales: initials,
+                fecha_emision: new Date().toISOString()
+              };
 
               await supabase.from('expedientes_salida').insert([{
-                  doc_type: isConstancia ? 'Constancia' : 'Informe',
+                  doc_type: issuedDocType,
                   doc_number: issuedDocNumber,
                   ref_number: fileToAttend.number,
-                  subject: fileToAttend.subject,
-                  destination: isConstancia ? 'ESTUDIANTE' : 'COMPUTO',
+                  subject: `${issuedDocType} - ${selectedStudent?.NOMBRE || fileToAttend.subject}`,
+                  destination: JSON.stringify(destinationMeta),
                   status: 'Finalizado',
                   pdf_url: urlData.publicUrl,
                   created_by: user.id
               }]);
 
-              // Registrar trazabilidad oficial con QR e iniciales para verificación pública
-              if (isConstancia && qrInfo?.code) {
-                  const initials = getUserInitials(user);
-                  await registerDocumentEmission({
-                      verificationCode: qrInfo.code,
-                      documentType: selectedTemplate.name || 'CONSTANCIA DE INGRESO',
-                      studentName: selectedStudent.NOMBRE,
-                      studentDni: selectedStudent.CODPOSTULANTE,
-                      studentCode: selectedStudent.CODPOSTULANTE,
-                      career: selectedStudent.CARRERA,
-                      modality: selectedStudent.MODALIDAD,
-                      semester: selectedStudent.SEMESTRE,
-                      score: selectedStudent.NOTA,
-                      meritOrder: selectedStudent.OMERITO,
-                      admissionDate: selectedStudent.FECHAINGRESO,
-                      expNumber: fileToAttend.number,
-                      receiptNumber: boucherNumber || manualValues['BOUCHER'] || '',
-                      userName: user?.name,
-                      userInitials: initials,
-                      userId: user?.id
-                  }).catch(e => console.warn('Error al registrar emisión oficial:', e));
+              // Registrar en auditoría central
+              try {
+                await logEmissionAction(
+                  issuedDocType,
+                  selectedStudent?.NOMBRE || 'ESTUDIANTE',
+                  selectedStudent?.CODPOSTULANTE || 'S/DNI',
+                  issuedDocNumber,
+                  fileToAttend.number,
+                  urlData.publicUrl
+                );
+              } catch (auditErr) {
+                console.warn('Error al registrar auditoría de informe:', auditErr);
               }
+          }
 
               if (fileToAttend.subject.toUpperCase().includes('RENUNCIA')) {
                   await supabase.from('renuncias').insert([{
@@ -1278,7 +1400,6 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                       status: 'Pendiente Resolución'
                   }]);
               }
-          }
           
           // 5. Trigger Download (Automatic only if it's not a constancia, e.g. it's an Informe or general document)
           if (!isConstancia && !signedPdf) {
@@ -2196,39 +2317,67 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                               <span className="text-[10px] font-black text-slate-500 uppercase">Referencia</span>
                               <input value={outgoingRefNumber} onChange={e => setOutgoingRefNumber(e.target.value)} className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold" placeholder="Expediente de origen" />
                           </label>
-                          <div className="relative flex flex-col gap-1">
-                              <span className="text-[10px] font-black text-slate-500 uppercase">Destino</span>
-                              <input 
-                                  value={outgoingDestination} 
-                                  onChange={e => {
-                                      setOutgoingDestination(e.target.value.toUpperCase());
-                                      setShowOutgoingSuggestions(true);
-                                  }} 
-                                  onFocus={() => setShowOutgoingSuggestions(true)}
-                                  onBlur={() => setTimeout(() => setShowOutgoingSuggestions(false), 200)}
-                                  className="h-12 px-4 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold" 
-                                  placeholder="Oficina de destino..." 
-                              />
-                              {showOutgoingSuggestions && outgoingDestinationSuggestions.filter(s => s.toLowerCase().includes(outgoingDestination.toLowerCase()) && s !== outgoingDestination).length > 0 && (
-                                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 max-h-40 overflow-y-auto">
-                                      {outgoingDestinationSuggestions
-                                          .filter(s => s.toLowerCase().includes(outgoingDestination.toLowerCase()) && s !== outgoingDestination)
-                                          .map((s, i) => (
-                                              <button 
-                                                  key={i} 
-                                                  onClick={() => {
-                                                      setOutgoingDestination(s);
-                                                      setShowOutgoingSuggestions(false);
-                                                  }}
-                                                  className="w-full text-left px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                                              >
-                                                  {s}
-                                              </button>
-                                          ))
-                                      }
+                          {!isCustomOutgoingDestination ? (
+                              <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-black text-slate-500 uppercase">Destino</span>
+                                  <select 
+                                      value={outgoingDestination} 
+                                      onChange={e => {
+                                          if (e.target.value === '__custom__') {
+                                              setIsCustomOutgoingDestination(true);
+                                              setOutgoingDestination('');
+                                          } else {
+                                              setOutgoingDestination(e.target.value);
+                                          }
+                                      }} 
+                                      className="h-12 px-3 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-bold uppercase focus:bg-white focus:border-primary outline-none transition-all"
+                                  >
+                                      <option value="">-- SELECCIONE DESTINO DE LA LISTA --</option>
+                                      {outgoingDestinationSuggestions.map(dest => (
+                                          <option key={dest} value={dest}>{dest}</option>
+                                      ))}
+                                      <option value="__custom__">➕ OTRO / ESCRIBIR NUEVO DESTINO...</option>
+                                  </select>
+                              </div>
+                          ) : (
+                              <div className="flex flex-col gap-1 animate-in fade-in">
+                                  <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-black text-primary uppercase flex items-center gap-1">
+                                          <span className="material-symbols-outlined text-[13px]">edit</span>
+                                          Nuevo Destino
+                                      </span>
+                                      <button
+                                          type="button"
+                                          onClick={() => {
+                                              setIsCustomOutgoingDestination(false);
+                                              if (!outgoingDestinationSuggestions.includes(outgoingDestination)) {
+                                                  setOutgoingDestination('');
+                                              }
+                                          }}
+                                          className="text-[10px] font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 hover:underline"
+                                      >
+                                          <span className="material-symbols-outlined text-[13px]">list</span>
+                                          Elegir de lista
+                                      </button>
                                   </div>
-                              )}
-                          </div>
+                                  <div className="relative flex items-center">
+                                      <input 
+                                          type="text" 
+                                          list="incoming-destinos-datalist"
+                                          value={outgoingDestination} 
+                                          onChange={e => setOutgoingDestination(e.target.value.toUpperCase())} 
+                                          className="w-full h-12 px-4 rounded-xl border-2 border-primary/40 bg-primary/5 text-sm font-bold uppercase focus:bg-white focus:border-primary outline-none transition-all" 
+                                          placeholder="Escriba el nombre del destino..." 
+                                          autoFocus
+                                      />
+                                      <datalist id="incoming-destinos-datalist">
+                                          {outgoingDestinationSuggestions.map(d => (
+                                              <option key={d} value={d} />
+                                          ))}
+                                      </datalist>
+                                  </div>
+                              </div>
+                          )}
                       </div>
                       <label className="flex flex-col gap-1">
                           <span className="text-[10px] font-black text-slate-500 uppercase">Asunto</span>
@@ -2320,13 +2469,14 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                             <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase w-32 tracking-widest">Nº Exp</th>
                             <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase tracking-widest">Asunto</th>
                             <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase w-48 tracking-widest">Último Ingreso</th>
-                            <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase w-40 tracking-widest">Estado</th>
+                            <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase w-36 tracking-widest">Estado</th>
+                            <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase text-center w-52 tracking-widest">Referencia / Salida</th>
                             <th className="px-6 py-4 text-slate-500 text-[10px] font-black uppercase text-right w-40 pr-10 tracking-widest">Gestión</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
                         {files.length === 0 ? (
-                            <tr><td colSpan={5} className="py-20 text-center text-slate-300 font-black uppercase text-xs tracking-widest">No hay expedientes para mostrar</td></tr>
+                            <tr><td colSpan={6} className="py-20 text-center text-slate-300 font-black uppercase text-xs tracking-widest">No hay expedientes para mostrar</td></tr>
                         ) : (
                             files.map((file) => {
                                 const assignedUser = file.assigned_to ? operators.find(op => op.id === file.assigned_to) : null;
@@ -2457,6 +2607,45 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
                                                     <option key={opt} value={opt}>{opt}</option>
                                                 ))}
                                             </select>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-5 text-center">
+                                        {file.outgoingDoc?.pdf_url ? (
+                                            <a
+                                                href={file.outgoingDoc.pdf_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-[10px] font-black uppercase tracking-wider transition-all shadow-sm hover:scale-105 active:scale-95 group/pdf"
+                                                title={`Abrir Documento Generado: ${file.outgoingDoc.doc_type} ${file.outgoingDoc.doc_number}`}
+                                            >
+                                                <span className="material-symbols-outlined text-[16px] text-emerald-600">picture_as_pdf</span>
+                                                <div className="flex flex-col text-left">
+                                                    <span className="leading-tight text-[10px] font-black text-emerald-950 truncate max-w-[130px]">
+                                                        {file.outgoingDoc.doc_type}
+                                                    </span>
+                                                    <span className="text-[9px] text-emerald-700 font-mono font-bold truncate max-w-[130px]">
+                                                        {file.outgoingDoc.doc_number || 'Ver PDF'}
+                                                    </span>
+                                                </div>
+                                                <span className="material-symbols-outlined text-[12px] text-emerald-600 group-hover/pdf:translate-x-0.5 transition-transform">open_in_new</span>
+                                            </a>
+                                        ) : file.outgoingDoc?.doc_number ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-mono font-bold" title={`Salida registrada: ${file.outgoingDoc.doc_type} ${file.outgoingDoc.doc_number}`}>
+                                                <span className="material-symbols-outlined text-[14px] text-slate-500">description</span>
+                                                <span className="truncate max-w-[120px]">{file.outgoingDoc.doc_number}</span>
+                                            </span>
+                                        ) : file.status === 'Atendido' ? (
+                                            <button
+                                                onClick={() => setUnifiedTimelineExpediente({ refNumber: file.number })}
+                                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-[10px] font-bold transition-colors"
+                                                title="Trámite Atendido - Ver Detalle e Historial"
+                                            >
+                                                <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                                                Atendido
+                                            </button>
+                                        ) : (
+                                            <span className="text-slate-300 text-xs">-</span>
                                         )}
                                     </td>
                                     <td className="px-6 py-5 text-right pr-10">

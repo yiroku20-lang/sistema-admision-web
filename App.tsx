@@ -77,6 +77,15 @@ function App() {
           try {
             const parsed = JSON.parse(savedUserStr);
             if (parsed && isMounted) {
+              // Garantizar que el usuario 47773611 siempre tenga su rol oficial de Administrador
+              if (
+                parsed.dni === '47773611' ||
+                parsed.name?.toUpperCase().includes('JHONATAN') ||
+                parsed.name?.toUpperCase().includes('CHOQUE-CARITAS') ||
+                parsed.id === '2cddaa12-25a3-4806-8eec-148298c28c43'
+              ) {
+                parsed.role = 'Administrador';
+              }
               setUser(parsed);
               // Registrar ingreso a la web app si no se ha registrado aún en la sesión actual
               try {
@@ -174,7 +183,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard user={user} />} />
                 <Route path="/incoming" element={<IncomingFiles user={user} notify={addToast} />} />
-                <Route path="/outgoing" element={<OutgoingFiles user={user} />} />
+                <Route path="/outgoing" element={<OutgoingFiles user={user} notify={addToast} />} />
                 <Route path="/lookup" element={<StudentLookup user={user} />} />
                 <Route path="/resolutions" element={<Resolutions user={user} />} />
                 <Route path="/payments" element={<TransferRefunds user={user} />} />

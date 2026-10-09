@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan de implementación para la integración de variable de código QR de verificación pública y variable de iniciales del usuario emisor en la Gestión de Plantillas de Admisión UNSAAC.",
-  "updatedAt":  "2026-10-06T00:50:54.935853014Z",
+  "summary":  "Plan de implementación enfocado exclusivamente en el almacenamiento de PDFs de Expedientes de Salida en Google Drive para liberar espacio en Supabase:\n1. Configuración del enlace o ID de la carpeta de Google Drive institucional.\n2. Subida del archivo PDF directamente hacia Google Drive (vía script/API con autenticación segura).\n3. Guardado en Supabase únicamente del enlace oficial de visualización (pdf_url), reduciendo el consumo de almacenamiento en Supabase a 0 KB por archivo binario.\n4. Interfaz en Mesa de Salidas con indicador de estado de subida a Drive y apertura directa de documentos.",
+  "updatedAt":  "2026-10-08T05:21:37.378669063Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -4,6 +4,8 @@ import nodemailer from "nodemailer";
 import { createClient } from "@supabase/supabase-js";
 import cors from "cors";
 import { GoogleGenAI } from "@google/genai";
+import fs from "fs";
+import path from "path";
 import authRoutes from "./server/authRoutes";
 
 async function startServer() {
@@ -52,6 +54,109 @@ async function startServer() {
     } catch (error: any) {
       console.error("Local proxy error:", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- GOOGLE DRIVE INTEGRATION & PROXY ROUTES ---
+  const driveConfigFile = path.resolve('data/drive_config.json');
+  const PERMANENT_DRIVE_CONFIG = {
+    folderUrl: "https://drive.google.com/drive/folders/1_90qY33PZYA0o2bIrmaQVs-KuMjY0CuF",
+    folderId: "1_90qY33PZYA0o2bIrmaQVs-KuMjY0CuF",
+    folderName: "Expedientes de Salida - Admisión UNSAAC",
+    webhookUrl: "https://script.google.com/macros/s/AKfycby2HWpuos2D4e-Vv3AkMJSbVA-6b-pHTWUSJL0IJRcEWUghjK2qlWb27jiYazQZl5RK/exec",
+    autoUploadEnabled: true
+  };
+
+  app.get("/api/drive-config", (req, res) => {
+    try {
+      if (fs.existsSync(driveConfigFile)) {
+        const content = fs.readFileSync(driveConfigFile, "utf-8");
+        const parsed = JSON.parse(content);
+        return res.json({
+          folderUrl: parsed.folderUrl || PERMANENT_DRIVE_CONFIG.folderUrl,
+          folderId: parsed.folderId || PERMANENT_DRIVE_CONFIG.folderId,
+          folderName: parsed.folderName || PERMANENT_DRIVE_CONFIG.folderName,
+          webhookUrl: parsed.webhookUrl || PERMANENT_DRIVE_CONFIG.webhookUrl,
+          autoUploadEnabled: parsed.autoUploadEnabled !== false
+        });
+      }
+      return res.json(PERMANENT_DRIVE_CONFIG);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/drive-config", (req, res) => {
+    try {
+      const config = {
+        ...PERMANENT_DRIVE_CONFIG,
+        ...req.body
+      };
+      const dir = path.dirname(driveConfigFile);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(driveConfigFile, JSON.stringify(config, null, 2), "utf-8");
+      res.json({ success: true, config });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/drive-upload", async (req, res) => {
+    try {
+      let { webhookUrl, folderId, fileName, fileBase64, mimeType } = req.body;
+
+      if ((!webhookUrl || !folderId) && fs.existsSync(driveConfigFile)) {
+        try {
+          const saved = JSON.parse(fs.readFileSync(driveConfigFile, "utf-8"));
+          if (!webhookUrl && saved.webhookUrl) webhookUrl = saved.webhookUrl;
+          if (!folderId && saved.folderId) folderId = saved.folderId;
+        } catch(e) {}
+      }
+
+      if (!webhookUrl) webhookUrl = PERMANENT_DRIVE_CONFIG.webhookUrl;
+      if (!folderId) folderId = PERMANENT_DRIVE_CONFIG.folderId;
+
+      const fetchReq = await import('node-fetch').then(m => m.default);
+      const payload = {
+        action: 'upload',
+        folderId: folderId || '',
+        fileName: fileName || `EXPEDIENTE_${Date.now()}.pdf`,
+        mimeType: mimeType || 'application/pdf',
+        fileBase64: fileBase64
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
+
+      const upstream = await fetchReq(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+        signal: controller.signal as any,
+        redirect: 'follow'
+      }).finally(() => clearTimeout(timeoutId));
+
+      if (!upstream.ok && upstream.status !== 302) {
+        return res.status(upstream.status).json({ success: false, error: `Apps Script respondió con error HTTP ${upstream.status}` });
+      }
+
+      const upstreamText = await upstream.text();
+      let data: any;
+      try {
+        data = JSON.parse(upstreamText);
+      } catch (jsonErr) {
+        return res.status(502).json({
+          success: false,
+          error: `Google Apps Script no devolvió JSON válido: ${upstreamText.slice(0, 160)}`
+        });
+      }
+
+      return res.json(data);
+    } catch (e: any) {
+      console.error("Error en proxy de subida a Google Drive:", e);
+      res.status(500).json({ success: false, error: e.name === 'AbortError' ? 'Tiempo de espera agotado al conectar con Google Drive (35s).' : e.message });
     }
   });
 

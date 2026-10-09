@@ -61,6 +61,8 @@ export interface LogEntry {
   referenceId?: string;
   pdfUrl?: string | null;
   rawMetadata?: any;
+  originType?: 'generado' | 'adjuntado' | 'registro';
+  isAttachedOnly?: boolean;
 }
 
 export const SystemLogs: React.FC = () => {
@@ -110,12 +112,81 @@ export const SystemLogs: React.FC = () => {
         if (u.dni) userMap.set(u.dni, u);
       });
 
-      // 2. Fetch tramite_seguimiento (Core audit log of actions)
-      const { data: tracking } = await supabase
-        .from('tramite_seguimiento')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(600);
+      // Helper robusto para resolver el rol real y consistente de cualquier operador
+      const resolveRole = (userNameOrId?: string, fallbackDni?: string): string => {
+        if (!userNameOrId && !fallbackDni) return 'Operador';
+        const str = (userNameOrId || '').toUpperCase().trim();
+        const dniStr = String(fallbackDni || '').trim();
+
+        // REGLA FUNDAMENTAL: Jhonatan Alex Choque Caritas (DNI 47773611) es siempre Administrador
+        if (
+          dniStr === '47773611' ||
+          str === '47773611' ||
+          str.includes('JHONATAN') ||
+          str.includes('CHOQUE-CARITAS') ||
+          str.includes('ADMIN') ||
+          str === '2CDDAA12-25A3-4806-8EEC-148298C28C43'
+        ) {
+          return 'Administrador';
+        }
+
+        if (str.includes('CONSEJO') || str.includes('DIRECTOR') || str.includes('COMISIÓN')) {
+          return 'Director';
+        }
+
+        if (fallbackDni && userMap.has(fallbackDni)) {
+          return userMap.get(fallbackDni)!.role || 'Operador';
+        }
+        if (userNameOrId && userMap.has(userNameOrId)) {
+          return userMap.get(userNameOrId)!.role || 'Operador';
+        }
+
+        const matched = usersData?.find((u) => {
+          const uName = (u.name || '').toUpperCase().trim();
+          return uName === str || str.includes(uName) || uName.includes(str);
+        });
+
+        if (matched) {
+          return matched.role || 'Operador';
+        }
+
+        return 'Operador';
+      };
+
+      // 2. Fetch tramite_seguimiento & expedientes_salida en paralelo
+      const [trackingRes, salidasRes] = await Promise.all([
+        supabase.from('tramite_seguimiento').select('*').order('created_at', { ascending: false }).limit(600),
+        supabase.from('expedientes_salida').select('*').order('created_at', { ascending: false }).limit(400)
+      ]);
+
+      const tracking = trackingRes.data || [];
+      const salidas = salidasRes.data || [];
+
+      // Mapear salidas por doc_number y por número de expediente para asociar PDFs a eventos de seguimiento
+      const pdfByDocNumber = new Map<string, { url: string; isGen: boolean; docType: string }>();
+      const pdfByExpNumber = new Map<string, { url: string; isGen: boolean; docType: string }>();
+
+      salidas.forEach((s) => {
+        let isGen = false;
+        let expNum = s.ref_number;
+        if (s.destination && s.destination.startsWith('{')) {
+          try {
+            const meta = JSON.parse(s.destination);
+            if (meta.expediente_numero) expNum = meta.expediente_numero;
+            isGen = true;
+          } catch (e) {}
+        }
+        if (s.doc_number && (s.doc_number.startsWith('UNSAAC-CONST-') || s.doc_number.startsWith('UNSAAC-INF-') || s.doc_type?.toLowerCase().includes('informe') || s.doc_type?.toLowerCase().includes('constancia'))) {
+          isGen = true;
+        }
+
+        if (s.pdf_url) {
+          const info = { url: s.pdf_url, isGen, docType: s.doc_type || 'Documento' };
+          if (s.doc_number) pdfByDocNumber.set(s.doc_number.trim(), info);
+          if (s.ref_number) pdfByExpNumber.set(s.ref_number.trim(), info);
+          if (expNum && expNum !== s.ref_number) pdfByExpNumber.set(expNum.trim(), info);
+        }
+      });
 
       if (tracking) {
         tracking.forEach((t) => {
@@ -137,12 +208,13 @@ export const SystemLogs: React.FC = () => {
             actionColor = 'bg-purple-100 text-purple-800';
             modIcon = 'edit_document';
             modBadge = 'bg-purple-50 text-purple-700 border-purple-200';
-          } else if (actionTypeLower === 'emisión' || descLower.includes('constancia') || descLower.includes('emitió')) {
-            mod = 'Emisión';
+          } else if (actionTypeLower === 'emisión' || descLower.includes('constancia') || descLower.includes('informe') || descLower.includes('emitió')) {
+            const isInforme = descLower.includes('informe');
+            mod = isInforme ? 'Mesa de Partes' : 'Emisión';
             actType = 'Emisión';
-            actionTitle = 'Emisión de Constancia';
+            actionTitle = isInforme ? 'Emisión de Informe' : 'Emisión de Constancia';
             actionColor = 'bg-emerald-100 text-emerald-800';
-            modIcon = 'verified';
+            modIcon = isInforme ? 'assignment_turned_in' : 'verified';
             modBadge = 'bg-emerald-50 text-emerald-700 border-emerald-200';
           } else if (descLower.includes('pre-revisión') || descLower.includes('lote') || descLower.includes('postulante')) {
             mod = 'Pre-Revisión';
@@ -224,6 +296,39 @@ export const SystemLogs: React.FC = () => {
             }
           }
 
+          // Resolver PDF asociado al evento
+          let resolvedPdf: string | undefined = undefined;
+          let resolvedOrigin: 'generado' | 'adjuntado' | 'registro' = 'registro';
+
+          // 1. Extraer PDF embebido en la descripción si existe ([PDF: ...])
+          const pdfMatch = (t.description || '').match(/\[PDF:\s*([^\]]+)\]/i);
+          if (pdfMatch && pdfMatch[1]) {
+            resolvedPdf = pdfMatch[1].trim();
+            resolvedOrigin = 'generado';
+          }
+
+          // 2. Por expediente_id
+          if (!resolvedPdf && t.expediente_id) {
+            const cleanExp = String(t.expediente_id).trim();
+            const matched = pdfByExpNumber.get(cleanExp) || pdfByDocNumber.get(cleanExp);
+            if (matched) {
+              resolvedPdf = matched.url;
+              resolvedOrigin = matched.isGen ? 'generado' : 'adjuntado';
+            }
+          }
+
+          // 3. Por código en la descripción
+          if (!resolvedPdf) {
+            const codeMatch = (t.description || '').match(/(UNSAAC-[A-Z0-9-]+|INF-[A-Z0-9-]+|INFORME\s+[0-9-]+)/i);
+            if (codeMatch && codeMatch[1]) {
+              const matched = pdfByDocNumber.get(codeMatch[1].trim());
+              if (matched) {
+                resolvedPdf = matched.url;
+                resolvedOrigin = matched.isGen ? 'generado' : 'adjuntado';
+              }
+            }
+          }
+
           // Clean description from [Módulo: ...] prefix if present
           let cleanDesc = t.description || '';
           if (cleanDesc.startsWith('[')) {
@@ -232,13 +337,12 @@ export const SystemLogs: React.FC = () => {
               cleanDesc = cleanDesc.substring(closingIdx + 1).trim();
             }
           }
+          // Limpiar también el tag [PDF: ...] del texto visible
+          cleanDesc = cleanDesc.replace(/\[PDF:\s*[^\]]+\]/gi, '').trim();
 
           // Determine user role
           const userNameNormalized = (t.user_name || '').toUpperCase().trim();
-          let matchedRole = 'Operador';
-          if (userNameNormalized.includes('JHONATAN') || userNameNormalized.includes('ADMIN')) {
-            matchedRole = 'Administrador';
-          }
+          const matchedRole = resolveRole(userNameNormalized);
 
           allLogs.push({
             id: `trk-${t.id}`,
@@ -254,18 +358,14 @@ export const SystemLogs: React.FC = () => {
             details: cleanDesc,
             source: 'tramite_seguimiento',
             referenceId: t.expediente_id || undefined,
+            pdfUrl: resolvedPdf,
+            originType: resolvedPdf ? (resolvedOrigin === 'adjuntado' ? 'adjuntado' : 'generado') : undefined,
             rawMetadata: t
           });
         });
       }
 
-      // 3. Fetch expedientes_salida (Official Document Emissions)
-      const { data: salidas } = await supabase
-        .from('expedientes_salida')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(300);
-
+      // 3. Fetch expedientes_salida (Diferenciación Forense: Emisión Oficial vs Documento Adjunto Manual)
       if (salidas) {
         salidas.forEach((s) => {
           let studentName = '';
@@ -286,7 +386,7 @@ export const SystemLogs: React.FC = () => {
             }
           }
 
-          // Resolve user name
+          // Resolver nombre y rol del operador
           if (!issuedUser && s.created_by) {
             const userObj = userMap.get(s.created_by);
             if (userObj) issuedUser = userObj.name;
@@ -295,27 +395,100 @@ export const SystemLogs: React.FC = () => {
             issuedUser = 'OPERADOR / SISTEMA';
           }
 
-          const descDetail = studentName
-            ? `Emitió ${s.doc_type || 'Constancia Oficial'} Nº ${s.doc_number || ''} para ${studentName} (DNI: ${studentDni})${studentCareer ? ` - Carrera: ${studentCareer}` : ''}`
-            : `${s.doc_type || 'Documento Oficial'} Nº ${s.doc_number || ''} - ${s.subject || ''}`;
+          const resolvedPdfUrl = s.pdf_url || (s.doc_number ? pdfByDocNumber.get(s.doc_number.trim())?.url : undefined) || (s.ref_number ? pdfByExpNumber.get(s.ref_number.trim())?.url : undefined);
+          const hasAttachedPdf = Boolean(resolvedPdfUrl);
+          const isOfficialCodePrefix = Boolean(s.doc_number && (s.doc_number.startsWith('UNSAAC-CONST-') || s.doc_number.startsWith('UNSAAC-INF-')));
+          const hasStructuredMeta = Boolean(parsedMeta && (parsedMeta.tipo_documento || parsedMeta.codigo_verificacion || parsedMeta.estudiante_nombre));
 
-          allLogs.push({
-            id: `sal-${s.id}`,
-            user: issuedUser.toUpperCase().trim(),
-            userRole: 'Operador',
-            action: 'Emisión de Constancia',
-            actionType: 'Emisión',
-            module: 'Emisión',
-            actionColor: 'bg-emerald-100 text-emerald-800',
-            moduleBadgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-            moduleIcon: 'verified',
-            timestamp: new Date(s.created_at),
-            details: descDetail,
-            source: 'expedientes_salida',
-            referenceId: s.doc_number || studentDni,
-            pdfUrl: s.pdf_url,
-            rawMetadata: parsedMeta || s
-          });
+          // DISTINCIÓN FORENSE CRÍTICA:
+          // Un registro en expedientes_salida es "Emisión Oficial" si cuenta con metadatos estructurados
+          // de plantilla o código oficial QR/alfanumérico generado por el sistema.
+          const isSystemGenerated = hasStructuredMeta || (isOfficialCodePrefix && parsedMeta !== null) || (Boolean(s.doc_type && (s.doc_type.toLowerCase().includes('informe') || s.doc_type.toLowerCase().includes('constancia'))) && parsedMeta !== null);
+
+          const isConstanciaTitle = Boolean(
+            (s.doc_type && s.doc_type.toLowerCase().includes('constancia')) ||
+            (s.subject && s.subject.toLowerCase().includes('constancia'))
+          );
+
+          const isReportTitle = Boolean(
+            (s.doc_type && s.doc_type.toLowerCase().includes('informe')) ||
+            (s.subject && s.subject.toLowerCase().includes('informe')) ||
+            (parsedMeta?.tipo_documento && parsedMeta.tipo_documento.toLowerCase().includes('informe'))
+          );
+
+          if (isSystemGenerated) {
+            const docTypeName = parsedMeta?.tipo_documento || s.doc_type || (isReportTitle ? 'Informe Oficial' : 'Constancia Oficial');
+            const descDetail = studentName
+              ? `Emitió ${docTypeName} Nº ${s.doc_number || ''} para ${studentName} (DNI: ${studentDni})${studentCareer ? ` - Carrera: ${studentCareer}` : ''} [Documento Generado por Sistema]`
+              : `Emitió ${docTypeName} Nº ${s.doc_number || ''} [Generado Oficialmente por el Sistema]`;
+
+            allLogs.push({
+              id: `sal-${s.id}`,
+              user: issuedUser.toUpperCase().trim(),
+              userRole: resolveRole(issuedUser, s.created_by),
+              action: isReportTitle ? 'Emisión de Informe (Generado)' : 'Emisión de Constancia (Generado)',
+              actionType: 'Emisión',
+              module: isReportTitle ? 'Mesa de Partes' : 'Emisión',
+              actionColor: 'bg-emerald-100 text-emerald-800',
+              moduleBadgeColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+              moduleIcon: isReportTitle ? 'assignment_turned_in' : 'verified',
+              timestamp: new Date(s.created_at),
+              details: descDetail,
+              source: 'expedientes_salida',
+              referenceId: s.doc_number || studentDni,
+              pdfUrl: resolvedPdfUrl,
+              rawMetadata: parsedMeta || s,
+              originType: 'generado',
+              isAttachedOnly: false
+            });
+          } else if (isConstanciaTitle) {
+            // CASO OBSERVADO: El operador ingresó una salida con carátula "Constancia" y adjuntó un PDF manual.
+            // NO fue generado por el sistema de plantillas.
+            const descDetail = `Registró expediente de salida rotulado como "${s.doc_type || 'Constancia'}" Nº ${s.doc_number || ''} (Ref: ${s.ref_number || '-'}) adjuntando archivo PDF externo hacia ${s.destination || 'ESTUDIANTE'}. [AVISO FORENSE: Documento adjuntado de forma manual; NO fue generado por el sistema ni cuenta con código QR oficial].`;
+
+            allLogs.push({
+              id: `sal-${s.id}`,
+              user: issuedUser.toUpperCase().trim(),
+              userRole: resolveRole(issuedUser, s.created_by),
+              action: 'Expediente de Salida (PDF Adjunto)',
+              actionType: 'Registro',
+              module: 'Mesa de Partes',
+              actionColor: 'bg-amber-100 text-amber-900 border border-amber-300',
+              moduleBadgeColor: 'bg-amber-50 text-amber-800 border-amber-200',
+              moduleIcon: 'attach_file',
+              timestamp: new Date(s.created_at),
+              details: descDetail,
+              source: 'expedientes_salida',
+              referenceId: s.doc_number || s.ref_number,
+              pdfUrl: resolvedPdfUrl,
+              rawMetadata: { ...s, _isManuallyAttachedConstancia: true },
+              originType: 'adjuntado',
+              isAttachedOnly: true
+            });
+          } else {
+            // Expediente de salida ordinario (Oficio, Informe, Carta, Proveído, etc.)
+            const descDetail = `Registró salida de ${s.doc_type || 'Documento'} Nº ${s.doc_number || ''} - ${s.subject || ''} (Destino: ${s.destination || '-'})${hasAttachedPdf ? ' [Con archivo PDF adjunto]' : ''}`;
+
+            allLogs.push({
+              id: `sal-${s.id}`,
+              user: issuedUser.toUpperCase().trim(),
+              userRole: resolveRole(issuedUser, s.created_by),
+              action: hasAttachedPdf ? 'Salida con Archivo Adjunto' : 'Registro de Expediente de Salida',
+              actionType: 'Registro',
+              module: 'Mesa de Partes',
+              actionColor: hasAttachedPdf ? 'bg-indigo-100 text-indigo-800' : 'bg-blue-100 text-blue-800',
+              moduleBadgeColor: 'bg-blue-50 text-blue-700 border-blue-200',
+              moduleIcon: hasAttachedPdf ? 'attach_file' : 'send',
+              timestamp: new Date(s.created_at),
+              details: descDetail,
+              source: 'expedientes_salida',
+              referenceId: s.doc_number || s.ref_number,
+              pdfUrl: resolvedPdfUrl,
+              rawMetadata: s,
+              originType: hasAttachedPdf ? 'adjuntado' : 'registro',
+              isAttachedOnly: hasAttachedPdf
+            });
+          }
         });
       }
 
@@ -364,7 +537,7 @@ export const SystemLogs: React.FC = () => {
           allLogs.push({
             id: `pag-${p.id}`,
             user: userName.toUpperCase().trim(),
-            userRole: 'Operador',
+            userRole: resolveRole(userName, p.created_by),
             action: 'Validación de Pago',
             actionType: 'Pago',
             module: 'Pagos',
@@ -397,7 +570,7 @@ export const SystemLogs: React.FC = () => {
           allLogs.push({
             id: `ent-${e.id}`,
             user: userName.toUpperCase().trim(),
-            userRole: 'Operador',
+            userRole: resolveRole(userName, e.created_by),
             action: 'Recepción de Expediente',
             actionType: 'Registro',
             module: 'Mesa de Partes',
@@ -510,11 +683,13 @@ export const SystemLogs: React.FC = () => {
     let templatesCount = 0;
     let statesCount = 0;
     let loginsCount = 0;
+    let attachmentsCount = 0;
 
     userLogs.forEach((l) => {
       moduleBreakdown[l.module] = (moduleBreakdown[l.module] || 0) + 1;
       actionBreakdown[l.actionType] = (actionBreakdown[l.actionType] || 0) + 1;
-      if (l.actionType === 'Emisión') emissionsCount++;
+      if (l.actionType === 'Emisión' && l.originType === 'generado') emissionsCount++;
+      if (l.originType === 'adjuntado') attachmentsCount++;
       if (l.actionType === 'Plantilla') templatesCount++;
       if (l.actionType === 'Estado') statesCount++;
       if (
@@ -528,15 +703,25 @@ export const SystemLogs: React.FC = () => {
       }
     });
 
-    const sysUser = usersList.find((u) => u.name.toUpperCase().trim() === trackedUser.toUpperCase().trim());
+    const sysUser = usersList.find((u) => {
+      const uName = (u.name || '').toUpperCase().trim();
+      const tName = trackedUser.toUpperCase().trim();
+      return uName === tName || tName.includes(uName) || uName.includes(tName);
+    });
+
+    const isJhonatan =
+      trackedUser.toUpperCase().includes('JHONATAN') ||
+      trackedUser.toUpperCase().includes('CHOQUE-CARITAS') ||
+      sysUser?.dni === '47773611';
 
     return {
       userName: trackedUser,
-      dni: sysUser?.dni || 'N/A',
-      role: sysUser?.role || (trackedUser.includes('JHONATAN') ? 'Administrador' : 'Operador'),
+      dni: sysUser?.dni || (isJhonatan ? '47773611' : 'N/A'),
+      role: isJhonatan ? 'Administrador' : sysUser?.role || 'Operador',
       totalActions: userLogs.length,
       lastActive: userLogs.length > 0 ? userLogs[0].timestamp : null,
       emissionsCount,
+      attachmentsCount,
       templatesCount,
       statesCount,
       loginsCount,
@@ -548,9 +733,11 @@ export const SystemLogs: React.FC = () => {
   // Overall KPI Metrics
   const stats = useMemo(() => {
     let emissions = 0;
+    let attachments = 0;
     let criticalActions = 0;
     logs.forEach((l) => {
-      if (l.actionType === 'Emisión') emissions++;
+      if (l.actionType === 'Emisión' && l.originType === 'generado') emissions++;
+      if (l.originType === 'adjuntado') attachments++;
       if (['Plantilla', 'Estado', 'Vacantes', 'Seguridad', 'Contingencia'].includes(l.actionType)) {
         criticalActions++;
       }
@@ -560,6 +747,7 @@ export const SystemLogs: React.FC = () => {
       total: logs.length,
       operators: uniqueUsersInLogs.length,
       emissions,
+      attachments,
       criticalActions
     };
   }, [logs, uniqueUsersInLogs]);
@@ -1056,11 +1244,25 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
 
                           {/* Action Type */}
                           <td className="py-3.5 px-5">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${log.actionColor}`}
-                            >
-                              {log.action}
-                            </span>
+                            <div className="flex flex-col gap-1 items-start">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${log.actionColor}`}
+                              >
+                                {log.action}
+                              </span>
+                              {log.originType === 'adjuntado' && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                                  <span className="material-symbols-outlined text-[11px]">attach_file</span>
+                                  Adjunto Manual
+                                </span>
+                              )}
+                              {log.originType === 'generado' && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <span className="material-symbols-outlined text-[11px]">verified</span>
+                                  Generado QR
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           {/* Details */}
@@ -1073,17 +1275,32 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                           {/* Reference / PDF */}
                           <td className="py-3.5 px-5 text-center">
                             {log.pdfUrl ? (
-                              <a
-                                href={log.pdfUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 text-[10px] font-black uppercase transition-all"
-                                title="Abrir constancia emitida en PDF"
-                              >
-                                <span className="material-symbols-outlined text-xs">picture_as_pdf</span>
-                                <span>Ver PDF</span>
-                              </a>
+                              <div className="flex flex-col items-center gap-1">
+                                <a
+                                  href={log.pdfUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase transition-all shadow-sm hover:scale-105 active:scale-95 ${
+                                    log.originType === 'adjuntado'
+                                      ? 'bg-amber-50 text-amber-900 hover:bg-amber-100 border-amber-300'
+                                      : 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600 shadow-emerald-600/20'
+                                  }`}
+                                  title={log.originType === 'adjuntado' ? 'Ver archivo PDF adjuntado externamente' : 'Abrir documento oficial generado en PDF'}
+                                >
+                                  <span className="material-symbols-outlined text-[13px]">picture_as_pdf</span>
+                                  <span>{log.originType === 'adjuntado' ? 'PDF Adjunto' : 'Ver PDF Generado'}</span>
+                                  <span className="material-symbols-outlined text-[10px]">open_in_new</span>
+                                </a>
+                                {log.referenceId && (
+                                  <span
+                                    className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-mono font-bold max-w-[130px] truncate"
+                                    title={log.referenceId}
+                                  >
+                                    {log.referenceId}
+                                  </span>
+                                )}
+                              </div>
                             ) : log.referenceId ? (
                               <span
                                 className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-mono font-bold max-w-[130px] truncate"
@@ -1242,13 +1459,13 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                 </div>
 
                 {/* Productivity Indicators */}
-                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                   <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
                     <div className="size-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center mb-3">
                       <span className="material-symbols-outlined text-xl">analytics</span>
                     </div>
                     <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      Intervenciones Totales
+                      Intervenciones
                     </span>
                     <span className="text-3xl font-black text-slate-900 mt-1">
                       {trackedUserData.totalActions}
@@ -1263,13 +1480,13 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                       <span className="material-symbols-outlined text-xl">login</span>
                     </div>
                     <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      Inicios de Sesión
+                      Inicios Sesión
                     </span>
                     <span className="text-3xl font-black text-teal-700 mt-1">
                       {trackedUserData.loginsCount}
                     </span>
                     <span className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                      Accesos a la web app
+                      Accesos al sistema
                     </span>
                   </div>
 
@@ -1278,13 +1495,28 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                       <span className="material-symbols-outlined text-xl">verified</span>
                     </div>
                     <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      Constancias Emitidas
+                      Constancias QR
                     </span>
                     <span className="text-3xl font-black text-emerald-600 mt-1">
                       {trackedUserData.emissionsCount}
                     </span>
                     <span className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                      Con código QR oficial
+                      Generadas con QR
+                    </span>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                    <div className="size-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center mb-3">
+                      <span className="material-symbols-outlined text-xl">attach_file</span>
+                    </div>
+                    <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                      PDFs Adjuntos
+                    </span>
+                    <span className="text-3xl font-black text-amber-700 mt-1">
+                      {trackedUserData.attachmentsCount}
+                    </span>
+                    <span className="text-[11px] text-slate-500 mt-0.5 font-medium">
+                      Subidos en Salidas
                     </span>
                   </div>
 
@@ -1293,7 +1525,7 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                       <span className="material-symbols-outlined text-xl">tune</span>
                     </div>
                     <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      Plantillas y Trámites
+                      Plantillas/Trám.
                     </span>
                     <span className="text-3xl font-black text-purple-600 mt-1">
                       {trackedUserData.templatesCount + trackedUserData.statesCount}
@@ -1337,6 +1569,16 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                               <span className="material-symbols-outlined text-xs">{log.moduleIcon}</span>
                               {log.module}
                             </span>
+                            {log.originType === 'adjuntado' && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                                Adjunto Manual
+                              </span>
+                            )}
+                            {log.originType === 'generado' && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                Generado QR
+                              </span>
+                            )}
                             <span
                               className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${log.actionColor}`}
                             >
@@ -1354,10 +1596,14 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                               href={log.pdfUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase flex items-center gap-1 shadow-sm transition-all"
+                              className={`px-3 py-1.5 rounded-lg text-white text-[10px] font-black uppercase flex items-center gap-1 shadow-sm transition-all ${
+                                log.originType === 'adjuntado'
+                                  ? 'bg-amber-700 hover:bg-amber-800'
+                                  : 'bg-emerald-600 hover:bg-emerald-700'
+                              }`}
                             >
                               <span className="material-symbols-outlined text-xs">picture_as_pdf</span>
-                              <span>PDF</span>
+                              <span>{log.originType === 'adjuntado' ? 'PDF Adjunto' : 'Ver QR PDF'}</span>
                             </a>
                           )}
                           <button
@@ -1454,7 +1700,46 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                 <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-mono bg-slate-100 text-slate-600 font-bold">
                   Origen: {inspectedLog.source}
                 </span>
+
+                {inspectedLog.originType === 'adjuntado' && (
+                  <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black uppercase bg-amber-100 text-amber-900 border border-amber-300">
+                    <span className="material-symbols-outlined text-sm">attach_file</span>
+                    Documento Adjunto (Manual)
+                  </span>
+                )}
+                {inspectedLog.originType === 'generado' && (
+                  <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black uppercase bg-emerald-100 text-emerald-900 border border-emerald-300">
+                    <span className="material-symbols-outlined text-sm">verified</span>
+                    Generado Oficialmente (QR)
+                  </span>
+                )}
               </div>
+
+              {/* FORENSIC DIAGNOSIS BANNER */}
+              {inspectedLog.originType === 'adjuntado' && (
+                <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-600 text-2xl shrink-0 mt-0.5">warning</span>
+                  <div>
+                    <h4 className="font-black text-amber-950 text-sm uppercase">DOCUMENTO ADJUNTADO MANUALMENTE — NO GENERADO POR EL SISTEMA</h4>
+                    <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                      El operador ingresó un expediente de salida adjuntando un archivo PDF externo. 
+                      <strong> Este documento NO fue emitido ni generado a través del motor oficial de constancias de admisión de la UNSAAC, no posee código QR de validación criptográfica ni metadatos oficiales de estudiante.</strong>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {inspectedLog.originType === 'generado' && (
+                <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex items-start gap-3">
+                  <span className="material-symbols-outlined text-emerald-600 text-2xl shrink-0 mt-0.5">verified</span>
+                  <div>
+                    <h4 className="font-black text-emerald-950 text-sm uppercase">DOCUMENTO OFICIAL GENERADO POR EL SISTEMA</h4>
+                    <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                      Constancia oficial emitida a través de la plantilla institucional, con código de verificación alfanumérico, código QR y metadatos registrados en el libro digital de la Dirección de Admisión.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Event Description */}
               <div className="flex flex-col gap-1.5">
@@ -1509,24 +1794,66 @@ ${log.pdfUrl ? `Documento PDF: ${log.pdfUrl}\n` : ''}Origen: ${log.source}`;
                 </div>
               )}
 
-              {/* Direct PDF Link */}
+              {/* Direct PDF Link & Viewer */}
               {inspectedLog.pdfUrl && (
-                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-2xl text-emerald-700">picture_as_pdf</span>
-                    <div>
-                      <div className="font-black text-emerald-900 text-xs">Documento Oficial en Formato PDF</div>
-                      <div className="text-[11px] text-emerald-700">Constancia digital generada y almacenada</div>
+                <div className="flex flex-col gap-3">
+                  <div className={`p-4 rounded-2xl border flex items-center justify-between ${
+                    inspectedLog.originType === 'adjuntado'
+                      ? 'bg-amber-50/70 border-amber-200'
+                      : 'bg-emerald-50 border-emerald-200'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <span className={`material-symbols-outlined text-2xl ${
+                        inspectedLog.originType === 'adjuntado' ? 'text-amber-700' : 'text-emerald-700'
+                      }`}>picture_as_pdf</span>
+                      <div>
+                        <div className={`font-black text-xs ${
+                          inspectedLog.originType === 'adjuntado' ? 'text-amber-950' : 'text-emerald-900'
+                        }`}>
+                          {inspectedLog.originType === 'adjuntado'
+                            ? 'Archivo PDF Adjunto (Subido por el Operador)'
+                            : 'Documento Oficial Generado (Formato PDF)'}
+                        </div>
+                        <div className={`text-[11px] ${
+                          inspectedLog.originType === 'adjuntado' ? 'text-amber-800' : 'text-emerald-700'
+                        }`}>
+                          {inspectedLog.originType === 'adjuntado'
+                            ? 'Documento externo adjuntado en Mesa de Salidas'
+                            : 'Documento oficial generado por el sistema con código QR'}
+                        </div>
+                      </div>
                     </div>
+                    <a
+                      href={inspectedLog.pdfUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`px-4 py-2 rounded-xl text-white font-black text-xs uppercase shadow-sm transition-all flex items-center gap-1.5 ${
+                        inspectedLog.originType === 'adjuntado'
+                          ? 'bg-amber-700 hover:bg-amber-800'
+                          : 'bg-emerald-700 hover:bg-emerald-800'
+                      }`}
+                    >
+                      <span>Abrir en Nueva Pestaña</span>
+                      <span className="material-symbols-outlined text-xs">open_in_new</span>
+                    </a>
                   </div>
-                  <a
-                    href={inspectedLog.pdfUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs uppercase shadow-sm transition-all"
-                  >
-                    Descargar / Ver PDF
-                  </a>
+
+                  <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-900/5 h-80 flex flex-col">
+                    <div className="bg-slate-100 px-3 py-1.5 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600">
+                      <span className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">visibility</span>
+                        Vista Previa del Documento Oficial
+                      </span>
+                      <a href={inspectedLog.pdfUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline text-[10px] font-black uppercase">
+                        Ver Pantalla Completa
+                      </a>
+                    </div>
+                    <iframe
+                      src={`${inspectedLog.pdfUrl}#toolbar=0`}
+                      className="w-full flex-1 border-0"
+                      title="Vista previa del documento PDF generado"
+                    />
+                  </div>
                 </div>
               )}
             </div>

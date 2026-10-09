@@ -38,6 +38,17 @@ export const PublicDocumentVerification: React.FC = () => {
   };
 
   useEffect(() => {
+    // Garantizar scroll fluido en móviles y escritorio
+    document.body.classList.remove('overflow-hidden');
+    document.body.style.overflow = 'auto';
+    document.body.style.overflowY = 'auto';
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.overflowY = '';
+    };
+  }, []);
+
+  useEffect(() => {
     if (code) {
       setSearchCode(code);
       loadVerification(code);
@@ -79,30 +90,32 @@ export const PublicDocumentVerification: React.FC = () => {
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-[#7b1523] selection:text-white">
       {/* Top Header Institucional */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-18 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
-              src="https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Coat_of_arms_of_Cusco.svg/600px-Coat_of_arms_of_Cusco.svg.png"
-              alt="Escudo UNSAAC"
-              className="h-10 w-auto object-contain"
+              src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png"
+              alt="Escudo Oficial UNSAAC"
+              className="h-12 sm:h-14 w-auto object-contain"
             />
             <div>
-              <span className="block text-xs uppercase tracking-wider font-semibold text-slate-500">
+              <span className="block text-[10px] sm:text-xs uppercase tracking-wider font-semibold text-slate-500">
                 Portal Oficial de Autenticidad
               </span>
-              <h1 className="text-sm sm:text-base font-bold text-[#7b1523] tracking-tight leading-tight">
+              <h1 className="text-xs sm:text-base font-bold text-[#7b1523] tracking-tight leading-tight">
                 DIRECCIÓN DE ADMISIÓN · UNSAAC
               </h1>
+              <span className="hidden sm:block text-[11px] text-slate-400">
+                Universidad Nacional de San Antonio Abad del Cusco
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate('/login')}
-              className="text-xs text-slate-500 hover:text-[#7b1523] transition-colors py-1.5 px-3 rounded border border-slate-200 hover:border-[#7b1523]/30"
-            >
-              Acceso Administrativo
-            </button>
+          <div className="flex items-center gap-3">
+            <img
+              src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%20color%20negro.png"
+              alt="Logo Dirección de Admisión"
+              className="h-10 sm:h-12 w-auto object-contain"
+            />
           </div>
         </div>
       </header>
@@ -162,8 +175,61 @@ export const PublicDocumentVerification: React.FC = () => {
           </div>
         )}
 
+        {/* Attached Only Document Warning State */}
+        {!loading && data && data.isAttachedOnly && (
+          <div className="bg-white rounded-xl border-2 border-amber-300 shadow-md overflow-hidden">
+            <div className="bg-amber-600 text-white px-6 py-4 flex items-center gap-3">
+              <span className="material-symbols-outlined text-2xl text-amber-100">warning</span>
+              <div>
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-amber-200 block">
+                  Alerta de Verificación Forense
+                </span>
+                <h2 className="text-base sm:text-lg font-bold tracking-tight">
+                  DOCUMENTO ADJUNTADO MANUALMENTE (NO GENERADO POR EL SISTEMA)
+                </h2>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-900 leading-relaxed">
+                <p className="font-bold text-sm mb-1 text-amber-950">Aviso Oficial a la Comunidad Universitaria:</p>
+                <p>
+                  El código o número ingresado (<strong>{data.verificationCode}</strong>) corresponde a un <strong>expediente de salida con archivo PDF adjuntado de forma externa</strong> en la mesa de partes.
+                </p>
+                <p className="mt-2 font-semibold text-rose-800">
+                  ⚠️ Este documento NO fue emitido ni generado a través del motor oficial de constancias de admisión de la UNSAAC, no cuenta con firma electrónica del sistema ni código QR de validación criptográfica.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                  <span className="text-slate-500 font-medium block">Nº Documento / Referencia:</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm mt-0.5 block">{data.verificationCode}</span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded border border-slate-200">
+                  <span className="text-slate-500 font-medium block">Tipo Registrado en Salida:</span>
+                  <span className="font-bold text-slate-800 text-sm mt-0.5 block">{data.documentType}</span>
+                </div>
+              </div>
+
+              {data.attachedPdfUrl && (
+                <div className="pt-2">
+                  <a
+                    href={data.attachedPdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-base text-amber-400">picture_as_pdf</span>
+                    Ver Archivo PDF Adjunto por el Operador
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Verified Document Card */}
-        {!loading && data && (
+        {!loading && data && !data.isAttachedOnly && data.isValid && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden print:border-none print:shadow-none">
             {/* Banner de Estado de Autenticidad */}
             <div className="bg-emerald-700 text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -182,6 +248,18 @@ export const PublicDocumentVerification: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                {data.attachedPdfUrl && (
+                  <a
+                    href={data.attachedPdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 text-xs font-semibold bg-white/20 hover:bg-white/30 text-white rounded transition-colors flex items-center gap-1 shadow-xs print:hidden"
+                    title="Ver o descargar archivo PDF original del documento emitido"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                    Ver PDF Original
+                  </a>
+                )}
                 <button
                   onClick={handlePrintCertificate}
                   className="px-3 py-1.5 text-xs font-semibold bg-white text-emerald-800 rounded hover:bg-emerald-50 transition-colors flex items-center gap-1 shadow-xs print:hidden"
@@ -191,6 +269,30 @@ export const PublicDocumentVerification: React.FC = () => {
                   Imprimir Ficha
                 </button>
               </div>
+            </div>
+
+            {/* Cabecera Institucional del Comprobante con Logos Oficiales */}
+            <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png"
+                  alt="Escudo Oficial UNSAAC"
+                  className="h-10 sm:h-11 w-auto object-contain"
+                />
+                <div>
+                  <h3 className="text-xs font-black text-slate-800 tracking-wide uppercase leading-tight">
+                    Universidad Nacional de San Antonio Abad del Cusco
+                  </h3>
+                  <p className="text-[11px] font-bold text-[#7b1523] mt-0.5">
+                    DIRECCIÓN DE ADMISIÓN · REGISTRO OFICIAL DE CONSTANCIAS E INFORMES
+                  </p>
+                </div>
+              </div>
+              <img
+                src="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/logo%20admision%20color%20negro.png"
+                alt="Logo Admisión UNSAAC"
+                className="h-8 sm:h-9 w-auto object-contain hidden sm:block"
+              />
             </div>
 
             {/* Código de Verificación y Resumen */}
@@ -233,16 +335,33 @@ export const PublicDocumentVerification: React.FC = () => {
                 </div>
 
                 <div>
-                  <span className="text-xs text-slate-500 block">DNI / Documento de Identidad:</span>
-                  <span className="font-mono font-semibold text-slate-800 block mt-0.5">
-                    {data.studentDni || '—'}
+                  <span className="text-xs text-slate-500 block">Escuela Profesional (Carrera):</span>
+                  <span className="font-bold text-[#7b1523] block mt-0.5">
+                    {data.career || '—'}
                   </span>
                 </div>
 
                 <div>
-                  <span className="text-xs text-slate-500 block">Escuela Profesional (Carrera):</span>
-                  <span className="font-bold text-[#7b1523] block mt-0.5">
-                    {data.career || '—'}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-500 block">Código de Postulante:</span>
+                    <div className="relative group inline-flex items-center">
+                      <span
+                        className="material-symbols-outlined text-[16px] text-amber-500 hover:text-amber-600 cursor-help transition-colors select-none"
+                        title="El código de postulante no necesariamente es el número de DNI; es el código registrado oficialmente al momento de postular."
+                      >
+                        info
+                      </span>
+                      {/* Globo informativo emergente */}
+                      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 w-72 p-2.5 bg-slate-900 text-white text-[11px] font-normal leading-relaxed rounded-md shadow-2xl border border-slate-700 text-center">
+                        <span>
+                          El código de postulante no necesariamente es el número de DNI; es el código registrado oficialmente al momento de postular.
+                        </span>
+                        <div className="w-2.5 h-2.5 bg-slate-900 rotate-45 -mb-3 border-r border-b border-slate-700"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="font-mono font-bold text-slate-900 text-sm sm:text-base block mt-0.5">
+                    {data.studentCode || data.studentDni || '—'}
                   </span>
                 </div>
 
@@ -252,15 +371,6 @@ export const PublicDocumentVerification: React.FC = () => {
                     {data.modality || '—'}
                   </span>
                 </div>
-
-                {data.studentCode && (
-                  <div>
-                    <span className="text-xs text-slate-500 block">Código de Postulante / Matrícula:</span>
-                    <span className="font-mono font-bold text-slate-800 block mt-0.5">
-                      {data.studentCode}
-                    </span>
-                  </div>
-                )}
 
                 {data.semester && (
                   <div>
@@ -312,11 +422,6 @@ export const PublicDocumentVerification: React.FC = () => {
                     <span className="font-mono font-bold text-[#7b1523] bg-red-50 border border-red-200 px-2 py-0.5 rounded text-xs">
                       {data.userInitials || 'DA'}
                     </span>
-                    {data.userName && (
-                      <span className="text-slate-600 truncate text-[11px]" title={data.userName}>
-                        ({data.userName})
-                      </span>
-                    )}
                   </div>
                 </div>
 

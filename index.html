@@ -67,16 +67,24 @@
               throw err;
             }
           };
+          // Redirección canónica para Netlify y enlaces directos de validación/verificación:
+          if (window.location && window.location.pathname) {
+            var pName = window.location.pathname;
+            if (pName.indexOf('/validar') === 0 || pName.indexOf('/verificar') === 0) {
+              var targetHash = '#' + pName + (window.location.search || '');
+              window.location.replace('/' + targetHash);
+            }
+          }
         } catch (e) {
           console.warn("No se pudo inicializar saneamiento preventivo:", e);
         }
       })();
     </script>
-    
 
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>UNSAAC Admin Console</title>
+    <link rel="icon" type="image/png" href="https://cnqpzyanmmwspvemcfeb.supabase.co/storage/v1/object/public/logos/escudo%20oficial-02%20(2).png" />
+    <title>Dirección de Admisión · UNSAAC</title>
     <!-- Google Fonts: Cinzel & Poppins (Identidad Gráfica UNSAAC) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -189,7 +197,7 @@
     </style>
     <link rel="stylesheet" href="/index.css">
   </head>
-  <body class="bg-background-light text-slate-900 antialiased overflow-hidden">
+  <body class="bg-background-light text-slate-900 antialiased">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
