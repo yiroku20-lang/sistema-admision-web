@@ -21,12 +21,17 @@ import { DEFAULT_DESTINATIONS } from './OutgoingFiles';
 
 const COMMON_SUBJECTS = [
   "CONSTANCIA DE INGRESO",
+  "CONSTANCIA",
   "INFORME DE RECTIFICACIÓN DE DATOS",
+  "INFORME DE RECTIFICACIÓN",
+  "RECTIFICACIÓN",
   "INFORME DE RENUNCIA",
+  "RENUNCIA",
   "DEVOLUCIÓN",
   "TRANSFERENCIA",
   "RECTIFICACIÓN DE DATOS JUDICIAL",
-  "INFORME DE INCLUSIÓN"
+  "INFORME DE INCLUSIÓN",
+  "INCLUSIÓN"
 ];
 
 const STATUS_OPTIONS = ['Pendiente', 'En Progreso', 'Atendido', 'Archivado', 'Derivado', 'Devuelto'];
@@ -868,16 +873,21 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
           if (!isPayment) {
               // Cargar plantillas y auto-seleccionar
               try {
-                const { data } = await supabase.from('templates').select('*');
+                const { data } = await supabase.from('templates').select('*').order('created_at', { ascending: false });
                 const loadedTemplates = data || [];
                 setTemplates(loadedTemplates);
                 
-                // Auto-selección difusa
+                // Auto-selección inteligente por coincidencia
                 const match = loadedTemplates.find(t => 
                     file.subject.toUpperCase().includes(t.name.toUpperCase()) || 
                     t.name.toUpperCase().includes(file.subject.toUpperCase())
                 );
-                if (match) setSelectedTemplate(match);
+                if (match) {
+                    setSelectedTemplate(match);
+                } else if (file.subject.toUpperCase().includes('RENUNCIA')) {
+                    const renunciaMatch = loadedTemplates.find(t => t.name.toUpperCase().includes('RENUNCIA'));
+                    if (renunciaMatch) setSelectedTemplate(renunciaMatch);
+                }
                 
               } catch (err) {
                 console.error("Error al cargar plantillas", err);
@@ -2412,28 +2422,110 @@ export const IncomingFiles: React.FC<IncomingFilesProps> = ({ user, notify }) =>
 
                             {attendStep === 3 && (
                                 <div className="flex flex-col gap-6 animate-in slide-in-from-right-5 duration-300">
-                                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Paso 3: Generar Documento</p>
-                                    
-                                    <div className="flex flex-col gap-2">
-                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Plantilla Seleccionada</span>
-                                        {selectedTemplate ? (
-                                            <div className="p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-3">
-                                                <span className="material-symbols-outlined text-green-600">check_circle</span>
-                                                <div>
-                                                    <p className="text-xs font-black text-green-800 uppercase">{selectedTemplate.name}</p>
-                                                    <p className="text-[10px] text-green-600">Seleccionada automáticamente por coincidencia</p>
+                                    <div>
+                                        <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Paso 3: Elegir Plantilla y Generar Documento</p>
+                                        <h3 className="text-base font-black text-slate-800 mt-1">Seleccione la Plantilla Oficial</h3>
+                                        <p className="text-xs text-slate-500">Elija la versión de plantilla con la que desea emitir el informe o constancia para este expediente.</p>
+                                    </div>
+
+                                    {/* Tarjetas de Plantillas Disponibles para este tipo de trámite */}
+                                    {(() => {
+                                        const subjectUpper = fileToAttend?.subject?.toUpperCase() || '';
+                                        const isRenuncia = subjectUpper.includes('RENUNCIA') || selectedTemplate?.name.toUpperCase().includes('RENUNCIA');
+                                        const isRect = subjectUpper.includes('RECTIF') || selectedTemplate?.name.toUpperCase().includes('RECTIF');
+                                        
+                                        const relatedTemplates = templates.filter(t => {
+                                            const tUpper = t.name.toUpperCase();
+                                            if (isRenuncia && tUpper.includes('RENUNCIA')) return true;
+                                            if (isRect && tUpper.includes('RECTIF')) return true;
+                                            return false;
+                                        });
+
+                                        if (relatedTemplates.length <= 1) return null;
+
+                                        return (
+                                            <div className="flex flex-col gap-2 bg-slate-50/80 p-4 rounded-2xl border border-slate-200">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                                                        <span className="material-symbols-outlined text-[16px] text-primary">auto_awesome</span>
+                                                        <span>Versiones encontradas para este trámite ({relatedTemplates.length}):</span>
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-400 font-bold">Haz clic para elegir</span>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-1">
+                                                    {relatedTemplates.map(t => {
+                                                        const isSelected = selectedTemplate?.id === t.id;
+                                                        return (
+                                                            <div
+                                                                key={t.id}
+                                                                onClick={() => setSelectedTemplate(t)}
+                                                                className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-start gap-3 select-none ${
+                                                                    isSelected
+                                                                        ? 'border-emerald-600 bg-emerald-50/80 shadow-md shadow-emerald-600/10'
+                                                                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                                                                }`}
+                                                            >
+                                                                <span className={`material-symbols-outlined text-[20px] shrink-0 mt-0.5 ${
+                                                                    isSelected ? 'text-emerald-600' : 'text-slate-300'
+                                                                }`}>
+                                                                    {isSelected ? 'check_circle' : 'radio_button_unchecked'}
+                                                                </span>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className={`text-xs font-black uppercase truncate ${
+                                                                        isSelected ? 'text-emerald-950' : 'text-slate-800'
+                                                                    }`}>
+                                                                        {t.name}
+                                                                    </p>
+                                                                    <p className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">
+                                                                        {t.description || 'Plantilla oficial de Dirección de Admisión'}
+                                                                    </p>
+                                                                    <span className="inline-block mt-2 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                                                        {t.category || 'Admisión'}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
-                                        ) : (
-                                            <select 
-                                                onChange={e => setSelectedTemplate(templates.find(t => t.id === e.target.value) || null)} 
-                                                className="h-14 px-5 rounded-2xl border-2 border-slate-100 bg-slate-50 outline-none font-bold focus:border-primary text-slate-700"
-                                            >
-                                                <option value="">-- Seleccionar Manualmente --</option>
-                                                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                            </select>
-                                        )}
+                                        );
+                                    })()}
+                                    
+                                    {/* Selector Principal Desplegable - SIEMPRE VISIBLE */}
+                                    <div className="flex flex-col gap-2">
+                                        <label className="text-[11px] font-black text-slate-700 uppercase tracking-wider flex items-center justify-between ml-1">
+                                            <span>Plantilla Seleccionada:</span>
+                                            <span className="text-[10px] text-slate-400 font-bold">{templates.length} plantillas en el catálogo</span>
+                                        </label>
+                                        <select 
+                                            value={selectedTemplate?.id || ''}
+                                            onChange={e => setSelectedTemplate(templates.find(t => t.id === e.target.value) || null)} 
+                                            className="h-14 px-5 rounded-2xl border-2 border-slate-200 bg-white font-bold focus:border-primary text-slate-800 shadow-sm text-sm"
+                                        >
+                                            <option value="">-- Seleccionar Plantilla --</option>
+                                            {templates.map(t => (
+                                                <option key={t.id} value={t.id}>
+                                                    {t.name} [{t.category || 'Admisión'}]
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
+
+                                    {/* Indicador de Confirmación de Plantilla Activa */}
+                                    {selectedTemplate && (
+                                        <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center justify-between">
+                                            <div className="flex items-center gap-2.5">
+                                                <span className="material-symbols-outlined text-emerald-600 text-[20px]">description</span>
+                                                <div>
+                                                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">Plantilla activa:</span>
+                                                    <span className="text-xs font-black text-emerald-950 uppercase">{selectedTemplate.name}</span>
+                                                </div>
+                                            </div>
+                                            <span className="text-[10px] font-bold text-emerald-700 bg-white px-2.5 py-1 rounded-full uppercase border border-emerald-200 shadow-xs">
+                                                Confirmada
+                                            </span>
+                                        </div>
+                                    )}
 
                                     <div className="flex justify-between items-center mt-6">
                                         <button onClick={() => setAttendStep(2)} className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors">ATRÁS</button>
